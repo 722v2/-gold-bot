@@ -370,13 +370,19 @@ class TelegramService {
    * Formats and dispatches a NO TRADE notification to Telegram with deduplication
    * NO TRADE notifications do NOT receive inline buttons (Requirement 9)
    */
-  public async sendNoTradeNotification(scanId: string, reason: string, timestamp: number = Date.now()): Promise<boolean> {
+  public async sendNoTradeNotification(
+    scanId: string,
+    reason: string,
+    timestamp: number = Date.now(),
+    analysisPrice?: number,
+    signalDetails?: Partial<TradeSignal>
+  ): Promise<boolean> {
     if (this.sentNotificationIds.has(scanId)) {
       console.log(`[TELEGRAM] Skipping duplicate NO TRADE notification for ${scanId}`);
       return false;
     }
 
-    const message = this.formatNoTradeMessage(reason, timestamp);
+    const message = this.formatNoTradeMessage(reason, timestamp, analysisPrice, signalDetails);
     const result = await this.sendTelegramMessage(message);
 
     this.sentNotificationIds.add(scanId);
@@ -389,13 +395,18 @@ class TelegramService {
    * Formats and dispatches a SCAN ERROR notification to Telegram with deduplication
    * Error notifications do NOT receive inline buttons (Requirement 9)
    */
-  public async sendErrorNotification(scanId: string, error: string, timestamp: number = Date.now()): Promise<boolean> {
+  public async sendErrorNotification(
+    scanId: string,
+    error: string,
+    timestamp: number = Date.now(),
+    analysisPrice?: number
+  ): Promise<boolean> {
     if (this.sentNotificationIds.has(scanId)) {
       console.log(`[TELEGRAM] Skipping duplicate ERROR notification for ${scanId}`);
       return false;
     }
 
-    const message = this.formatErrorMessage(error, timestamp);
+    const message = this.formatErrorMessage(error, timestamp, analysisPrice);
     const result = await this.sendTelegramMessage(message);
 
     this.sentNotificationIds.add(scanId);
@@ -534,10 +545,10 @@ class TelegramService {
     // Parse fallback values from message text if signal wasn't cached in active memory
     const isBuy = /BUY/i.test(originalText);
     const isLimit = /LIMIT/i.test(originalText);
-    const parsedEntry = parseFloat((originalText.match(/Entry:\s*\$?([\d\.]+)/i) || [])[1]) || 0;
-    const parsedSl = parseFloat((originalText.match(/SL:\s*\$?([\d\.]+)/i) || [])[1]) || 0;
-    const parsedTp1 = parseFloat((originalText.match(/TP1:\s*\$?([\d\.]+)/i) || [])[1]) || 0;
-    const parsedTp2 = parseFloat((originalText.match(/TP2:\s*\$?([\d\.]+)/i) || [])[1]) || 0;
+    const parsedEntry = parseFloat((originalText.match(/(?:📍\s*(?:Limit\s+)?Entry|Entry).*?:\s*\$?([\d\.]+)/i) || [])[1]) || 0;
+    const parsedSl = parseFloat((originalText.match(/(?:🛑\s*(?:Stop\s+Loss|SL)|Stop\s+Loss|SL).*?:\s*\$?([\d\.]+)/i) || [])[1]) || 0;
+    const parsedTp1 = parseFloat((originalText.match(/(?:🎯\s*TP1|TP1).*?:\s*\$?([\d\.]+)/i) || [])[1]) || 0;
+    const parsedTp2 = parseFloat((originalText.match(/(?:🎯\s*TP2|TP2).*?:\s*\$?([\d\.]+)/i) || [])[1]) || 0;
 
     const outcomeRecord: TradeOutcomeRecord = {
       signalId,
@@ -711,7 +722,8 @@ class TelegramService {
   }
 
   /**
-   * Format for BUY / SELL / LIMIT signals
+   * Format for BUY NOW / SELL NOW / BUY LIMIT / SELL LIMIT signals
+   * Dynamically includes real XAU/USD price at analysis moment and analysis reasons
    */
   private formatSignalMessage(signal: TradeSignal): string {
     const sUpper = signal.signal.toUpperCase();
@@ -719,23 +731,27 @@ class TelegramService {
     const isLimit = sUpper.includes('LIMIT');
 
     const emoji = isBuy ? '🟢' : '🔴';
-    let actionHeader = '';
-    let orderType = 'MARKET';
+    let typeHeader = '';
+    let entryLabel = '📍 Entry';
 
     if (isLimit) {
       if (isBuy) {
-        actionHeader = 'BUY LIMIT';
-        orderType = 'BUY LIMIT';
+        typeHeader = 'BUY LIMIT';
+        entryLabel = '📍 Limit Entry';
       } else {
-        actionHeader = 'SELL LIMIT';
-        orderType = 'SELL LIMIT';
+        typeHeader = 'SELL LIMIT';
+        entryLabel = '📍 Limit Entry';
       }
     } else {
-      actionHeader = isBuy ? 'BUY' : 'SELL';
-      orderType = 'MARKET';
+      typeHeader = isBuy ? 'BUY NOW' : 'SELL NOW';
+      entryLabel = '📍 Entry';
     }
 
-    const title = `${emoji} ${signal.asset || 'XAU/USD'} ${actionHeader}`;
+    const title = `${emoji} ${typeHeader}`;
+    const analysisPrice = typeof signal.currentPrice === 'number' && !isNaN(signal.currentPrice) && signal.currentPrice > 0
+      ? signal.currentPrice.toFixed(2)
+      : 'N/A';
+
     const entryFormatted = typeof signal.entry === 'number' ? `$${signal.entry.toFixed(2)}` : signal.entry;
     const slPts = signal.slPoints ? ` (${signal.slPoints} pts)` : '';
     const slFormatted = typeof signal.stopLoss === 'number' ? `$${signal.stopLoss.toFixed(2)}${slPts}` : signal.stopLoss;
@@ -744,71 +760,141 @@ class TelegramService {
 
     const riskPercent = signal.riskPercent ? `${signal.riskPercent}%` : 'N/A';
     const riskAmount = typeof signal.riskAmount === 'number' ? `$${signal.riskAmount.toFixed(2)}` : 'N/A';
-    const tp1Rr = signal.tp1RrString || (signal.tp1Rr ? `1:${signal.tp1Rr.toFixed(2)}` : (signal.rr || '1:1.50'));
+    const tp1Rr = signal.tp1RrString || (signal.tp1Rr ? `1:${signal.tp1Rr.toFixed(2)}` : '1:1.50');
     const tp2Rr = signal.tp2RrString || (signal.tp2Rr ? `1:${signal.tp2Rr.toFixed(2)}` : 'N/A');
+    const overallRr = signal.rr || (tp2Formatted !== 'N/A' ? `TP1: ${tp1Rr} | TP2: ${tp2Rr}` : tp1Rr);
     const confidence = signal.confidence ? `${signal.confidence}%` : 'N/A';
 
     const reasonsList =
       signal.mainReasons && signal.mainReasons.length > 0
         ? signal.mainReasons.map((r) => `• ${r}`).join('\n')
-        : `• Setup: ${signal.setup || 'Technical structure confirmation'}`;
+        : `• ${signal.setup || 'تأكيد الهيكل الفني وسلوك السعر'}`;
 
-    const invalidation = signal.invalidation || 'N/A';
+    const invalidation = signal.invalidation && signal.invalidation !== 'N/A' ? signal.invalidation : null;
     const timeFormatted = `${new Date(signal.timestamp || Date.now()).toISOString().replace('T', ' ').substring(0, 19)} UTC`;
 
-    return [
+    const lines: string[] = [
       title,
-      `Order: ${orderType}`,
-      `Entry: ${entryFormatted}`,
-      `SL: ${slFormatted}`,
-      `TP1: ${tp1Formatted}`,
-      `TP2: ${tp2Formatted}`,
-      `Risk: ${riskPercent}`,
-      `Risk Amount: ${riskAmount}`,
-      `RR TP1: ${tp1Rr}`,
-      `RR TP2: ${tp2Rr}`,
-      `Confidence: ${confidence}`,
-      '',
-      'Reasons:',
-      reasonsList,
-      '',
-      'Invalidation:',
-      invalidation,
-      '',
-      'Time:',
-      timeFormatted,
-    ].join('\n');
+      `💰 السعر وقت التحليل: ${analysisPrice}`,
+      `${entryLabel}: ${entryFormatted}`,
+      `🛑 Stop Loss: ${slFormatted}`,
+      `🎯 TP1: ${tp1Formatted} (عائد ${tp1Rr})`,
+      `🎯 TP2: ${tp2Formatted}${tp2Formatted !== 'N/A' ? ` (عائد ${tp2Rr})` : ''}`,
+      `⚖️ Risk: ${riskPercent} (${riskAmount})`,
+      `📈 RR: ${overallRr}`,
+      `📊 Confidence: ${confidence}`,
+    ];
+
+    if (signal.setup && signal.setup !== 'None' && signal.setup !== 'No Setup') {
+      lines.push(`📐 Setup: ${signal.setup}`);
+    }
+
+    lines.push('', '🧠 الأسباب:', reasonsList);
+
+    if (invalidation) {
+      lines.push('', '⚠️ شروط الإلغاء / المخاطرة:', invalidation);
+    }
+
+    lines.push('', `⏱️ وقت الفحص: ${timeFormatted}`);
+
+    return lines.join('\n');
   }
 
   /**
-   * Format for NO TRADE
+   * Format for NO TRADE / REJECTED
+   * Dynamically formats rejection reasons from actual scanner / AI analysis
    */
-  private formatNoTradeMessage(reason: string, timestamp: number): string {
+  private formatNoTradeMessage(
+    reason: string,
+    timestamp: number,
+    analysisPrice?: number,
+    signalDetails?: Partial<TradeSignal>
+  ): string {
     const timeFormatted = `${new Date(timestamp).toISOString().replace('T', ' ').substring(0, 19)} UTC`;
-    return [
-      '⚪ XAU/USD — NO TRADE',
-      '',
-      'Reason:',
-      reason || 'السوق لا يحقق شروط الدخول الصارمة لحماية رأس المال.',
-      '',
-      'Time:',
-      timeFormatted,
-    ].join('\n');
+
+    // Real XAU/USD market price at the exact moment of the scan
+    const priceValue = typeof analysisPrice === 'number' && !isNaN(analysisPrice) && analysisPrice > 0
+      ? analysisPrice
+      : (typeof signalDetails?.currentPrice === 'number' && signalDetails.currentPrice > 0
+          ? signalDetails.currentPrice
+          : null);
+    const priceFormatted = priceValue !== null ? priceValue.toFixed(2) : 'N/A';
+
+    // Determine the nature of rejection
+    const rawSetup = signalDetails?.setup;
+    const hasSpecificSetup =
+      rawSetup &&
+      rawSetup !== 'None' &&
+      rawSetup !== 'No Setup' &&
+      rawSetup !== 'CAPITAL_GUARD_BLOCK' &&
+      rawSetup !== 'Market Structure Ranging' &&
+      rawSetup !== 'SCAN_FAILED';
+
+    const isConfidenceFailure =
+      reason.includes('نسبة الثقة') ||
+      reason.includes('Confidence');
+
+    const isRiskFailure =
+      reason.includes('Risk') ||
+      reason.includes('RR') ||
+      reason.includes('مخاطر') ||
+      reason.includes('عائد') ||
+      reason.includes('وقف الخسارة');
+
+    let statusLine = '❌ لا توجد فرصة تداول حالياً';
+    if (hasSpecificSetup || isConfidenceFailure || isRiskFailure) {
+      statusLine = hasSpecificSetup ? `❌ تم رفض الإعداد: ${rawSetup}` : '❌ تم رفض الإعداد';
+    } else if (rawSetup === 'CAPITAL_GUARD_BLOCK') {
+      statusLine = '🛡️ حماية رأس المال: تم حظر التداول';
+    }
+
+    const lines: string[] = [
+      '⚪ NO TRADE',
+      `💰 السعر وقت التحليل: ${priceFormatted}`,
+      statusLine,
+      `🧠 السبب: ${reason || 'لا يوجد تأكيد هيكلي كافٍ بعد.'}`,
+    ];
+
+    // Additional dynamic details from analysis if available
+    if (signalDetails?.mainReasons && signalDetails.mainReasons.length > 0) {
+      const extraReasons = signalDetails.mainReasons.filter(
+        (r) => r && r !== reason && !reason.includes(r)
+      );
+      if (extraReasons.length > 0) {
+        lines.push('', '📋 ملاحظات التحليل:');
+        extraReasons.forEach((r) => lines.push(`• ${r}`));
+      }
+    }
+
+    if ((hasSpecificSetup || isConfidenceFailure) && typeof signalDetails?.confidence === 'number' && signalDetails.confidence > 0) {
+      lines.push(`📊 نسبة الثقة: ${signalDetails.confidence}%`);
+    }
+
+    if (signalDetails?.invalidation && signalDetails.invalidation !== 'N/A') {
+      lines.push(`⚠️ شرط الإبطال: ${signalDetails.invalidation}`);
+    }
+
+    lines.push('', `⏱️ الوقت: ${timeFormatted}`);
+
+    return lines.join('\n');
   }
 
   /**
    * Format for SCAN ERROR
    */
-  private formatErrorMessage(error: string, timestamp: number): string {
+  private formatErrorMessage(error: string, timestamp: number, analysisPrice?: number): string {
     const timeFormatted = `${new Date(timestamp).toISOString().replace('T', ' ').substring(0, 19)} UTC`;
+    const priceFormatted = typeof analysisPrice === 'number' && !isNaN(analysisPrice) && analysisPrice > 0
+      ? analysisPrice.toFixed(2)
+      : 'N/A';
+
     return [
       '⚠️ XAU/USD — SCAN ERROR',
+      `💰 السعر وقت التحليل: ${priceFormatted}`,
+      '❌ تعذر استكمال فحص السوق',
+      `🧠 السبب: ${error || 'خطأ غير معروف في الاتصال أو التحليل.'}`,
       '',
-      'Reason:',
-      error || 'تعذر استكمال فحص السوق.',
-      '',
-      'Time:',
-      timeFormatted,
+      `⏱️ الوقت: ${timeFormatted}`,
     ].join('\n');
   }
 }

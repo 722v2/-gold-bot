@@ -308,6 +308,17 @@ class LiveMarketScanner {
         this.config.lastDecision = 'NO TRADE';
         this.config.lastSignal = noTradeSignal;
         this.config.lastScanStatus = blockReason;
+
+        telegramService.sendNoTradeNotification(
+          noTradeSignal.id,
+          blockReason,
+          noTradeSignal.timestamp,
+          currentPrice,
+          noTradeSignal
+        ).catch((tgErr) => {
+          console.error('[LiveMarketScanner] Telegram Capital Guard notification error:', tgErr?.message || tgErr);
+        });
+
         return noTradeSignal;
       }
 
@@ -480,6 +491,7 @@ class LiveMarketScanner {
         }
 
         // Dispatch Telegram notification for newly qualified signal (Requirement 4 & 5)
+        signal.currentPrice = currentPrice;
         telegramService.sendSignalNotification(signal, scanId).catch((tgErr) => {
           console.error('[LiveMarketScanner] Telegram notification error:', tgErr?.message || tgErr);
         });
@@ -504,8 +516,26 @@ class LiveMarketScanner {
         this.config.lastSignal = signal;
         this.config.lastScanStatus = `آخر فحص: ${new Date().toLocaleTimeString()} - القرار: NO TRADE (حماية رأس المال - عدم اكتمال الشروط الصارمة)`;
 
-        // Dispatch Telegram notification for NO TRADE (Requirement 4 & 6)
-        telegramService.sendNoTradeNotification(scanId, signal.noTradeReason || 'حماية رأس المال - عدم اكتمال الشروط الصارمة للدخول', signal.timestamp).catch((tgErr) => {
+        // Resolve dynamic rejection reason based on actual scan analysis
+        let dynamicRejectionReason = signal.noTradeReason;
+        if (signal.signal !== 'NO TRADE' && signal.confidence < this.config.minConfidence) {
+          dynamicRejectionReason = `نسبة الثقة في الإشارة (${signal.confidence}%) أقل من الحد الأدنى المطلوب (${this.config.minConfidence}%).`;
+        } else if (!dynamicRejectionReason && signal.mainReasons && signal.mainReasons.length > 0) {
+          dynamicRejectionReason = signal.mainReasons[0];
+        } else if (!dynamicRejectionReason) {
+          dynamicRejectionReason = 'لا توجد فرصة تداول حالياً: عدم اكتمال شروط الهيكل والسيولة وإدارة المخاطر.';
+        }
+
+        signal.currentPrice = currentPrice;
+
+        // Dispatch Telegram notification for NO TRADE with exact Biquote price and dynamic analysis reasons
+        telegramService.sendNoTradeNotification(
+          scanId,
+          dynamicRejectionReason,
+          signal.timestamp || Date.now(),
+          currentPrice,
+          signal
+        ).catch((tgErr) => {
           console.error('[LiveMarketScanner] Telegram NO TRADE notification error:', tgErr?.message || tgErr);
         });
 
@@ -585,7 +615,12 @@ class LiveMarketScanner {
       console.log('[SCANNER] scan completed (with error)');
 
       // Dispatch Telegram notification for scan failure (Requirement 4)
-      telegramService.sendErrorNotification(errorSignal.id, error?.message || 'Scan execution failure', errorSignal.timestamp).catch((tgErr) => {
+      telegramService.sendErrorNotification(
+        errorSignal.id,
+        error?.message || 'Scan execution failure',
+        errorSignal.timestamp,
+        fallbackPrice
+      ).catch((tgErr) => {
         console.error('[LiveMarketScanner] Telegram ERROR notification error:', tgErr?.message || tgErr);
       });
 
