@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gold AI Challenge Scanner</title>
+    <meta name="description" content="AI-powered XAU/USD scalping and risk management system for small accounts" />
+    <meta property="og:title" content="Gold AI Challenge Scanner" />
+    <meta property="og:description" content="AI-powered XAU/USD scalping and risk management system for small accounts" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      // Early safety handler for benign Vite WebSocket closures in preview iframe
+      window.addEventListener('unhandledrejection', function (event) {
+        var str = event && event.reason ? String(event.reason.message || event.reason) : '';
+        if (
+          str.indexOf('WebSocket') !== -1 ||
+          str.indexOf('websocket') !== -1 ||
+          str.indexOf('closed without opened') !== -1 ||
+          str.indexOf('failed to connect') !== -1
+        ) {
+          event.preventDefault();
+          if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+        }
+      });
+      window.addEventListener('error', function (event) {
+        var str = event && event.message ? String(event.message) : '';
+        if (
+          str.indexOf('WebSocket') !== -1 ||
+          str.indexOf('websocket') !== -1 ||
+          str.indexOf('closed without opened') !== -1
+        ) {
+          event.preventDefault();
+          if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+        }
+      });
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

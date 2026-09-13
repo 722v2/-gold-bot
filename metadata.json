@@ -1,0 +1,7 @@
+{
+  "name": "Gold AI Challenge Scanner",
+  "description": "AI-powered XAU/USD scalping and risk management system for small accounts",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

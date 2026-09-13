@@ -1,0 +1,30 @@
+[
+  {
+    "riskPercent": 15,
+    "sl": 2706.5,
+    "tradeNumber": 1,
+    "balanceAfterTrade": 10,
+    "riskAmount": 1.5,
+    "id": "trade_1788789672022",
+    "exitPrice": 2710.5,
+    "tp2Points": 120,
+    "isActive": false,
+    "isoTime": "2026-09-07T14:01:12.024Z",
+    "tp1Points": 80,
+    "rr": "1:2.0",
+    "tp1": 2718.5,
+    "setup": "ICT SMC Engine",
+    "direction": "BUY NOW",
+    "asset": "XAU/USD",
+    "notes": "Executed via MT5 Bridge [Mode: DEMO] - Status: SIMULATED_DEMO (Voided legacy test record)",
+    "entry": 2710.5,
+    "exitTime": "2026-09-07T14:01:12.024Z",
+    "lotSize": 0.01,
+    "confidence": 75,
+    "tp2": 2722.5,
+    "date": "٧ سبتمبر، ٠٢:٠١ م",
+    "result": "VOID",
+    "pl": 0,
+    "slPoints": 40
+  }
+]

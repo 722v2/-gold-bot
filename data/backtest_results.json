@@ -1,0 +1,132 @@
+{
+  "runId": "btrun_1788881035866_eikqk",
+  "runTimestamp": 1788881035866,
+  "initialCapital": 15,
+  "finalBalance": 15,
+  "netProfit": 0,
+  "netProfitPercent": 0,
+  "totalTrades": 0,
+  "wins": 0,
+  "losses": 0,
+  "ambiguousTrades": 0,
+  "winRate": 0,
+  "profitFactor": 0,
+  "maxDrawdown": 0,
+  "maxDrawdownPercent": 0,
+  "medianRR": 0,
+  "averageRR": 0,
+  "maxRR": 0,
+  "pctTradesRrAbove5": 0,
+  "pctTradesRrAbove10": 0,
+  "noTradeCountSub2RR": 16,
+  "rejectedByDailyRiskLimit": 0,
+  "rejectedByMinimumLotRisk": 27,
+  "tradesUsingAddon": 0,
+  "addonRejectedRiskCount": 0,
+  "maxDailyAggregateRisk": 0,
+  "maxActualPerTradeRisk": 0,
+  "maxBufferUsed": 0.77,
+  "avgBufferUsed": 0,
+  "dailyRiskTaken": {},
+  "largestWin": 0,
+  "largestLoss": 0,
+  "averageWin": 0,
+  "averageLoss": 0,
+  "maxConsecutiveWins": 0,
+  "maxConsecutiveLosses": 0,
+  "dailyTradesDistribution": {},
+  "timeRange": "7D",
+  "candlesEvaluated": 289,
+  "candlesCount1h": 25,
+  "candlesCount15m": 96,
+  "candlesCount5m": 289,
+  "startTimestamp": 1788781800000,
+  "endTimestamp": 1788880800000,
+  "startDate": "2026-09-07",
+  "endDate": "2026-09-08",
+  "trades": [],
+  "equityCurve": [
+    {
+      "time": "2026-09-07 11:50",
+      "timestamp": 1788781800000,
+      "balance": 15
+    }
+  ],
+  "validationReport": {
+    "provider": "BIQUOTE",
+    "symbol": "XAUUSD",
+    "timeframe": "5M",
+    "requestedPeriod": "7D",
+    "requestedStartTime": 1788276235866,
+    "requestedEndTime": 1788881035866,
+    "requestedStartDate": "2026-09-01T15:23:55.866Z",
+    "requestedEndDate": "2026-09-08T15:23:55.866Z",
+    "requestedCandles": 2016,
+    "returnedCandles": 289,
+    "earliestTimestamp": 1788781800000,
+    "latestTimestamp": 1788880800000,
+    "actualEarliestCandleTime": 1788781800000,
+    "actualLatestCandleTime": 1788880800000,
+    "actualEarliestDate": "2026-09-07T11:50:00.000Z",
+    "actualLatestDate": "2026-09-08T15:20:00.000Z",
+    "candleCounts": {
+      "5m": 289,
+      "15m": 193,
+      "1h": 169
+    },
+    "gaps": [
+      {
+        "timeframe": "5M",
+        "gapStart": "2026-09-07 18:25:00",
+        "gapEnd": "2026-09-07 22:00:00",
+        "gapDurationHours": 3.6,
+        "reason": "Unexpected Intraday Data Gap"
+      },
+      {
+        "timeframe": "15M",
+        "gapStart": "2026-09-04 20:45:00",
+        "gapEnd": "2026-09-06 22:00:00",
+        "gapDurationHours": 49.3,
+        "reason": "Weekend Market Closure (Normal Forex/Gold MT5)"
+      },
+      {
+        "timeframe": "15M",
+        "gapStart": "2026-09-07 18:15:00",
+        "gapEnd": "2026-09-07 22:00:00",
+        "gapDurationHours": 3.8,
+        "reason": "Unexpected Intraday Data Gap"
+      },
+      {
+        "timeframe": "1H",
+        "gapStart": "2026-08-28 20:00:00",
+        "gapEnd": "2026-08-30 22:00:00",
+        "gapDurationHours": 50,
+        "reason": "Weekend Market Closure (Normal Forex/Gold MT5)"
+      },
+      {
+        "timeframe": "1H",
+        "gapStart": "2026-09-04 20:00:00",
+        "gapEnd": "2026-09-06 22:00:00",
+        "gapDurationHours": 50,
+        "reason": "Weekend Market Closure (Normal Forex/Gold MT5)"
+      },
+      {
+        "timeframe": "1H",
+        "gapStart": "2026-09-07 18:00:00",
+        "gapEnd": "2026-09-07 22:00:00",
+        "gapDurationHours": 4,
+        "reason": "Unexpected Intraday Data Gap"
+      }
+    ],
+    "duplicatesCount": {
+      "5m": 1,
+      "15m": 1,
+      "1h": 0
+    },
+    "coverageRatio": 0.164,
+    "coverage": 0.164,
+    "isFullCoverage": false,
+    "status": "INSUFFICIENT_DATA",
+    "message": "بيانات Biquote لشموع 5M المتوفرة هي 289 شمعة تغطي 1.15 يوم فقط (من 2026-09-07T11:50:00.000Z إلى 2026-09-08T15:20:00.000Z) بينما الفترة المطلوبة 7D تبدأ من 2026-09-01T15:23:55.866Z. نسبة التغطية الفعلية: 16.4%."
+  }
+}

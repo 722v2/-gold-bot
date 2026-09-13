@@ -1,0 +1,110 @@
+{
+  "entities": {
+    "AppSettings": {
+      "title": "AppSettings",
+      "description": "Application settings and trading configuration",
+      "type": "object",
+      "properties": {
+        "capitalSource": { "type": "string" },
+        "manualCapital": { "type": "number" },
+        "riskPerTrade": { "type": "number" },
+        "maxRiskPerTrade": { "type": "number" },
+        "minTp1RR": { "type": "number" },
+        "targetTp2RR": { "type": "number" },
+        "minimumConfidence": { "type": "number" },
+        "executionMode": { "type": "string" },
+        "accountMode": { "type": "string" },
+        "autoTradingEnabled": { "type": "boolean" },
+        "symbol": { "type": "string" }
+      }
+    },
+    "AccountState": {
+      "title": "AccountState",
+      "description": "Account balance and capital state",
+      "type": "object",
+      "properties": {
+        "startingBalance": { "type": "number" },
+        "currentBalance": { "type": "number" },
+        "lastUpdated": { "type": "string" }
+      }
+    },
+    "TradeItem": {
+      "title": "TradeItem",
+      "description": "Executed or recorded trade ledger entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tradeNumber": { "type": "number" },
+        "asset": { "type": "string" },
+        "direction": { "type": "string" },
+        "entry": { "type": "number" },
+        "sl": { "type": "number" },
+        "tp1": { "type": "number" },
+        "tp2": { "type": "number" },
+        "result": { "type": "string" },
+        "pl": { "type": "number" },
+        "isActive": { "type": "boolean" }
+      }
+    },
+    "TradeOutcome": {
+      "title": "TradeOutcome",
+      "description": "Trade resolution outcome record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tradeId": { "type": "string" },
+        "outcome": { "type": "string" },
+        "timestamp": { "type": "number" }
+      }
+    },
+    "SignalItem": {
+      "title": "SignalItem",
+      "description": "Generated scanner trading signal",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "signal": { "type": "string" },
+        "currentPrice": { "type": "number" },
+        "entry": { "type": "number" },
+        "timestamp": { "type": "number" }
+      }
+    },
+    "ScanItem": {
+      "title": "ScanItem",
+      "description": "Scanner tick history record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "currentPrice": { "type": "number" },
+        "signal": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/app_settings/{settingId}": {
+      "schema": "AppSettings",
+      "description": "Global application configuration"
+    },
+    "/account_state/{stateId}": {
+      "schema": "AccountState",
+      "description": "Account balance tracking"
+    },
+    "/trade_ledger/{tradeId}": {
+      "schema": "TradeItem",
+      "description": "Historical and open trades"
+    },
+    "/trade_outcomes/{outcomeId}": {
+      "schema": "TradeOutcome",
+      "description": "Trade outcome resolution logs"
+    },
+    "/signals/{signalId}": {
+      "schema": "SignalItem",
+      "description": "Saved scanner trading signals"
+    },
+    "/scans/{scanId}": {
+      "schema": "ScanItem",
+      "description": "Scanner tick execution history"
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "capitalSource": "MANUAL",
+  "manualCapital": 25,
+  "riskPerTrade": 20,
+  "maxRiskPerTrade": 20,
+  "minTp1RR": 1.7,
+  "targetTp2RR": 2.5,
+  "minimumConfidence": 75,
+  "executionMode": "DEMO",
+  "accountMode": "DEMO",
+  "autoTradingEnabled": false,
+  "symbol": "XAUUSD",
+  "timeframes": [
+    "1H",
+    "15M",
+    "5M",
+    "1M"
+  ],
+  "allowedSignalTypes": [
+    "BUY NOW",
+    "SELL NOW",
+    "BUY LIMIT",
+    "SELL LIMIT",
+    "NO TRADE"
+  ],
+  "contractSizeOz": 100,
+  "minimumLot": 0.01,
+  "maximumLot": 100,
+  "lotStep": 0.01,
+  "minGoldSlPoints": 40,
+  "maxGoldSlPoints": 50,
+  "updatedAt": 1789319905073
+}
