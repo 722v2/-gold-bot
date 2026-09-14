@@ -387,7 +387,9 @@ class TelegramService {
     const lowerReason = cleanReason.toLowerCase();
     const lowerSetup = rawSetup.toLowerCase();
 
-    // 1. Check if a real, specific technical setup was identified
+    // =========================================================================
+    // 1. Identify specific named technical setups (from setup metadata or reason)
+    // =========================================================================
     const isGenericSetupName =
       !rawSetup ||
       lowerSetup === 'none' ||
@@ -395,76 +397,153 @@ class TelegramService {
       lowerSetup === 'no_setup' ||
       lowerSetup === 'market structure ranging' ||
       lowerSetup === 'ranging market' ||
+      lowerSetup === 'market structure setup' ||
+      lowerSetup === 'market structure' ||
       lowerSetup === 'neutral' ||
       lowerSetup === 'capital_guard_block' ||
-      lowerSetup === 'scan_failed';
+      lowerSetup === 'scan_failed' ||
+      lowerSetup === 'unknown' ||
+      lowerSetup === 'n/a';
 
-    const isKnownSetupPattern =
+    const hasOrderBlock =
       lowerSetup.includes('order block') ||
+      lowerSetup.includes('orderblock') ||
+      lowerSetup.includes('ob retest') ||
+      lowerSetup.includes('أوردر بلوك');
+
+    const hasFvg =
       lowerSetup.includes('fvg') ||
       lowerSetup.includes('fair value gap') ||
-      lowerSetup.includes('liquidity') ||
-      lowerSetup.includes('sweep') ||
+      lowerSetup.includes('imbalance') ||
+      lowerSetup.includes('فجوة سعرية');
+
+    const hasLiquiditySweep =
+      lowerSetup.includes('liquidity sweep') ||
+      lowerSetup.includes('ssl sweep') ||
+      lowerSetup.includes('bsl sweep') ||
+      lowerSetup.includes('turtle soup') ||
+      lowerSetup.includes('sweep reversal') ||
+      (lowerSetup.includes('sweep') && !lowerSetup.includes('ranging')) ||
+      lowerSetup.includes('سحب سيولة');
+
+    const hasFibonacciOte =
       lowerSetup.includes('fibonacci') ||
       lowerSetup.includes('ote') ||
+      lowerSetup.includes('golden pocket') ||
+      lowerSetup.includes('فيبوناتشي');
+
+    const hasTrendContinuation =
       lowerSetup.includes('trend continuation') ||
-      lowerSetup.includes('breaker') ||
-      lowerSetup.includes('mitigation') ||
-      lowerSetup.includes('structure break') ||
+      lowerSetup.includes('continuation pullback') ||
+      lowerSetup.includes('استمرار الاتجاه');
+
+    const hasMeanReversion =
+      lowerSetup.includes('mean reversion') ||
+      lowerSetup.includes('rsi extreme');
+
+    const hasStructureBreak =
       lowerSetup.includes('bos') ||
       lowerSetup.includes('choch') ||
-      lowerSetup.includes('supply') ||
-      lowerSetup.includes('demand') ||
-      lowerSetup.includes('imbalance');
+      lowerSetup.includes('structure break') ||
+      lowerSetup.includes('breaker block') ||
+      lowerSetup.includes('mitigation block');
 
-    const hasSpecificNamedSetup =
-      isKnownSetupPattern ||
+    const isNamedTechnicalSetup =
+      hasOrderBlock ||
+      hasFvg ||
+      hasLiquiditySweep ||
+      hasFibonacciOte ||
+      hasTrendContinuation ||
+      hasMeanReversion ||
+      hasStructureBreak ||
       (!isGenericSetupName &&
         !lowerSetup.includes('ranging') &&
         !lowerSetup.includes('no trade') &&
-        !lowerSetup.includes('no setup'));
+        !lowerSetup.includes('no setup') &&
+        !lowerSetup.includes('neutral') &&
+        !lowerSetup.includes('unknown'));
 
-    if (hasSpecificNamedSetup) {
-      return true;
+    if (isNamedTechnicalSetup) {
+      return true; // REAL SETUP DETECTED AND EVALUATED, BUT REJECTED -> SEND
     }
 
-    // 2. Check if a specific risk management, executability, or technical constraint rule blocked an evaluated trade
-    const isSpecificRiskOrExecutionBlock =
-      // Max Loss limit exceeded
+    // =========================================================================
+    // 2. Identify generic / uninformative reasons where NO real setup existed
+    // =========================================================================
+    const isExplicitlyGenericReason =
+      cleanReason.startsWith('لا توجد فرصة تداول مؤكدة حالياً') ||
+      cleanReason.startsWith('لا توجد فرصة تداول حالياً') ||
+      cleanReason.includes('عدم توفر شروط الدخول لأي من استراتيجيات') ||
+      cleanReason.includes('السوق حالياً في نطاق تذبذب وتجميع عرضي') ||
+      cleanReason.includes('منطقة تذبذب محايدة') ||
+      cleanReason.includes('عدم اكتمال شروط الهيكل والسيولة') ||
+      cleanReason.includes('حماية رأس المال - عدم اكتمال الشروط') ||
+      cleanReason.includes('لا يوجد تأكيد هيكلي كافٍ بعد') ||
+      cleanReason.includes('MT5 / Broker is DISCONNECTED') ||
+      cleanReason.includes('حساب MT5 غير متصل') ||
+      cleanReason.includes('خطأ أثناء فحص السوق') ||
+      cleanReason.includes('فحص تلقائي غير مكتمل');
+
+    // =========================================================================
+    // 3. Identify specific risk management, executability, or constraint blocks
+    //    on an evaluated candidate trade
+    // =========================================================================
+    const isMaxLossBlock =
       lowerReason.includes('max loss') ||
       cleanReason.includes('سقف الخسارة') ||
-      // Minimum lot or position sizing not executable
+      Boolean(signalDetails?.positionSizing?.nonExecutableReason?.toLowerCase().includes('max loss')) ||
+      Boolean(signalDetails?.nonExecutableReason?.toLowerCase().includes('max loss'));
+
+    const isMinimumLotBlock =
       lowerReason.includes('minimum lot') ||
-      lowerReason.includes('not executable') ||
       lowerReason.includes('minimum broker lot') ||
       cleanReason.includes('أقل لوت') ||
-      cleanReason.includes('حماية اللوت') ||
       cleanReason.includes('حجم العقد') ||
-      // SL constraints violated (min/max points, structural bounds)
+      cleanReason.includes('حماية اللوت') ||
+      signalDetails?.isExecutable === false ||
+      signalDetails?.positionSizing?.isExecutable === false;
+
+    const isSlConstraintsBlock =
       lowerReason.includes('sl constraints') ||
       cleanReason.includes('الـstop loss المطلوب') ||
       cleanReason.includes('الـstop loss الفني') ||
       cleanReason.includes('مسافة وقف الخسارة') ||
       cleanReason.includes('الحد الأدنى المسموح للذهب') ||
       cleanReason.includes('الحد الأقصى المسموح للذهب') ||
-      cleanReason.includes('نطاق الـstop loss') ||
-      // Specific RR failure on evaluated targets (TP1 / TP2)
+      cleanReason.includes('نطاق الـstop loss');
+
+    const isRrValidationBlock =
       cleanReason.includes('نسبة العائد إلى المخاطرة للهدف') ||
       (cleanReason.includes('أقل من 1:') && cleanReason.includes('-> no trade')) ||
-      lowerReason.includes('rr validation') ||
-      // Invalidation or entry/SL distance bounds
-      cleanReason.includes('الفرق بين سعر الدخول والـstop loss غير كافٍ') ||
-      cleanReason.includes('تتجاوز الحد الأقصى الصارم المسموح به') ||
-      // Specific confidence failure on an analyzed candidate
+      lowerReason.includes('rr validation');
+
+    const isConfidenceBlock =
+      Boolean(signalDetails?.signal && signalDetails.signal !== 'NO TRADE') ||
       (cleanReason.includes('نسبة الثقة في الإشارة') &&
         typeof signalDetails?.confidence === 'number' &&
         signalDetails.confidence > 0);
 
-    if (isSpecificRiskOrExecutionBlock) {
-      return true;
+    const isSpecificRiskOrExecutionBlock =
+      isMaxLossBlock ||
+      isMinimumLotBlock ||
+      isSlConstraintsBlock ||
+      isRrValidationBlock ||
+      isConfidenceBlock;
+
+    // If an explicit generic reason is present and no real risk block occurred:
+    if (isExplicitlyGenericReason && !isSpecificRiskOrExecutionBlock) {
+      return false; // NO SETUP FOUND -> SUPPRESS
     }
 
-    // 3. Otherwise: generic/uninformative "no setup found" condition -> Suppress from Telegram
+    if (isSpecificRiskOrExecutionBlock) {
+      // Ensure it's not a generic capital guard or scan failure masquerading as risk block
+      if (lowerSetup === 'capital_guard_block' || lowerSetup === 'scan_failed') {
+        return false;
+      }
+      return true; // REAL TRADE EVALUATED BUT BLOCKED BY RISK / LIMITS -> SEND
+    }
+
+    // 4. Default: Any generic/uninformative "no setup" condition -> Suppress from Telegram
     return false;
   }
 
