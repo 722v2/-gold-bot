@@ -2,7 +2,7 @@
   "capitalSource": "MANUAL",
   "manualCapital": 26.5,
   "riskPerTrade": 15.3,
-  "maxRiskPerTrade": 20,
+  "maxRiskPerTrade": 19,
   "minTp1RR": 1.5,
   "targetTp2RR": 2.5,
   "minimumConfidence": 75,
@@ -30,5 +30,5 @@
   "minGoldSlPoints": 40,
   "maxGoldSlPoints": 50,
   "maxLoss": 5,
-  "updatedAt": 1789328380407
+  "updatedAt": 1789375263970
 }
