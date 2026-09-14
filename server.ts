@@ -19,6 +19,7 @@ import { tradeMonitor } from './server/tradeMonitor.js';
 import { tradeManagementEngine } from './server/tradeManagementEngine.js';
 import { runTradeManagementTests } from './server/tradeManagementTests.js';
 import { runAccountingTests } from './server/accountingTests.js';
+import { globalLifecycleManager, globalPoiTracker } from './server/tradeQualityEngine.js';
 
 async function startServer() {
   const app = express();
@@ -356,6 +357,18 @@ async function startServer() {
       const updated = storage.updateBalance(currentBalance, startingBalance);
       res.json({ success: true, ...updated });
     } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  app.post('/api/trades/reset-state', async (req, res) => {
+    try {
+      const result = await storage.resetTradingState();
+      globalLifecycleManager.clear();
+      globalPoiTracker.clear();
+      res.json(result);
+    } catch (error: any) {
+      console.error('[API /api/trades/reset-state] Reset failed:', error);
       res.status(500).json({ success: false, error: error.message });
     }
   });

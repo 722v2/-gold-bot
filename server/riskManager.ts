@@ -13,6 +13,7 @@ export interface BrokerContractSpecs {
 
 export interface RiskCalculationParams {
   balance: number;
+  riskPercent?: number;
   entry: number;
   stopLoss: number;
   tp1: number;
@@ -426,7 +427,7 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
   const minGoldSlPoints = brokerSpecs.minGoldSlPoints ?? DEFAULT_BROKER_SPECS.minGoldSlPoints ?? 40;
   const maxGoldSlPoints = brokerSpecs.maxGoldSlPoints ?? DEFAULT_BROKER_SPECS.maxGoldSlPoints ?? 50;
   const minRr = brokerSpecs.minRr ?? DEFAULT_BROKER_SPECS.minRr;
-  const configuredRiskPercent = brokerSpecs.riskPercent ?? DEFAULT_BROKER_SPECS.riskPercent;
+  const configuredRiskPercent = params.riskPercent ?? brokerSpecs.riskPercent ?? DEFAULT_BROKER_SPECS.riskPercent;
 
   const emptyPositionSizing: PositionSizingDetails = {
     accountBalance: balance,

@@ -438,3 +438,307 @@ export function analyzeTechnicals(candles: Candle[]): TechnicalIndicators {
     regimeContext,
   };
 }
+
+// ============================================================================
+// PATTERN RECOGNITION HELPERS FOR EXPANDED PRICE ACTION DETECTOR (S10 - S13)
+// ============================================================================
+
+export interface DoubleTopBottomPattern {
+  found: boolean;
+  type?: 'DOUBLE_TOP' | 'DOUBLE_BOTTOM';
+  pivot1: number;
+  pivot2: number;
+  pivot1Index: number;
+  pivot2Index: number;
+  pivot1Time: number;
+  pivot2Time: number;
+  neckline: number;
+  extremeLevel: number;
+  patternAnchorKey: string;
+}
+
+/**
+ * Detects Double Top (M-formation) or Double Bottom (W-formation) from candle series
+ */
+export function detectDoubleTopBottom(candles: Candle[], atr14: number): DoubleTopBottomPattern[] {
+  const results: DoubleTopBottomPattern[] = [];
+  if (candles.length < 15) return results;
+
+  const window = Math.min(50, candles.length);
+  const slice = candles.slice(-window);
+
+  // Identify swing highs and swing lows (3-candle pivot)
+  const swingHighs: { index: number; high: number; timestamp: number }[] = [];
+  const swingLows: { index: number; low: number; timestamp: number }[] = [];
+
+  for (let i = 2; i < slice.length - 1; i++) {
+    if (slice[i].high >= slice[i - 1].high && slice[i].high >= slice[i - 2].high && slice[i].high >= slice[i + 1].high) {
+      swingHighs.push({ index: i, high: slice[i].high, timestamp: slice[i].timestamp });
+    }
+    if (slice[i].low <= slice[i - 1].low && slice[i].low <= slice[i - 2].low && slice[i].low <= slice[i + 1].low) {
+      swingLows.push({ index: i, low: slice[i].low, timestamp: slice[i].timestamp });
+    }
+  }
+
+  // Check Double Tops (M-Formation)
+  for (let a = 0; a < swingHighs.length - 1; a++) {
+    for (let b = a + 1; b < swingHighs.length; b++) {
+      const p1 = swingHighs[a];
+      const p2 = swingHighs[b];
+      const sep = p2.index - p1.index;
+
+      if (sep >= 3 && sep <= 30) {
+        const diff = Math.abs(p1.high - p2.high);
+        if (diff <= Math.max(0.8 * atr14, 1.20)) {
+          // Find neckline (trough between the two peaks)
+          const midSlice = slice.slice(p1.index, p2.index + 1);
+          const neckline = Math.min(...midSlice.map((c) => c.low));
+          const depth = Math.max(p1.high, p2.high) - neckline;
+
+          if (depth >= Math.max(0.6 * atr14, 1.00)) {
+            // Confirm recent candles near/after second peak show reaction (within 8 candles of peak 2)
+            const candlesSinceP2 = slice.length - 1 - p2.index;
+            if (candlesSinceP2 <= 8) {
+              const recentCandle = slice[slice.length - 1];
+              const upperWick = recentCandle.high - Math.max(recentCandle.open, recentCandle.close);
+              const totalRange = Math.max(0.01, recentCandle.high - recentCandle.low);
+              const isRejection = (upperWick >= totalRange * 0.25 || recentCandle.close < recentCandle.open) &&
+                recentCandle.close <= Math.max(p1.high, p2.high) + 0.5;
+
+              if (isRejection) {
+                const anchorKey = `DOUBLE_TOP_${p1.timestamp}_${p2.timestamp}`;
+                results.push({
+                  found: true,
+                  type: 'DOUBLE_TOP',
+                  pivot1: p1.high,
+                  pivot2: p2.high,
+                  pivot1Index: p1.index,
+                  pivot2Index: p2.index,
+                  pivot1Time: p1.timestamp,
+                  pivot2Time: p2.timestamp,
+                  neckline,
+                  extremeLevel: Math.max(p1.high, p2.high),
+                  patternAnchorKey: anchorKey,
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Check Double Bottoms (W-Formation)
+  for (let a = 0; a < swingLows.length - 1; a++) {
+    for (let b = a + 1; b < swingLows.length; b++) {
+      const p1 = swingLows[a];
+      const p2 = swingLows[b];
+      const sep = p2.index - p1.index;
+
+      if (sep >= 3 && sep <= 30) {
+        const diff = Math.abs(p1.low - p2.low);
+        if (diff <= Math.max(0.8 * atr14, 1.20)) {
+          // Find neckline (peak between the two troughs)
+          const midSlice = slice.slice(p1.index, p2.index + 1);
+          const neckline = Math.max(...midSlice.map((c) => c.high));
+          const depth = neckline - Math.min(p1.low, p2.low);
+
+          if (depth >= Math.max(0.6 * atr14, 1.00)) {
+            // Confirm recent candles near/after second trough show reaction (within 8 candles of trough 2)
+            const candlesSinceP2 = slice.length - 1 - p2.index;
+            if (candlesSinceP2 <= 8) {
+              const recentCandle = slice[slice.length - 1];
+              const lowerWick = Math.min(recentCandle.open, recentCandle.close) - recentCandle.low;
+              const totalRange = Math.max(0.01, recentCandle.high - recentCandle.low);
+              const isRejection = (lowerWick >= totalRange * 0.25 || recentCandle.close > recentCandle.open) &&
+                recentCandle.close >= Math.min(p1.low, p2.low) - 0.5;
+
+              if (isRejection) {
+                const anchorKey = `DOUBLE_BOTTOM_${p1.timestamp}_${p2.timestamp}`;
+                results.push({
+                  found: true,
+                  type: 'DOUBLE_BOTTOM',
+                  pivot1: p1.low,
+                  pivot2: p2.low,
+                  pivot1Index: p1.index,
+                  pivot2Index: p2.index,
+                  pivot1Time: p1.timestamp,
+                  pivot2Time: p2.timestamp,
+                  neckline,
+                  extremeLevel: Math.min(p1.low, p2.low),
+                  patternAnchorKey: anchorKey,
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+export interface BareSRLevelPattern {
+  level: number;
+  type: 'RESISTANCE' | 'SUPPORT';
+  touches: number;
+  strength: 'STRONG' | 'MODERATE';
+}
+
+/**
+ * Detects clustered bare horizontal support/resistance levels with multi-touch historical reactions
+ */
+export function detectBareSRLevels(
+  candles15m: Candle[],
+  candles5m: Candle[],
+  atr14: number
+): BareSRLevelPattern[] {
+  const points: { price: number; isHigh: boolean }[] = [];
+
+  // Collect swing points from 15M and 5M
+  const window15m = candles15m.slice(-40);
+  for (let i = 2; i < window15m.length - 1; i++) {
+    if (window15m[i].high >= window15m[i - 1].high && window15m[i].high >= window15m[i + 1].high) {
+      points.push({ price: window15m[i].high, isHigh: true });
+    }
+    if (window15m[i].low <= window15m[i - 1].low && window15m[i].low <= window15m[i + 1].low) {
+      points.push({ price: window15m[i].low, isHigh: false });
+    }
+  }
+
+  const window5m = candles5m.slice(-30);
+  for (let i = 2; i < window5m.length - 1; i++) {
+    if (window5m[i].high >= window5m[i - 1].high && window5m[i].high >= window5m[i + 1].high) {
+      points.push({ price: window5m[i].high, isHigh: true });
+    }
+    if (window5m[i].low <= window5m[i - 1].low && window5m[i].low <= window5m[i + 1].low) {
+      points.push({ price: window5m[i].low, isHigh: false });
+    }
+  }
+
+  if (points.length === 0) return [];
+
+  // Cluster price points within ATR threshold
+  const threshold = Math.max(0.6 * atr14, 0.80);
+  const clusters: { prices: number[]; isHighCount: number; isLowCount: number }[] = [];
+
+  for (const p of points) {
+    let matchedCluster = clusters.find(
+      (c) => Math.abs(c.prices.reduce((a, b) => a + b, 0) / c.prices.length - p.price) <= threshold
+    );
+    if (matchedCluster) {
+      matchedCluster.prices.push(p.price);
+      if (p.isHigh) matchedCluster.isHighCount++;
+      else matchedCluster.isLowCount++;
+    } else {
+      clusters.push({
+        prices: [p.price],
+        isHighCount: p.isHigh ? 1 : 0,
+        isLowCount: p.isHigh ? 0 : 1,
+      });
+    }
+  }
+
+  // Filter clusters with >= 2 touches
+  const results: BareSRLevelPattern[] = [];
+  for (const c of clusters) {
+    if (c.prices.length >= 2) {
+      const avgLevel = Number((c.prices.reduce((a, b) => a + b, 0) / c.prices.length).toFixed(2));
+      const isRes = c.isHighCount >= c.isLowCount;
+      results.push({
+        level: avgLevel,
+        type: isRes ? 'RESISTANCE' : 'SUPPORT',
+        touches: c.prices.length,
+        strength: c.prices.length >= 3 ? 'STRONG' : 'MODERATE',
+      });
+    }
+  }
+
+  return results;
+}
+
+export interface BreakoutRetestPattern {
+  found: boolean;
+  type: 'RESISTANCE_TO_SUPPORT' | 'SUPPORT_TO_RESISTANCE';
+  brokenLevel: number;
+  breakoutCandleClose: number;
+  retestPrice: number;
+}
+
+/**
+ * Detects first clean retest of a broken horizontal level
+ */
+export function detectHorizontalBreakoutRetest(
+  candles15m: Candle[],
+  candles5m: Candle[],
+  atr14: number
+): BreakoutRetestPattern[] {
+  const results: BreakoutRetestPattern[] = [];
+  if (candles5m.length < 10) return results;
+
+  const srLevels = detectBareSRLevels(candles15m, candles5m, atr14);
+  const slice5m = candles5m.slice(-20);
+  const lastCandle = slice5m[slice5m.length - 1];
+
+  for (const sr of srLevels) {
+    const level = sr.level;
+
+    // Check Resistance -> Support Retest (BUY)
+    if (sr.type === 'RESISTANCE') {
+      // Find breakout candle between 2 and 15 candles ago
+      let breakoutIdx = -1;
+      for (let i = slice5m.length - 15; i < slice5m.length - 2; i++) {
+        if (i >= 0 && slice5m[i].close >= level + 0.3 * atr14) {
+          breakoutIdx = i;
+          break;
+        }
+      }
+
+      if (breakoutIdx !== -1) {
+        // Check current/recent candle returns to touch/retest the level
+        const touch = lastCandle.low <= level + 0.5 * atr14 && lastCandle.low >= level - 0.6 * atr14;
+        const rejectsUp = lastCandle.close >= level - 0.2 * atr14;
+
+        if (touch && rejectsUp) {
+          results.push({
+            found: true,
+            type: 'RESISTANCE_TO_SUPPORT',
+            brokenLevel: level,
+            breakoutCandleClose: slice5m[breakoutIdx].close,
+            retestPrice: lastCandle.low,
+          });
+        }
+      }
+    }
+
+    // Check Support -> Resistance Retest (SELL)
+    if (sr.type === 'SUPPORT') {
+      let breakoutIdx = -1;
+      for (let i = slice5m.length - 15; i < slice5m.length - 2; i++) {
+        if (i >= 0 && slice5m[i].close <= level - 0.3 * atr14) {
+          breakoutIdx = i;
+          break;
+        }
+      }
+
+      if (breakoutIdx !== -1) {
+        const touch = lastCandle.high >= level - 0.5 * atr14 && lastCandle.high <= level + 0.6 * atr14;
+        const rejectsDown = lastCandle.close <= level + 0.2 * atr14;
+
+        if (touch && rejectsDown) {
+          results.push({
+            found: true,
+            type: 'SUPPORT_TO_RESISTANCE',
+            brokenLevel: level,
+            breakoutCandleClose: slice5m[breakoutIdx].close,
+            retestPrice: lastCandle.high,
+          });
+        }
+      }
+    }
+  }
+
+  return results;
+}
+

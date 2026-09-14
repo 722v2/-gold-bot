@@ -18,7 +18,9 @@ import {
   TradeSignal,
   DuplicateDetails,
   StrategyFamily,
+  TradeOpportunity,
 } from '../src/types.js';
+import { storage } from './storage.js';
 
 // ============================================================================
 // 1. SETUP FRESHNESS & POI MITIGATION ENGINE
@@ -31,6 +33,10 @@ export class PoiFreshnessTracker {
     for (const poi of initialPois) {
       this.pois.set(poi.id, poi);
     }
+  }
+
+  public clear(): void {
+    this.pois.clear();
   }
 
   /**
@@ -940,21 +946,46 @@ export function calculateExecutionQualityScore(inputs: ExecutionQualityInputs): 
 
 export class CandidateLifecycleManager {
   private lifecycles: Map<string, CandidateLifecycleRecord> = new Map();
+  private terminalFailedKeys: Set<string> = new Set();
 
   constructor(initialRecords: CandidateLifecycleRecord[] = []) {
     for (const r of initialRecords) {
       this.lifecycles.set(r.id, r);
+      if (r.state === 'FAILED' || r.state === 'INVALIDATED') {
+        this.terminalFailedKeys.add(r.id);
+      }
     }
   }
 
-  public generateCandidateKey(setupName: string, direction: 'BUY' | 'SELL', entryPrice: number): string {
-    const roundEntry = Math.round(entryPrice * 2) / 2; // Cluster within 0.5 pts
-    return `cand_${setupName.replace(/\s+/g, '_').toLowerCase()}_${direction}_${roundEntry}`;
+  public clear(): void {
+    this.lifecycles.clear();
+    this.terminalFailedKeys.clear();
+  }
+
+  public generateCandidateKey(
+    setupName: string,
+    direction: 'BUY' | 'SELL',
+    entryPrice: number,
+    patternMetadata?: any,
+    poiId?: string
+  ): string {
+    if (patternMetadata?.patternAnchorKey) {
+      return `cand_${patternMetadata.patternAnchorKey}`;
+    }
+    if (patternMetadata?.pivot1Time) {
+      return `cand_s10_${direction}_${patternMetadata.pivot1Time}`;
+    }
+    if (poiId) {
+      return `cand_poi_${poiId}`;
+    }
+    const cleanSetup = setupName.toLowerCase().replace(/[^a-z0-9]/g, '_');
+    const clusterPrice = Math.round(entryPrice * 0.2) / 0.2; // 5 pt cluster
+    return `cand_${cleanSetup}_${direction}_${clusterPrice}`;
   }
 
   /**
    * Updates or registers candidate lifecycle state:
-   * WATCHING -> DEVELOPING -> READY -> TRIGGERED -> INVALIDATED
+   * IDENTIFIED -> WATCHING -> DEVELOPING -> READY -> TRIGGERED -> ACTIVE -> COMPLETED / FAILED / INVALIDATED
    */
   public updateLifecycle(
     setupName: string,
@@ -971,11 +1002,17 @@ export class CandidateLifecycleManager {
     pullbackAssessment: PullbackAssessment,
     poiFreshnessState: PoiFreshnessState,
     executionQualityScore: number,
-    strategyConfidence: number
+    strategyConfidence: number,
+    patternMetadata?: any
   ): { state: CandidateLifecycleState; record: CandidateLifecycleRecord; isExecutableNow: boolean } {
-    const key = this.generateCandidateKey(setupName, direction, entryProposed);
+    const key = this.generateCandidateKey(setupName, direction, entryProposed, patternMetadata, poiId);
     const existing = this.lifecycles.get(key);
     const now = Date.now();
+
+    // If previously marked FAILED or INVALIDATED, preserve terminal state
+    if (existing && (existing.state === 'FAILED' || existing.state === 'INVALIDATED')) {
+      return { state: existing.state, record: existing, isExecutableNow: false };
+    }
 
     let state: CandidateLifecycleState = 'WATCHING';
     let rejectionReason: string | undefined = undefined;
@@ -983,9 +1020,11 @@ export class CandidateLifecycleManager {
     if (poiFreshnessState === 'INVALIDATED' || pullbackAssessment.quality === 'INVALID') {
       state = 'INVALIDATED';
       rejectionReason = poiFreshnessState === 'INVALIDATED' ? 'POI Invalidated' : 'Pullback Structure Invalid';
+      this.terminalFailedKeys.add(key);
     } else if (timingAssessment.timing === 'CHASED') {
       state = 'INVALIDATED';
       rejectionReason = 'Chased entry - Disqualified';
+      this.terminalFailedKeys.add(key);
     } else if (!triggerAssessment.hasTrigger) {
       if (timingAssessment.timing === 'OPTIMAL' || timingAssessment.timing === 'ACCEPTABLE') {
         state = 'READY'; // All conditions ready, waiting for 5M execution trigger
@@ -1028,6 +1067,88 @@ export class CandidateLifecycleManager {
     return { state, record, isExecutableNow };
   }
 
+  public markSetupFailed(keyOrSignal: string | any, reason = 'Stopped out / Setup Failed'): void {
+    let key = typeof keyOrSignal === 'string' ? keyOrSignal : '';
+    let setupName = 'Setup';
+    let direction: 'BUY' | 'SELL' = 'SELL';
+    let entry = 0;
+    let patternMetadata: any = undefined;
+    let poiId: string | undefined = undefined;
+
+    if (typeof keyOrSignal === 'object' && keyOrSignal !== null) {
+      setupName = keyOrSignal.setup || keyOrSignal.setupName || 'Setup';
+      direction = keyOrSignal.signal?.includes('BUY') || keyOrSignal.direction?.includes('BUY') ? 'BUY' : 'SELL';
+      entry = keyOrSignal.entry || keyOrSignal.entryProposed || 0;
+      patternMetadata = keyOrSignal.patternMetadata;
+      poiId = keyOrSignal.poiId;
+      key = this.generateCandidateKey(setupName, direction, entry, patternMetadata, poiId);
+    }
+
+    if (!key) return;
+
+    this.terminalFailedKeys.add(key);
+    storage.saveTerminalSetup(key);
+    const anchorKey = patternMetadata?.patternAnchorKey || (keyOrSignal as any)?.structuralAnchorKey;
+    if (anchorKey) {
+      this.terminalFailedKeys.add(`cand_${anchorKey}`);
+      this.terminalFailedKeys.add(anchorKey);
+      storage.saveTerminalSetup(`cand_${anchorKey}`);
+      storage.saveTerminalSetup(anchorKey);
+    }
+    const now = Date.now();
+    const existing = this.lifecycles.get(key);
+    if (existing) {
+      existing.state = 'FAILED';
+      existing.rejectionReason = reason;
+      existing.lastUpdatedTime = now;
+      this.lifecycles.set(key, existing);
+    } else {
+      const record: CandidateLifecycleRecord = {
+        id: key,
+        setupName,
+        strategyFamily: patternMetadata?.strategyFamily || 'DOUBLE_TOP_BOTTOM',
+        direction,
+        timeframe: keyOrSignal?.timeframe || '15M / 5M',
+        poiId,
+        state: 'FAILED',
+        firstObservedTime: now,
+        lastUpdatedTime: now,
+        entryProposed: entry,
+        stopLoss: keyOrSignal?.stopLoss || keyOrSignal?.sl || 0,
+        tp1: keyOrSignal?.tp1 || 0,
+        tp2: keyOrSignal?.tp2 || 0,
+        triggersDetected: [],
+        rejectionReason: reason,
+        executionQualityScore: 0,
+        strategyConfidence: keyOrSignal?.confidence || 0,
+      };
+      this.lifecycles.set(key, record);
+    }
+  }
+
+  public isSetupTerminal(keyOrSignal: string | any): boolean {
+    let key = typeof keyOrSignal === 'string' ? keyOrSignal : '';
+    if (typeof keyOrSignal === 'object' && keyOrSignal !== null) {
+      key = this.generateCandidateKey(
+        keyOrSignal.setup || keyOrSignal.setupName || '',
+        keyOrSignal.signal?.includes('BUY') ? 'BUY' : 'SELL',
+        keyOrSignal.entry || keyOrSignal.entryProposed || 0,
+        keyOrSignal.patternMetadata,
+        keyOrSignal.poiId
+      );
+
+      // Check patternAnchorKey directly if present
+      const anchorKey = keyOrSignal.patternMetadata?.patternAnchorKey || keyOrSignal.structuralAnchorKey;
+      if (anchorKey && (this.terminalFailedKeys.has(`cand_${anchorKey}`) || this.terminalFailedKeys.has(anchorKey) || storage.isTerminalSetup(`cand_${anchorKey}`) || storage.isTerminalSetup(anchorKey))) {
+        return true;
+      }
+    }
+
+    if (this.terminalFailedKeys.has(key) || storage.isTerminalSetup(key)) return true;
+    const existing = this.lifecycles.get(key);
+    return existing ? existing.state === 'FAILED' || existing.state === 'INVALIDATED' : false;
+  }
+
   public getAllLifecycles(): CandidateLifecycleRecord[] {
     return Array.from(this.lifecycles.values());
   }
@@ -1036,6 +1157,9 @@ export class CandidateLifecycleManager {
     this.lifecycles.clear();
     for (const r of records) {
       this.lifecycles.set(r.id, r);
+      if (r.state === 'FAILED' || r.state === 'INVALIDATED') {
+        this.terminalFailedKeys.add(r.id);
+      }
     }
   }
 
@@ -1045,7 +1169,7 @@ export class CandidateLifecycleManager {
   public pruneStaleRecords(maxAgeMs = 4 * 3600 * 1000) {
     const cutoff = Date.now() - maxAgeMs;
     for (const [id, r] of this.lifecycles.entries()) {
-      if (r.lastUpdatedTime < cutoff) {
+      if (r.lastUpdatedTime < cutoff && r.state !== 'FAILED') {
         this.lifecycles.delete(id);
       }
     }
@@ -1063,11 +1187,14 @@ export function inferStrategyFamily(setupName: string): StrategyFamily {
   if (s.includes('FAIR VALUE GAP') || s.includes('FVG')) return 'FVG_IMBALANCE';
   if (s.includes('LIQUIDITY SWEEP') || s.includes('BSL') || s.includes('SSL')) return 'LIQUIDITY_SWEEP';
   if (s.includes('OTE') || s.includes('FIBONACCI')) return 'FIBONACCI_OTE';
-  if (s.includes('BREAK AND RETEST') || s.includes('BREAK & RETEST')) return 'BREAK_AND_RETEST';
+  if (s.includes('BREAK AND RETEST') || s.includes('BREAK & RETEST') || s.includes('HORIZONTAL RESISTANCE BREAKOUT') || s.includes('HORIZONTAL SUPPORT BREAKOUT')) return 'BREAK_AND_RETEST';
   if (s.includes('COUNTERTREND') || s.includes('PULLBACK SCALP')) return 'COUNTERTREND_SCALP';
   if (s.includes('FAILED BREAKOUT') || s.includes('TRAP')) return 'FAILED_BREAKOUT';
   if (s.includes('RANGE SFP') || s.includes('SWING FAILURE')) return 'RANGE_SFP_REVERSAL';
   if (s.includes('RANGE BREAKOUT') || s.includes('EXPANSION')) return 'RANGE_BREAKOUT_EXPANSION';
+  if (s.includes('DOUBLE TOP') || s.includes('DOUBLE BOTTOM') || s.includes('M-FORMATION') || s.includes('W-FORMATION')) return 'DOUBLE_TOP_BOTTOM';
+  if (s.includes('BARE RESISTANCE') || s.includes('BARE SUPPORT') || s.includes('BARE SR')) return 'BARE_SR';
+  if (s.includes('ENGULFING')) return 'STRUCTURE_ENGULFING';
   return 'MARKET_STRUCTURE';
 }
 
@@ -1075,6 +1202,76 @@ export function inferStrategyFamily(setupName: string): StrategyFamily {
  * Evaluates structural same-setup identity between an active trade and a new candidate signal.
  * Determines if the candidate is a genuine independent setup, an identical duplicate, or a re-entry on the same structural leg.
  */
+export function generateOpportunityId(signal: TradeSignal): string {
+  const meta = (signal as any).patternMetadata;
+  const anchorKey = meta?.patternAnchorKey || (signal as any).structuralAnchorKey;
+  if (anchorKey) {
+    return `opp_${anchorKey}`;
+  }
+  if (meta?.pivot1Time) {
+    return `opp_s10_${(signal.signal || '').toUpperCase().includes('BUY') ? 'BUY' : 'SELL'}_${meta.pivot1Time}`;
+  }
+  if (signal.poiId) {
+    return `opp_poi_${signal.poiId}`;
+  }
+  const cleanSetup = (signal.setup || '').toLowerCase().replace(/[^a-z0-9]/g, '_');
+  const direction = (signal.signal || '').toUpperCase().includes('BUY') ? 'BUY' : 'SELL';
+  const roundedPrice = Math.round(signal.entry / 5.0) * 5.0;
+  return `opp_${cleanSetup}_${direction}_${roundedPrice.toFixed(0)}`;
+}
+
+export function rankCandidate(cand: any, htfRegime?: string): number {
+  let score = cand.score || 0;
+
+  // 1. Structural quality
+  const structureScore = cand.rawScoreBreakdown?.structureScore || 0;
+  score += structureScore * 1.5;
+
+  // 2. Execution quality
+  const execScore = cand.executionQualityScore || 0;
+  score += execScore * 1.2;
+
+  // 3. HTF regime alignment
+  const dir = cand.direction || (cand.signal?.includes('BUY') ? 'BUY' : 'SELL');
+  const regime = (htfRegime || '').toUpperCase();
+  if (dir === 'BUY' && (regime.includes('UPTREND') || regime.includes('BULLISH'))) {
+    score += 15;
+  } else if (dir === 'SELL' && (regime.includes('DOWNTREND') || regime.includes('BEARISH'))) {
+    score += 15;
+  }
+
+  // 4. Liquidity quality
+  const liqScore = cand.rawScoreBreakdown?.liquidityScore || 0;
+  score += liqScore * 1.0;
+
+  // 5. Entry quality / timing
+  const timing = cand.entryTiming || 'ACCEPTABLE';
+  if (timing === 'OPTIMAL') score += 10;
+  else if (timing === 'ACCEPTABLE') score += 5;
+  else if (timing === 'LATE') score -= 10;
+  else if (timing === 'CHASED') score -= 30;
+
+  // 6. SL quality
+  const slScore = cand.executionBreakdown?.slScore || 0;
+  score += slScore * 0.8;
+
+  // 7. TP Runway
+  const runway = cand.tpRunway || 'CLEAR';
+  if (runway === 'CLEAR') score += 10;
+  else if (runway === 'MINOR_OBSTACLE') score += 5;
+  else if (runway === 'MAJOR_OBSTACLE') score -= 10;
+  else if (runway === 'BLOCKED') score -= 25;
+
+  // 8. Confidence
+  score += (cand.confidence || 50) * 0.5;
+
+  // 9. RR
+  const rr = cand.tp1Rr || 1.5;
+  score += rr * 5.0;
+
+  return score;
+}
+
 export function checkStructuralSameSetupIdentity(
   activeSignal: TradeSignal | null,
   candidateSignal: TradeSignal,
@@ -1086,15 +1283,177 @@ export function checkStructuralSameSetupIdentity(
   details?: DuplicateDetails;
   reason?: string;
 } {
-  if (!activeSignal || activeSignal.signal === 'NO TRADE' || candidateSignal.signal === 'NO TRADE') {
+  // 1. COMPREHENSIVE STRUCTURAL-PROXIMITY SCAN: Prevent signal over-frequency / signal spam
+  const recentSignals = storage.getSignals(40);
+  const candIsBuy = candidateSignal.signal.toUpperCase().includes('BUY');
+  const candStrategyFamily = candidateSignal.strategyFamily || inferStrategyFamily(candidateSignal.setup);
+  
+  for (const prev of recentSignals) {
+    if (!prev || prev.signal === 'NO TRADE' || prev.id === candidateSignal.id) {
+      continue;
+    }
+    
+    // Must be in the same direction and same strategy family
+    const prevIsBuy = prev.signal.toUpperCase().includes('BUY');
+    if (prevIsBuy !== candIsBuy) continue;
+    
+    const prevStrategyFamily = prev.strategyFamily || inferStrategyFamily(prev.setup);
+    if (prevStrategyFamily !== candStrategyFamily) continue;
+    
+    // Check if the previous signal was dispatched/active recently (within 45 minutes)
+    const timeElapsedMs = Math.abs(Date.now() - prev.timestamp);
+    if (timeElapsedMs < 45 * 60 * 1000) {
+      const entryDistance = Math.abs(prev.entry - candidateSignal.entry);
+      const slDistance = Math.abs(prev.stopLoss - candidateSignal.stopLoss);
+      
+      let isSameLocalStructure = false;
+      let reasonMessage = '';
+      
+      // S10 (Double Top/Bottom)
+      if (candStrategyFamily === 'DOUBLE_TOP_BOTTOM') {
+        if (entryDistance <= 5.0 || slDistance <= 4.0) {
+          isSameLocalStructure = true;
+          reasonMessage = `تكرار في التشكيل الهيكلي القريب (S10 Double Top/Bottom): تم إصدار إشارة مشابهة مؤخراً بفارق سعر دخول $${entryDistance.toFixed(2)} ووقف خسارة $${slDistance.toFixed(2)} قبل ${Math.round(timeElapsedMs / 60000)} دقيقة. تم منع التكرار لضمان دقة الإشارات وحظر الإسبام.`;
+        }
+      }
+      // Order Block (S11/S12)
+      else if (candStrategyFamily === 'ORDER_BLOCK') {
+        if (entryDistance <= 6.0 || slDistance <= 5.0 || (prev.poiId && candidateSignal.poiId && prev.poiId === candidateSignal.poiId)) {
+          isSameLocalStructure = true;
+          reasonMessage = `تكرار في التشكيل الهيكلي القريب (Order Block): تم رصد تداخل كبير في منطقة الـ POI أو مستويات الدخول/الوقف مع صفقة تم إصدارها قبل ${Math.round(timeElapsedMs / 60000)} دقيقة. تم منع التكرار لمنع تشتيت رأس المال.`;
+        }
+      }
+      // FVG (S13)
+      else if (candStrategyFamily === 'FVG_IMBALANCE') {
+        if (entryDistance <= 6.0 || slDistance <= 5.0) {
+          isSameLocalStructure = true;
+          reasonMessage = `تكرار في التشكيل الهيكلي القريب (FVG Imbalance): توجد إشارة جارية في الفجوة السعرية ذاتها تم إصدارها قبل ${Math.round(timeElapsedMs / 60000)} دقيقة. تم منع التكرار لضمان دقة المتابعة الفنية.`;
+        }
+      }
+      // General fallbacks
+      else {
+        if (entryDistance <= 6.0 && slDistance <= 5.0) {
+          isSameLocalStructure = true;
+          reasonMessage = `تكرار قريب في بنية السعر المحلية (بفارق دخول $${entryDistance.toFixed(2)}): تم إصدار إشارة في نفس المنطقة الجغرافية للسعر قبل ${Math.round(timeElapsedMs / 60000)} دقيقة. تم منع التكرار لضمان جودة الاختيار.`;
+        }
+      }
+      
+      if (isSameLocalStructure) {
+        const dupDetails: DuplicateDetails = {
+          duplicateReason: 'DUPLICATE_ACTIVE',
+          activeSignalId: prev.id,
+          candidateSignalId: candidateSignal.id,
+          activeStrategyFamily: prevStrategyFamily,
+          candidateStrategyFamily: candStrategyFamily,
+          samePoi: prev.poiId === candidateSignal.poiId,
+          sameStructuralOrigin: slDistance <= 4.0,
+          sameTargetObjective: Math.abs(prev.tp1 - candidateSignal.tp1) <= 4.0,
+          sameLifecycle: false,
+          entryDistance: Number(entryDistance.toFixed(2)),
+        };
+        return {
+          isDuplicate: true,
+          isReentry: false,
+          status: 'DUPLICATE_ACTIVE',
+          details: dupDetails,
+          reason: reasonMessage,
+        };
+      }
+    }
+  }
+
+  // A. HARD TERMINAL CHECK: Setup flagged as failed in lifecycle manager
+  if (globalLifecycleManager.isSetupTerminal(candidateSignal)) {
+    const details: DuplicateDetails = {
+      duplicateReason: 'DUPLICATE_ACTIVE_REENTRY',
+      activeSignalId: 'TERMINAL_BLOCK',
+      candidateSignalId: candidateSignal.id,
+      activeStrategyFamily: (candidateSignal.strategyFamily as string) || inferStrategyFamily(candidateSignal.setup),
+      candidateStrategyFamily: (candidateSignal.strategyFamily as string) || inferStrategyFamily(candidateSignal.setup),
+      samePoi: true,
+      sameStructuralOrigin: true,
+      sameTargetObjective: true,
+      sameLifecycle: true,
+      entryDistance: 0,
+    };
+    return {
+      isDuplicate: true,
+      isReentry: true,
+      status: 'DUPLICATE_ACTIVE_REENTRY',
+      details,
+      reason: `حظر إعادة الدخول الصارم: هذه التشكيلة الهيكلية (${candidateSignal.setup}) تم ضرب وقف خسارتها سابقاً ومُعلمة كـ FAILED. يُمحو إعادة الدخول منها نهائياً بغض النظر عن تغير السعر أو الثقة.`,
+    };
+  }
+
+  // B. PERSISTENT OPPORTUNITY CHECK: Check if opportunity is FAILED or already ACTIVE/DISPATCHED
+  const oppId = generateOpportunityId(candidateSignal);
+  const opp = storage.getOpportunity(oppId);
+  if (opp) {
+    if (opp.status === 'FAILED') {
+      const details: DuplicateDetails = {
+        duplicateReason: 'DUPLICATE_ACTIVE_REENTRY',
+        activeSignalId: oppId,
+        candidateSignalId: candidateSignal.id,
+        activeStrategyFamily: opp.strategyFamily,
+        candidateStrategyFamily: candidateSignal.strategyFamily || 'UNKNOWN',
+        samePoi: true,
+        sameStructuralOrigin: true,
+        sameTargetObjective: true,
+        sameLifecycle: true,
+        entryDistance: 0,
+      };
+      return {
+        isDuplicate: true,
+        isReentry: true,
+        status: 'DUPLICATE_ACTIVE_REENTRY',
+        details,
+        reason: `حظر إعادة الدخول الصارم: فرصة التداول المخزنة (${candidateSignal.setup}) تندرج تحت معرّف فرصة تداول مكررة تم فشلها مسبقاً (FAILED). تم حظر إعادة الدخول لمنع تكرار الخسارة.`,
+      };
+    } else if (opp.status === 'DISPATCHED' || opp.status === 'ACTIVE') {
+      const details: DuplicateDetails = {
+        duplicateReason: 'DUPLICATE_ACTIVE',
+        activeSignalId: oppId,
+        candidateSignalId: candidateSignal.id,
+        activeStrategyFamily: opp.strategyFamily,
+        candidateStrategyFamily: candidateSignal.strategyFamily || 'UNKNOWN',
+        samePoi: true,
+        sameStructuralOrigin: true,
+        sameTargetObjective: true,
+        sameLifecycle: false,
+        entryDistance: Math.abs(opp.entry - candidateSignal.entry),
+      };
+      return {
+        isDuplicate: true,
+        isReentry: false,
+        status: 'DUPLICATE_ACTIVE',
+        details,
+        reason: `تم رصد نفس الفرصة الهيكلية الجارية والمخزنة (${opp.setupName}). تم حظر التكرار على السعر المتطور ($${candidateSignal.entry}) لمنع السخام وضوضاء الإشارات المتكررة.`,
+      };
+    }
+  }
+
+  // C. MEMORY BACKUP CHECK (if storage opportunity was not found)
+  let currentActive = activeSignal;
+  if (!currentActive) {
+    const recent = storage.getSignals(10);
+    const foundActive = recent.find(
+      (s) => s && s.signal !== 'NO TRADE' && s.telegramDispatchStatus !== 'SUPPRESSED'
+    );
+    if (foundActive) {
+      currentActive = foundActive;
+    }
+  }
+
+  if (!currentActive || currentActive.signal === 'NO TRADE' || candidateSignal.signal === 'NO TRADE') {
     return { isDuplicate: false, isReentry: false, status: 'QUALIFIED_SIGNAL' };
   }
 
+  activeSignal = currentActive;
+
   // Check if both signals are in the SAME direction
   const activeIsBuy = activeSignal.signal.toUpperCase().includes('BUY');
-  const candIsBuy = candidateSignal.signal.toUpperCase().includes('BUY');
+  candIsBuy; // already declared at top level of function
   if (activeIsBuy !== candIsBuy) {
-    // Opposite direction is handled by the Active Trade Opposition Guard
     return { isDuplicate: false, isReentry: false, status: 'QUALIFIED_SIGNAL' };
   }
 
@@ -1102,16 +1461,49 @@ export function checkStructuralSameSetupIdentity(
   const candidateStrategyFamily = (candidateSignal.strategyFamily as string) || inferStrategyFamily(candidateSignal.setup);
   const sameStrategyFamily = activeStrategyFamily === candidateStrategyFamily || activeSignal.setup === candidateSignal.setup;
 
+  const activeSetup = (activeSignal.setup || '').toLowerCase();
+  const candSetup = (candidateSignal.setup || '').toLowerCase();
+
+  const isS10Active = activeStrategyFamily === 'DOUBLE_TOP_BOTTOM' || activeSetup.includes('double top') || activeSetup.includes('double bottom') || activeSetup.includes('m-formation') || activeSetup.includes('w-formation');
+  const isS10Cand = candidateStrategyFamily === 'DOUBLE_TOP_BOTTOM' || candSetup.includes('double top') || candSetup.includes('double bottom') || candSetup.includes('m-formation') || candSetup.includes('w-formation');
+
+  const metaActive = (activeSignal as any).patternMetadata;
+  const metaCand = (candidateSignal as any).patternMetadata;
+
+  let sameS10Structure = false;
+  if (isS10Active && isS10Cand) {
+    if (metaActive?.patternAnchorKey && metaCand?.patternAnchorKey && metaActive.patternAnchorKey === metaCand.patternAnchorKey) {
+      sameS10Structure = true;
+    } else if (metaActive?.pivot1Time && metaCand?.pivot1Time && metaActive.pivot1Time === metaCand.pivot1Time) {
+      sameS10Structure = true;
+    } else {
+      const neckActive = metaActive?.neckline ?? activeSignal.tp1;
+      const neckCand = metaCand?.neckline ?? candidateSignal.tp1;
+      const peakActive = metaActive?.extremeLevel ?? activeSignal.stopLoss;
+      const peakCand = metaCand?.extremeLevel ?? candidateSignal.stopLoss;
+
+      const neckDiff = Math.abs(neckActive - neckCand);
+      const peakDiff = Math.abs(peakActive - peakCand);
+      const slDiff = Math.abs(activeSignal.stopLoss - candidateSignal.stopLoss);
+
+      if (neckDiff <= 3.0 || peakDiff <= 3.0 || slDiff <= 3.0) {
+        sameS10Structure = true;
+      }
+    }
+  }
+
   const samePoi = !!(
     (activeSignal.poiId && candidateSignal.poiId && activeSignal.poiId === candidateSignal.poiId) ||
-    (activeSignal.setup === candidateSignal.setup && Math.abs(activeSignal.stopLoss - candidateSignal.stopLoss) <= tolerance)
+    sameS10Structure ||
+    (activeSignal.setup === candidateSignal.setup && Math.abs(activeSignal.stopLoss - candidateSignal.stopLoss) <= Math.max(tolerance, 3.0))
   );
 
-  const sameStructuralOrigin = Math.abs(activeSignal.stopLoss - candidateSignal.stopLoss) <= tolerance;
+  const sameStructuralOrigin = sameS10Structure || Math.abs(activeSignal.stopLoss - candidateSignal.stopLoss) <= Math.max(tolerance, 3.0);
 
   const sameTargetObjective =
-    Math.abs(activeSignal.tp1 - candidateSignal.tp1) <= tolerance ||
-    Math.abs(activeSignal.tp2 - candidateSignal.tp2) <= tolerance;
+    Math.abs(activeSignal.tp1 - candidateSignal.tp1) <= Math.max(tolerance, 3.0) ||
+    Math.abs(activeSignal.tp2 - candidateSignal.tp2) <= Math.max(tolerance, 3.0) ||
+    sameS10Structure;
 
   const sameLifecycle = !!(
     activeSignal.lifecycleState &&
@@ -1122,7 +1514,7 @@ export function checkStructuralSameSetupIdentity(
   const entryDistance = Number(Math.abs(activeSignal.entry - candidateSignal.entry).toFixed(2));
 
   const details: DuplicateDetails = {
-    duplicateReason: 'DUPLICATE_ACTIVE',
+    duplicateReason: sameS10Structure ? 'DUPLICATE_ACTIVE' : 'DUPLICATE_ACTIVE',
     activeSignalId: activeSignal.id,
     candidateSignalId: candidateSignal.id,
     activeStrategyFamily,
@@ -1134,7 +1526,17 @@ export function checkStructuralSameSetupIdentity(
     entryDistance,
   };
 
-  // 1. Literal exact duplicate (same setup name and entry within tolerance)
+  if (sameS10Structure) {
+    details.duplicateReason = 'DUPLICATE_ACTIVE';
+    return {
+      isDuplicate: true,
+      isReentry: false,
+      status: 'DUPLICATE_ACTIVE',
+      details,
+      reason: `تم رصد نفس التشكيلة الهيكلية (S10 Double Top/Bottom) الجارية (${activeSignal.setup}). تم حظر التكرار على السعر المتطور ($${candidateSignal.entry}) مع ثقة ${candidateSignal.confidence}%.`,
+    };
+  }
+
   if (activeSignal.setup === candidateSignal.setup && entryDistance <= tolerance) {
     details.duplicateReason = 'DUPLICATE_ACTIVE';
     return {
@@ -1146,8 +1548,6 @@ export function checkStructuralSameSetupIdentity(
     };
   }
 
-  // 2. Structural same-setup re-entry (Same strategy family + same POI or structural origin + same target objective)
-  // Even if entry distance > $1.50 (e.g. price retraced away and re-tested the same zone), this is part of the same trade lifecycle
   if (sameStrategyFamily && (samePoi || sameStructuralOrigin) && sameTargetObjective) {
     details.duplicateReason = 'DUPLICATE_ACTIVE_REENTRY';
     return {
@@ -1159,7 +1559,142 @@ export function checkStructuralSameSetupIdentity(
     };
   }
 
-  // Genuinely independent setup in same direction
   return { isDuplicate: false, isReentry: false, status: 'QUALIFIED_SIGNAL', details };
+}
+
+export function resolveFinalSignalConflict(
+  candidates: any[],
+  activeTrade?: any,
+  htfRegime?: string
+): {
+  winningCandidate: any | null;
+  suppressedCandidates: { candidate: any; reason: string }[];
+} {
+  const validCandidates = (candidates || []).filter(
+    (c) => c && (c.direction || c.signal) && c.signal !== 'NO TRADE'
+  );
+
+  if (validCandidates.length === 0) {
+    return { winningCandidate: null, suppressedCandidates: [] };
+  }
+
+  // 1. STRUCTURAL CLUSTERING / OPPORTUNITY AGGREGATION
+  // We group all candidates by their opportunityId (which clusters identical POIs, double tops, close levels, etc.)
+  const clusters = new Map<string, any[]>();
+  for (const cand of validCandidates) {
+    const oppId = generateOpportunityId(cand);
+    if (!clusters.has(oppId)) {
+      clusters.set(oppId, []);
+    }
+    clusters.get(oppId)!.push(cand);
+  }
+
+  // 2. BEST-CANDIDATE SELECTION within each cluster
+  const clusterRepresentatives: any[] = [];
+  const clusterSuppressed: { candidate: any; reason: string }[] = [];
+
+  for (const [oppId, list] of clusters.entries()) {
+    // Sort candidates in this cluster by our 9-criteria rankCandidate score
+    const rankedList = list.map(c => ({ candidate: c, score: rankCandidate(c, htfRegime) }))
+                           .sort((a, b) => b.score - a.score);
+
+    const best = rankedList[0].candidate;
+    clusterRepresentatives.push(best);
+
+    // Suppress other candidates in the same cluster
+    for (let i = 1; i < rankedList.length; i++) {
+      clusterSuppressed.push({
+        candidate: rankedList[i].candidate,
+        reason: `SUPPRESSED_BY_BETTER_OPPORTUNITY: تم إلغاء هذه الإشارة لصالح الإشارة الأفضل الجودة والأعلى رتبة (${best.setupName || best.setup}) في نفس معرّف فرصة التداول (${oppId}).`,
+      });
+    }
+  }
+
+  if (clusterRepresentatives.length === 1) {
+    return { winningCandidate: clusterRepresentatives[0], suppressedCandidates: clusterSuppressed };
+  }
+
+  // 3. OPPOSING SIGNALS RESOLUTION across representatives
+  const buys = clusterRepresentatives.filter((c) => c.direction === 'BUY' || c.signal?.includes('BUY'));
+  const sells = clusterRepresentatives.filter((c) => c.direction === 'SELL' || c.signal?.includes('SELL'));
+
+  // If all are BUYs or all are SELLs, we simply select the single best representative based on rank score
+  if (buys.length === 0 || sells.length === 0) {
+    const sortedReps = clusterRepresentatives.map(c => ({ candidate: c, score: rankCandidate(c, htfRegime) }))
+                                             .sort((a, b) => b.score - a.score);
+    const winner = sortedReps[0].candidate;
+
+    for (let i = 1; i < sortedReps.length; i++) {
+      clusterSuppressed.push({
+        candidate: sortedReps[i].candidate,
+        reason: `SUPPRESSED_BY_BETTER_OPPORTUNITY: تم التفضيل لصالح إشارة ${winner.signal || winner.direction} (${winner.setup || winner.setupName}) الجودة والأعلى ترتيباً في هذا المسح المجمع.`,
+      });
+    }
+    return { winningCandidate: winner, suppressedCandidates: clusterSuppressed };
+  }
+
+  // We have both BUY and SELL representatives. Check if they belong to the same structural context (overlap)
+  let structuralOverlap = false;
+  for (const buy of buys) {
+    for (const sell of sells) {
+      const entryDiff = Math.abs((buy.entry || 0) - (sell.entry || 0));
+      const slOverlap = (buy.stopLoss <= sell.entry && buy.entry >= sell.stopLoss) || entryDiff <= 15.0;
+      if (slOverlap || entryDiff <= 15.0) {
+        structuralOverlap = true;
+        break;
+      }
+    }
+    if (structuralOverlap) break;
+  }
+
+  // If they don't overlap structurally, they are genuinely independent opportunities in opposite directions.
+  // Still, to avoid double alerting and spam, we pick the highest quality one as winningCandidate and suppress the other.
+  if (!structuralOverlap) {
+    const sortedReps = clusterRepresentatives.map(c => ({ candidate: c, score: rankCandidate(c, htfRegime) }))
+                                             .sort((a, b) => b.score - a.score);
+    const winner = sortedReps[0].candidate;
+    for (const rep of clusterRepresentatives) {
+      if (rep !== winner) {
+        clusterSuppressed.push({
+          candidate: rep,
+          reason: `SUPPRESSED_BY_BETTER_OPPORTUNITY: تم تفضيل إشارة ${winner.signal || winner.direction} (${winner.setup || winner.setupName}) لتجنب تعدد الإشارات المتزامنة في نفس اللحظة.`,
+        });
+      }
+    }
+    return { winningCandidate: winner, suppressedCandidates: clusterSuppressed };
+  }
+
+  // Genuinely overlapping opposing signals: Compare the top BUY vs the top SELL representatives
+  const scoredBuys = buys.map((c) => ({ candidate: c, score: rankCandidate(c, htfRegime) })).sort((a, b) => b.score - a.score);
+  const scoredSells = sells.map((c) => ({ candidate: c, score: rankCandidate(c, htfRegime) })).sort((a, b) => b.score - a.score);
+
+  const topBuy = scoredBuys[0];
+  const topSell = scoredSells[0];
+
+  // If neither clearly dominates (e.g. score difference <= 5.0), then NO TRADE!
+  const scoreDiff = Math.abs(topBuy.score - topSell.score);
+  if (scoreDiff <= 5.0) {
+    // Both are suppressed as OPPOSING_STRUCTURAL_BLOCKED, and we return null (NO TRADE)
+    for (const rep of clusterRepresentatives) {
+      clusterSuppressed.push({
+        candidate: rep,
+        reason: `OPPOSING_STRUCTURAL_BLOCKED: تعارض هيكلي مباشر متعادل القوة والوضوح (الفارق ${scoreDiff.toFixed(2)} ≤ 5.0). تم إلغاء كلي الإشارتين لعدم وضوح الاتجاه الحاسم (NO TRADE).`,
+      });
+    }
+    return { winningCandidate: null, suppressedCandidates: clusterSuppressed };
+  }
+
+  const winner = topBuy.score > topSell.score ? topBuy.candidate : topSell.candidate;
+
+  for (const rep of clusterRepresentatives) {
+    if (rep !== winner) {
+      clusterSuppressed.push({
+        candidate: rep,
+        reason: `OPPOSING_STRUCTURAL_BLOCKED: تم حظر إشارة ${rep.signal || rep.direction} (${rep.setup || rep.setupName}) لمنع التعارض الهيكلي المباشر مع إشارة ${winner.signal || winner.direction} (${winner.setup || winner.setupName}) الأقوى دليلاً وتوافقاً بفارق تفوق حاسم (${scoreDiff.toFixed(2)} > 5.0).`,
+      });
+    }
+  }
+
+  return { winningCandidate: winner, suppressedCandidates: clusterSuppressed };
 }
 

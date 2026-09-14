@@ -85,6 +85,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [telegramStatus, setTelegramStatus] = useState<string | null>(null);
   const [isTestingTg, setIsTestingTg] = useState<boolean>(false);
 
+  // Total State Reset state
+  const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false);
+  const [isResetting, setIsResetting] = useState<boolean>(false);
+  const [resetResult, setResetResult] = useState<any | null>(null);
+
   // Sync state when props change (only if user hasn't made unsaved edits)
   useEffect(() => {
     if (isDirty) return;
@@ -241,6 +246,39 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       setTelegramStatus(e.message || 'فشل الاتصال بتلغرام');
     } finally {
       setIsTestingTg(false);
+    }
+  };
+
+  const handleTotalReset = async () => {
+    setIsResetting(true);
+    setResetResult(null);
+    try {
+      const res = await fetch('/api/trades/reset-state', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setResetResult({
+          type: 'success',
+          message: 'تم تصفير وإعادة ضبط حالة التداول الكاملة بنجاح!',
+          before: data.before,
+          after: data.after,
+        });
+        // Auto-refresh the page after 3.5 seconds
+        setTimeout(() => {
+          window.location.reload();
+        }, 3500);
+      } else {
+        setResetResult({
+          type: 'error',
+          message: `فشل تصفير الحالة: ${data.error || 'خطأ غير معروف'}`,
+        });
+      }
+    } catch (err: any) {
+      setResetResult({
+        type: 'error',
+        message: `حدث خطأ أثناء تنفيذ عملية التصفير: ${err.message}`,
+      });
+    } finally {
+      setIsResetting(false);
     }
   };
 
@@ -1402,13 +1440,78 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {onResetDemoBalance && (
               <button
                 onClick={() => onResetDemoBalance(effectiveCapital)}
-                className="px-4 py-2 bg-rose-950/60 hover:bg-rose-900/60 text-rose-300 rounded-xl text-xs font-bold flex items-center gap-2 border border-rose-800/80 cursor-pointer"
+                className="px-4 py-2 bg-stone-800 hover:bg-stone-750 text-stone-300 rounded-xl text-xs font-bold flex items-center gap-2 border border-stone-700 cursor-pointer"
               >
                 <RotateCcw className="w-4 h-4 text-rose-400" />
                 <span>إعادة تعيين رصيد الحساب التجريبي إلى ${effectiveCapital}</span>
               </button>
             )}
+            <button
+              onClick={() => setShowResetConfirm(true)}
+              className="px-4 py-2 bg-rose-950/60 hover:bg-rose-900/60 text-rose-300 rounded-xl text-xs font-bold flex items-center gap-2 border border-rose-800/80 cursor-pointer shadow-md"
+            >
+              <Flame className="w-4 h-4 text-rose-400" />
+              <span>تصفير وإعادة تعيين حالة التداول (Total State Reset)</span>
+            </button>
           </div>
+
+          {showResetConfirm && (
+            <div className="mt-4 p-4 bg-rose-950/40 border border-rose-900/80 rounded-2xl space-y-3 animate-in fade-in duration-200">
+              <div className="flex items-center gap-2 text-rose-400 font-bold text-xs">
+                <AlertTriangle className="w-4.5 h-4.5" />
+                <span>تحذير: أنت على وشك تصفير شامل لجميع الصفقات النشطة والفرص الحالية!</span>
+              </div>
+              <p className="text-stone-300 text-[11px] leading-relaxed">
+                سيقوم هذا الإجراء الداخلي بتصفير ومسح كافة الإشارات الجارية، والفرص والصفقات قيد المراقبة وتصفير الحالات المعلقة. لن يتم تعديل أو حذف أي صفقة مكتملة تاريخياً (WIN/LOSS)، بل ستبقى الإحصاءات والأرباح المحققة صحيحة ومؤرشفة.
+              </p>
+              
+              {resetResult && (
+                <div className={`p-3 rounded-xl text-xs font-mono border ${resetResult.type === 'success' ? 'bg-emerald-950/50 text-emerald-300 border-emerald-800' : 'bg-rose-950/50 text-rose-300 border-rose-800'}`}>
+                  <p className="font-bold">{resetResult.message}</p>
+                  {resetResult.before && (
+                    <div className="mt-2.5 grid grid-cols-2 gap-4 text-[10px] border-t border-stone-800/80 pt-2">
+                      <div>
+                        <p className="text-stone-400 font-bold mb-1">قبل التصفير:</p>
+                        <ul className="list-disc list-inside space-y-0.5 text-stone-300">
+                          <li>الإشارات: {resetResult.before.signalsCount}</li>
+                          <li>الفرص: {resetResult.before.opportunitiesCount}</li>
+                          <li>الحساب قبل: ${resetResult.before.currentBalance}</li>
+                        </ul>
+                      </div>
+                      <div>
+                        <p className="text-stone-400 font-bold mb-1">بعد التصفير:</p>
+                        <ul className="list-disc list-inside space-y-0.5 text-stone-300">
+                          <li>الإشارات: {resetResult.after.signalsCount}</li>
+                          <li>الفرص: {resetResult.after.opportunitiesCount}</li>
+                          <li>الحساب بعد: ${resetResult.after.currentBalance}</li>
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-center gap-3 pt-1">
+                <button
+                  disabled={isResetting}
+                  onClick={handleTotalReset}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  {isResetting ? 'جاري تصفير وإعادة تعيين الحالة...' : 'تأكيد تصفير حالة التداول بالكامل'}
+                </button>
+                <button
+                  disabled={isResetting}
+                  onClick={() => {
+                    setShowResetConfirm(false);
+                    setResetResult(null);
+                  }}
+                  className="px-4 py-2 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

@@ -110,7 +110,7 @@ async function auditRecentMove() {
     const cands = result.allCandidates || [];
 
     console.log(`\n[STEP ${i - startIndex + 1}/${eval5m.length}] Time: ${timeIso} | O=$${curr5m.open} H=$${curr5m.high} L=$${curr5m.low} C=$${curr5m.close}`);
-    console.log(`  Regime: 15M=${ind15m.marketRegime} | 1H=${ind1h.marketRegime} | Zone=${ind15m.rangeLocation}`);
+    console.log(`  Regime: 15M=${ind15m.marketRegime} | 1H=${ind1h.marketRegime} | Zone=${ind15m.premiumDiscountZone}`);
     console.log(`  Detected Candidates: ${cands.length}`);
 
     if (cands.length === 0) {

@@ -315,4 +315,5 @@ if (failedCount > 0) {
   process.exit(1);
 } else {
   console.log('ALL TESTS PASSED SUCCESSFULLY! 🎉');
+  process.exit(0);
 }

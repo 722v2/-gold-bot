@@ -1,6 +1,7 @@
 import { storage } from './storage.js';
 import { fetchLiveQuote } from './marketData.js';
 import { TradeLedgerItem } from '../src/types.js';
+import { globalLifecycleManager } from './tradeQualityEngine.js';
 
 export interface TradeMonitorStatus {
   isRunning: boolean;
@@ -161,6 +162,9 @@ export class TradeLifecycleMonitor {
               `[TradeLifecycleMonitor] Auto-closing trade ${trade.id} -> ${resultType} (Exit: $${exitPrice}, P/L: $${realizedPl})`
             );
             storage.closeTrade(trade.id, resultType, realizedPl, exitPrice, noteSuffix);
+            if (resultType === 'LOSS') {
+              globalLifecycleManager.markSetupFailed(trade, 'Trade hit Stop Loss in TradeLifecycleMonitor');
+            }
             this.totalClosedByMonitor += 1;
           } catch (err) {
             console.error(`[TradeLifecycleMonitor] Error closing trade ${trade.id}:`, err);

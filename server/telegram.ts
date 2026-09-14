@@ -38,6 +38,7 @@ class TelegramService {
   private lastSentTimestamp: number | null = null;
   private lastDetectedChatId: string | number | null = null;
   private sentNotificationIds = new Set<string>();
+  private sentSetupKeys = new Set<string>();
   private pendingOutcomes = new Map<string, PendingTelegramOutcome>();
   private readonly sentFilePath: string;
   private readonly detectedChatPath: string;
@@ -356,11 +357,32 @@ class TelegramService {
    * 🟢 رابحة
    * 🔴 خاسرة
    */
-  public async sendSignalNotification(signal: TradeSignal, scanId?: string): Promise<boolean> {
+  public async sendSignalNotification(
+    signal: TradeSignal,
+    scanId?: string
+  ): Promise<{
+    success: boolean;
+    status: 'NOT_ATTEMPTED' | 'SUPPRESSED' | 'SENT' | 'FAILED';
+    reason?: string;
+    messageId?: number;
+  }> {
     const dedupeId = scanId || signal.id;
-    if (this.sentNotificationIds.has(dedupeId)) {
-      console.log(`[TELEGRAM] Skipping duplicate signal notification for ${dedupeId}`);
-      return false;
+    if (this.sentNotificationIds.has(dedupeId) || storage.isTelegramDispatched(dedupeId)) {
+      const suppReason = `Skipping duplicate signal notification for ${dedupeId}`;
+      console.log(`[TELEGRAM] ${suppReason}`);
+      return { success: false, status: 'SUPPRESSED', reason: suppReason };
+    }
+
+    const setupKey = signal.setupId
+      || (signal as any).patternMetadata?.patternAnchorKey
+      || (signal as any).structuralAnchorKey
+      || (signal as any).setupKey
+      || `tg_${signal.setup}_${signal.signal.includes('BUY') ? 'BUY' : 'SELL'}_${Math.round((signal.entry || 0) / 3)}`;
+
+    if (this.sentSetupKeys.has(setupKey) || storage.isTelegramDispatched(setupKey)) {
+      const suppReason = `Skipping duplicate telegram notification for structural setup key ${setupKey}`;
+      console.log(`[TELEGRAM] ${suppReason}`);
+      return { success: false, status: 'SUPPRESSED', reason: suppReason };
     }
 
     const message = this.formatSignalMessage(signal);
@@ -377,11 +399,30 @@ class TelegramService {
 
     const result = await this.sendTelegramMessage(message, inlineKeyboard);
 
-    // Register as sent so it won't be repeated
-    this.sentNotificationIds.add(dedupeId);
-    this.persistSentIds();
-
-    return result.success;
+    if (result.success) {
+      // ONLY register as sent if sending actually SUCCEEDED
+      this.sentNotificationIds.add(dedupeId);
+      this.sentSetupKeys.add(setupKey);
+      storage.saveTelegramDispatch(dedupeId);
+      storage.saveTelegramDispatch(setupKey);
+      if (signal.setupId) {
+        storage.saveTelegramDispatch(signal.setupId);
+      }
+      this.persistSentIds();
+      console.log(`[TELEGRAM] Successfully dispatched signal ${signal.id} (${signal.setup}) to chat`);
+      return {
+        success: true,
+        status: 'SENT',
+        messageId: result.messageId,
+      };
+    } else {
+      console.warn(`[TELEGRAM] Failed to dispatch signal ${signal.id}: ${result.error || 'Unknown error'}`);
+      return {
+        success: false,
+        status: 'FAILED',
+        reason: result.error || 'Failed to deliver message via Telegram Bot API',
+      };
+    }
   }
 
   /**
@@ -417,7 +458,7 @@ class TelegramService {
     }
 
     // =========================================================================
-    // 2. Identify specific named technical setups from setup metadata
+    // 2. Identify specific named technical setups from setup metadata (S1-S13)
     // =========================================================================
     const hasOrderBlock =
       lowerSetup.includes('order block') ||
@@ -467,6 +508,36 @@ class TelegramService {
       lowerSetup.includes('mitigation block') ||
       lowerSetup.includes('كسر هيكل');
 
+    const hasDoubleTopBottom =
+      lowerSetup.includes('double top') ||
+      lowerSetup.includes('double bottom') ||
+      lowerSetup.includes('m-formation') ||
+      lowerSetup.includes('w-formation') ||
+      lowerSetup.includes('قمة مزدوجة') ||
+      lowerSetup.includes('قاع مزدوج');
+
+    const hasBareSr =
+      lowerSetup.includes('bare resistance') ||
+      lowerSetup.includes('bare support') ||
+      lowerSetup.includes('bare s/r') ||
+      lowerSetup.includes('s/r rejection') ||
+      lowerSetup.includes('رفض مقاومة') ||
+      lowerSetup.includes('رفض دعم');
+
+    const hasBreakAndRetest =
+      lowerSetup.includes('breakout & retest') ||
+      lowerSetup.includes('breakout and retest') ||
+      lowerSetup.includes('horizontal resistance breakout') ||
+      lowerSetup.includes('horizontal support breakout') ||
+      lowerSetup.includes('إعادة اختبار');
+
+    const hasStructureEngulfing =
+      lowerSetup.includes('bullish engulfing') ||
+      lowerSetup.includes('bearish engulfing') ||
+      lowerSetup.includes('engulfing reversal') ||
+      lowerSetup.includes('ابتلاع شرائي') ||
+      lowerSetup.includes('ابتلاع بيعي');
+
     const isNamedTechnicalSetup =
       hasOrderBlock ||
       hasFvg ||
@@ -474,7 +545,11 @@ class TelegramService {
       hasFibonacciOte ||
       hasTrendContinuation ||
       hasMeanReversion ||
-      hasStructureBreak;
+      hasStructureBreak ||
+      hasDoubleTopBottom ||
+      hasBareSr ||
+      hasBreakAndRetest ||
+      hasStructureEngulfing;
 
     if (isNamedTechnicalSetup) {
       return true; // REAL NAMED TECHNICAL SETUP DETECTED AND EVALUATED, BUT REJECTED -> SEND
@@ -557,27 +632,44 @@ class TelegramService {
     timestamp: number = Date.now(),
     analysisPrice?: number,
     signalDetails?: Partial<TradeSignal>
-  ): Promise<boolean> {
+  ): Promise<{
+    success: boolean;
+    status: 'NOT_ATTEMPTED' | 'SUPPRESSED' | 'SENT' | 'FAILED';
+    reason?: string;
+    messageId?: number;
+  }> {
     // Suppress generic/uninformative NO TRADE notifications where no actual trade setup was identified
     if (!this.shouldSendNoTradeNotification(reason, signalDetails)) {
-      console.log(
-        `[TELEGRAM] Suppressed generic NO TRADE notification (no setup found) for scan ${scanId}: "${reason.substring(0, 80)}..."`
-      );
-      return false;
+      const suppReason = `Suppressed generic NO TRADE notification (no setup found) for scan ${scanId}: "${reason.substring(0, 80)}..."`;
+      console.log(`[TELEGRAM] ${suppReason}`);
+      return { success: false, status: 'SUPPRESSED', reason: suppReason };
     }
 
     if (this.sentNotificationIds.has(scanId)) {
-      console.log(`[TELEGRAM] Skipping duplicate NO TRADE notification for ${scanId}`);
-      return false;
+      const suppReason = `Skipping duplicate NO TRADE notification for ${scanId}`;
+      console.log(`[TELEGRAM] ${suppReason}`);
+      return { success: false, status: 'SUPPRESSED', reason: suppReason };
     }
 
     const message = this.formatNoTradeMessage(reason, timestamp, analysisPrice, signalDetails);
     const result = await this.sendTelegramMessage(message);
 
-    this.sentNotificationIds.add(scanId);
-    this.persistSentIds();
-
-    return result.success;
+    if (result.success) {
+      this.sentNotificationIds.add(scanId);
+      this.persistSentIds();
+      return {
+        success: true,
+        status: 'SENT',
+        messageId: result.messageId,
+      };
+    } else {
+      console.warn(`[TELEGRAM] Failed to dispatch NO TRADE notification for scan ${scanId}: ${result.error || 'Unknown error'}`);
+      return {
+        success: false,
+        status: 'FAILED',
+        reason: result.error || 'Failed to deliver NO TRADE message via Telegram Bot API',
+      };
+    }
   }
 
   /**
@@ -589,19 +681,37 @@ class TelegramService {
     error: string,
     timestamp: number = Date.now(),
     analysisPrice?: number
-  ): Promise<boolean> {
+  ): Promise<{
+    success: boolean;
+    status: 'NOT_ATTEMPTED' | 'SUPPRESSED' | 'SENT' | 'FAILED';
+    reason?: string;
+    messageId?: number;
+  }> {
     if (this.sentNotificationIds.has(scanId)) {
-      console.log(`[TELEGRAM] Skipping duplicate ERROR notification for ${scanId}`);
-      return false;
+      const suppReason = `Skipping duplicate ERROR notification for ${scanId}`;
+      console.log(`[TELEGRAM] ${suppReason}`);
+      return { success: false, status: 'SUPPRESSED', reason: suppReason };
     }
 
     const message = this.formatErrorMessage(error, timestamp, analysisPrice);
     const result = await this.sendTelegramMessage(message);
 
-    this.sentNotificationIds.add(scanId);
-    this.persistSentIds();
-
-    return result.success;
+    if (result.success) {
+      this.sentNotificationIds.add(scanId);
+      this.persistSentIds();
+      return {
+        success: true,
+        status: 'SENT',
+        messageId: result.messageId,
+      };
+    } else {
+      console.warn(`[TELEGRAM] Failed to dispatch ERROR notification for scan ${scanId}: ${result.error || 'Unknown error'}`);
+      return {
+        success: false,
+        status: 'FAILED',
+        reason: result.error || 'Failed to deliver ERROR message via Telegram Bot API',
+      };
+    }
   }
 
   /**
@@ -648,19 +758,38 @@ class TelegramService {
               calculatedExitPrice = exitPrice;
               const isBuy = pending.direction.includes('BUY');
               const diff = isBuy ? (exitPrice - pending.entry) : (pending.entry - exitPrice);
-              const rawPnl = Number((diff * 100 * (pending.lotSize || 0.01)).toFixed(2));
-              calculatedPnl = pending.outcome === 'WIN' ? Math.abs(rawPnl) : -Math.abs(rawPnl);
+              calculatedPnl = Number((diff * 100 * (pending.lotSize || 0.01)).toFixed(2));
             }
           }
 
           // Otherwise, parse direct dollar amount (e.g. "17.78", "+17.78", "$17.78", "-3.50", "3.50")
           if (calculatedPnl === null) {
-            const cleanNum = text.replace(/[\$,\s\+]/g, '');
+            const cleanNum = text.replace(/[\$,\s]/g, '');
             const parsedNum = parseFloat(cleanNum);
             if (!isNaN(parsedNum)) {
-              calculatedPnl = pending.outcome === 'WIN' ? Math.abs(parsedNum) : -Math.abs(parsedNum);
+              calculatedPnl = parsedNum;
             }
           }
+
+          if (calculatedPnl === null) {
+            await this.sendTelegramMessage(`⚠️ القيمة المدخلة "<b>${text}</b>" غير صالحة. يرجى كتابة قيمة الربح/الخسارة الفعلية بالدولار كرسالة (مثال: 12.50 أو -5.00)`);
+            return { handled: true, error: 'INVALID_NUMBER_FORMAT' };
+          }
+
+          // Strict Sign and Zero Validation
+          if (pending.outcome === 'WIN') {
+            if (calculatedPnl <= 0) {
+              await this.sendTelegramMessage(`❌ <b>خطأ في التحقق من الإشارة:</b> لصفقات الربح (WIN)، يجب إدخال قيمة موجبة تماماً أكبر من الصفر.\n<i>القيمة التي أدخلتها: ${calculatedPnl}</i>\n\nيرجى كتابة القيمة الصحيحة الآن كرسالة نصية:`);
+              return { handled: true, error: 'SIGN_VALIDATION_FAILED' };
+            }
+          } else if (pending.outcome === 'LOSS') {
+            if (calculatedPnl >= 0) {
+              await this.sendTelegramMessage(`❌ <b>خطأ في التحقق من الإشارة:</b> لصفقات الخسارة (LOSS)، يجب إدخال قيمة سالبة تماماً أقل من الصفر (مثال: -10.50).\n<i>القيمة التي أدخلتها: ${calculatedPnl}</i>\n\nيرجى كتابة القيمة الصحيحة الآن كرسالة نصية (مع علامة السالب -):`);
+              return { handled: true, error: 'SIGN_VALIDATION_FAILED' };
+            }
+          }
+
+          calculatedPnl = Number(calculatedPnl.toFixed(2));
 
           if (calculatedPnl !== null) {
             const outcomeRecord: TradeOutcomeRecord = {
@@ -915,39 +1044,34 @@ class TelegramService {
     if (chatId) this.pendingOutcomes.set(String(chatId), pendingItem);
 
     if (outcome === 'WIN') {
-      await this.answerCallbackQuery(callbackId, '🟢 اختر قيمة الهدف أو اكتب الربح الفعلي ($) كرسالة في المحادثة', false);
+      await this.answerCallbackQuery(callbackId, '🟢 يرجى كتابة قيمة الأرباح الفعلية بالدولار كرسالة في المحادثة', false);
 
       const promptKeyboard = [
         [
-          { text: `🎯 الهدف الأول TP1 (+$${tp1ProfitUsd.toFixed(2)})`, callback_data: `out_pnl:${signalId}:win:${tp1ProfitUsd}:${tp1}` },
-          { text: `🎯 الهدف الثاني TP2 (+$${tp2ProfitUsd.toFixed(2)})`, callback_data: `out_pnl:${signalId}:win:${tp2ProfitUsd}:${tp2}` },
-        ],
-        [
-          { text: '✍️ سأكتب الربح الفعلي بالدولار في رسالة', callback_data: `noop_wait:${signalId}` },
+          { text: '✍️ أدخل قيمة الأرباح بالدولار ($)', callback_data: `noop_wait:${signalId}` },
         ],
       ];
 
       if (chatId && messageId) {
         await this.editTelegramMessageReplyMarkup(chatId, messageId, promptKeyboard);
+        await this.sendTelegramMessage(`✍️ <b>يرجى إدخال قيمة الأرباح الفعلية بالدولار (USD) للصفقة <code>${signalId}</code> كرسالة نصية:</b>\n<i>(ملاحظة: يجب أن تكون القيمة موجبة تماماً وأكبر من الصفر، مثال: 15.75)</i>`);
       }
     } else {
-      await this.answerCallbackQuery(callbackId, '🔴 اختر وقف الخسارة أو اكتب الخسارة الفعلية ($) كرسالة في المحادثة', false);
+      await this.answerCallbackQuery(callbackId, '🔴 يرجى كتابة قيمة الخسائر الفعلية بالدولار كرسالة في المحادثة', false);
 
       const promptKeyboard = [
         [
-          { text: `🛑 ضرب الوقف SL (-$${slLossUsd.toFixed(2)})`, callback_data: `out_pnl:${signalId}:loss:-${slLossUsd}:${sl}` },
-        ],
-        [
-          { text: '✍️ سأكتب الخسارة الفعلية بالدولار في رسالة', callback_data: `noop_wait:${signalId}` },
+          { text: '✍️ أدخل قيمة الخسارة بالدولار ($)', callback_data: `noop_wait:${signalId}` },
         ],
       ];
 
       if (chatId && messageId) {
         await this.editTelegramMessageReplyMarkup(chatId, messageId, promptKeyboard);
+        await this.sendTelegramMessage(`✍️ <b>يرجى إدخال قيمة الخسائر الفعلية بالدولار (USD) للصفقة <code>${signalId}</code> كرسالة نصية:</b>\n<i>(ملاحظة: يجب أن تكون القيمة سالبة تماماً وأقل من الصفر، مثل: -5.50)</i>`);
       }
     }
 
-    console.log(`[TELEGRAM] Outcome prompt initiated for signal ${signalId}: ${outcome}`);
+    console.log(`[TELEGRAM] Outcome prompt initiated for signal ${signalId}: ${outcome} (Manual P&L Input Only)`);
     return { handled: true, result: `PROMPTED_${outcome}` };
   }
 

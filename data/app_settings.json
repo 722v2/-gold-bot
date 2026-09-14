@@ -1,10 +1,10 @@
 {
   "capitalSource": "MANUAL",
-  "manualCapital": 26.5,
-  "riskPerTrade": 15.3,
-  "maxRiskPerTrade": 19,
+  "manualCapital": 100,
+  "riskPerTrade": 15,
+  "maxRiskPerTrade": 15,
   "minTp1RR": 1.5,
-  "targetTp2RR": 2.5,
+  "targetTp2RR": 3,
   "minimumConfidence": 75,
   "executionMode": "DEMO",
   "accountMode": "DEMO",
@@ -31,6 +31,5 @@
   "maxGoldSlPoints": 50,
   "maxLoss": 5,
   "partialClosePercent": 50,
-  "enableTradeManagement": true,
-  "updatedAt": 1789375263970
+  "enableTradeManagement": true
 }

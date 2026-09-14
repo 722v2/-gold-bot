@@ -1,5 +1,20 @@
 export type AssetType = 'XAU/USD' | 'BTC/USD';
 
+export type StrategyFamily =
+  | 'MARKET_STRUCTURE'
+  | 'LIQUIDITY_SWEEP'
+  | 'ORDER_BLOCK'
+  | 'FVG_IMBALANCE'
+  | 'FIBONACCI_OTE'
+  | 'BREAK_AND_RETEST'
+  | 'COUNTERTREND_SCALP'
+  | 'FAILED_BREAKOUT'
+  | 'RANGE_SFP_REVERSAL'
+  | 'RANGE_BREAKOUT_EXPANSION'
+  | 'DOUBLE_TOP_BOTTOM'
+  | 'BARE_SR'
+  | 'STRUCTURE_ENGULFING';
+
 // ============================================================================
 // PHASE 3 — TRADE QUALITY & EXECUTION INTELLIGENCE TYPES
 // ============================================================================
@@ -97,10 +112,15 @@ export interface LiquidityContextInfo {
 }
 
 export type CandidateLifecycleState =
+  | 'IDENTIFIED'
   | 'WATCHING'
   | 'DEVELOPING'
   | 'READY'
   | 'TRIGGERED'
+  | 'EXECUTABLE'
+  | 'ACTIVE'
+  | 'COMPLETED'
+  | 'FAILED'
   | 'INVALIDATED'
   | 'CLOSED'
   | 'EXPIRED';
@@ -341,18 +361,6 @@ export interface PositionSizingDetails {
   lotStep: number;
 }
 
-export type StrategyFamily =
-  | 'MARKET_STRUCTURE'
-  | 'LIQUIDITY_SWEEP'
-  | 'ORDER_BLOCK'
-  | 'FVG_IMBALANCE'
-  | 'FIBONACCI_OTE'
-  | 'BREAK_AND_RETEST'
-  | 'COUNTERTREND_SCALP'
-  | 'FAILED_BREAKOUT'
-  | 'RANGE_SFP_REVERSAL'
-  | 'RANGE_BREAKOUT_EXPANSION';
-
 export interface DuplicateDetails {
   duplicateReason: 'DUPLICATE_ACTIVE_REENTRY' | 'DUPLICATE_ACTIVE';
   activeSignalId: string;
@@ -368,6 +376,7 @@ export interface DuplicateDetails {
 
 export interface TradeSignal {
   id: string;
+  setupId?: string; // Structural setup identity (distinct from event signal document id)
   timestamp: number;
   asset: AssetType;
   signal: SignalDecision;
@@ -411,6 +420,9 @@ export interface TradeSignal {
   tpRunway?: TpPathRunway;
   lifecycleState?: CandidateLifecycleState;
   poiId?: string;
+  patternMetadata?: Record<string, any>;
+  structuralAnchorKey?: string;
+  setupKey?: string;
   triggers?: string[];
   executionBreakdown?: {
     timingScore: number;
@@ -428,6 +440,8 @@ export interface TradeSignal {
   invalidation: string; // When the trade becomes invalid
   noTradeReason?: string; // Reason if NO TRADE
   aiAnalysisText?: string;
+  telegramDispatchStatus?: 'NOT_ATTEMPTED' | 'SUPPRESSED' | 'SENT' | 'FAILED';
+  telegramDispatchReason?: string;
 }
 
 export interface Reinforcement {
@@ -730,4 +744,25 @@ export interface BacktestResultData {
   equityCurve: { time: string; timestamp: number; balance: number }[];
   validationReport?: HistoricalDataValidationReport;
 }
+
+export interface TradeOpportunity {
+  id: string; // Persistent unique setup key or structural cluster ID
+  setupName: string;
+  strategyFamily: string;
+  direction: 'BUY' | 'SELL';
+  timeframe: string;
+  status: 'ACTIVE' | 'DISPATCHED' | 'FAILED' | 'COMPLETED';
+  firstObservedTime: number;
+  lastUpdatedTime: number;
+  entry: number;
+  stopLoss: number;
+  tp1: number;
+  tp2: number;
+  confidence: number;
+  dispatchedAt?: number;
+  failedAt?: number;
+  completedAt?: number;
+  telegramMessageId?: number;
+}
+
 

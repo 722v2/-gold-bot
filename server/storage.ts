@@ -4,6 +4,7 @@ import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import {
   getFirestore,
   Firestore,
+  setLogLevel,
   doc,
   getDoc,
   setDoc,
@@ -24,6 +25,7 @@ import {
   PoiRecord,
   CandidateLifecycleRecord,
   DuplicateDetails,
+  TradeOpportunity,
 } from '../src/types.js';
 
 /**
@@ -78,6 +80,8 @@ export interface ScanRecord {
   noTradeReason?: string;
   duplicateReason?: string;
   duplicateDetails?: DuplicateDetails;
+  telegramDispatchStatus?: 'NOT_ATTEMPTED' | 'SUPPRESSED' | 'SENT' | 'FAILED';
+  telegramDispatchReason?: string;
 }
 
 export interface DailyTradeStats {
@@ -146,6 +150,9 @@ const SETTINGS_FILE = path.join(DATA_DIR, 'app_settings.json');
 const OUTCOMES_FILE = path.join(DATA_DIR, 'trade_outcomes.json');
 const BACKTEST_FILE = path.join(DATA_DIR, 'backtest_results.json');
 const ACCOUNT_FILE = path.join(DATA_DIR, 'account_state.json');
+const TERMINAL_SETUPS_FILE = path.join(DATA_DIR, 'terminal_setups.json');
+const TELEGRAM_DISPATCHES_FILE = path.join(DATA_DIR, 'telegram_dispatches.json');
+const OPPORTUNITIES_FILE = path.join(DATA_DIR, 'opportunities.json');
 
 const MAX_SCANS_TO_KEEP = 500;
 const MAX_SIGNALS_TO_KEEP = 200;
@@ -168,6 +175,9 @@ class PersistentStorage {
 
   private inMemoryPois: PoiRecord[] = [];
   private inMemoryLifecycles: CandidateLifecycleRecord[] = [];
+  private inMemoryTerminalSetups: Set<string> = new Set();
+  private inMemoryTelegramDispatches: Set<string> = new Set();
+  private inMemoryOpportunities: Map<string, TradeOpportunity> = new Map();
 
   constructor() {
     this.initPromise = this.init();
@@ -206,6 +216,7 @@ class PersistentStorage {
 
         const databaseId = process.env.FIREBASE_DATABASE_ID || config.firestoreDatabaseId;
         this.firestoreDb = getFirestore(app, databaseId);
+        setLogLevel('error');
         console.log(`[Storage] Connected to Google Firestore database: ${databaseId}`);
       } else {
         console.warn('[Storage] Neither FIREBASE_CONFIG env nor firebase-applet-config.json found, proceeding with local fallback.');
@@ -398,10 +409,35 @@ class PersistentStorage {
         }
       }
 
+      // G. Opportunities
+      try {
+        const oppCol = collection(this.firestoreDb, 'opportunities');
+        const oppSnap = await getDocs(query(oppCol, orderBy('lastUpdatedTime', 'desc'), firestoreLimit(200)));
+        if (!oppSnap.empty) {
+          oppSnap.docs.forEach(d => {
+            const o = d.data() as TradeOpportunity;
+            if (o.id) this.inMemoryOpportunities.set(o.id, o);
+          });
+          console.log(`[Storage] Loaded ${this.inMemoryOpportunities.size} opportunities from Firestore.`);
+        } else if (fs.existsSync(OPPORTUNITIES_FILE)) {
+          const raw = fs.readFileSync(OPPORTUNITIES_FILE, 'utf8');
+          const list: TradeOpportunity[] = JSON.parse(raw || '[]');
+          for (const o of list) {
+            if (!o.id) continue;
+            await setDoc(doc(this.firestoreDb, 'opportunities', o.id.replace(/\//g, '_')), sanitizeFirestoreData(o));
+            this.inMemoryOpportunities.set(o.id, o);
+          }
+          console.log(`[Storage] Seeded ${this.inMemoryOpportunities.size} opportunities to Firestore.`);
+        }
+      } catch (e) {
+        console.error('[Storage] Error seeding or loading opportunities in Firestore:', e);
+      }
+
       // Sync local JSON files as secondary local mirrors
       this.syncJsonBackups();
     } catch (err) {
-      console.error('[Storage] Error syncing Firestore data on startup:', err);
+      console.error('[Storage] Error syncing Firestore data on startup, falling back to local JSON cache:', err);
+      this.loadLocalJsonFallback();
     }
   }
 
@@ -427,6 +463,18 @@ class PersistentStorage {
         this.inMemoryCurrentBalance = acc.currentBalance ?? 25;
         this.inMemoryStartingBalance = acc.startingBalance ?? 25;
       }
+      if (fs.existsSync(TERMINAL_SETUPS_FILE)) {
+        const arr = JSON.parse(fs.readFileSync(TERMINAL_SETUPS_FILE, 'utf-8') || '[]');
+        this.inMemoryTerminalSetups = new Set(arr);
+      }
+      if (fs.existsSync(TELEGRAM_DISPATCHES_FILE)) {
+        const arr = JSON.parse(fs.readFileSync(TELEGRAM_DISPATCHES_FILE, 'utf-8') || '[]');
+        this.inMemoryTelegramDispatches = new Set(arr);
+      }
+      if (fs.existsSync(OPPORTUNITIES_FILE)) {
+        const arr = JSON.parse(fs.readFileSync(OPPORTUNITIES_FILE, 'utf-8') || '[]');
+        this.inMemoryOpportunities = new Map(arr.map((o: any) => [o.id, o]));
+      }
     } catch (e) {
       console.error('[Storage] JSON fallback failed:', e);
     }
@@ -447,6 +495,9 @@ class PersistentStorage {
         JSON.stringify({ currentBalance: this.inMemoryCurrentBalance, startingBalance: this.inMemoryStartingBalance }, null, 2),
         'utf-8'
       );
+      fs.writeFileSync(TERMINAL_SETUPS_FILE, JSON.stringify(Array.from(this.inMemoryTerminalSetups), null, 2), 'utf-8');
+      fs.writeFileSync(TELEGRAM_DISPATCHES_FILE, JSON.stringify(Array.from(this.inMemoryTelegramDispatches), null, 2), 'utf-8');
+      fs.writeFileSync(OPPORTUNITIES_FILE, JSON.stringify(Array.from(this.inMemoryOpportunities.values()), null, 2), 'utf-8');
     } catch (e) {
       // Non-fatal local mirror sync
     }
@@ -466,7 +517,13 @@ class PersistentStorage {
       this.lastScannerTimestamp = record.timestamp;
       this.lastScannerStatus = record.status || 'مسح مكتمل';
 
-      this.inMemoryScans.unshift(record);
+      const existingIdx = this.inMemoryScans.findIndex((s) => s.id === record.id);
+      if (existingIdx >= 0) {
+        this.inMemoryScans[existingIdx] = record;
+      } else {
+        this.inMemoryScans.unshift(record);
+      }
+
       if (this.inMemoryScans.length > MAX_SCANS_TO_KEEP) {
         this.inMemoryScans = this.inMemoryScans.slice(0, MAX_SCANS_TO_KEEP);
       }
@@ -1043,6 +1100,48 @@ class PersistentStorage {
     // Optional scanner event logging
   }
 
+  public getTerminalSetups(): string[] {
+    return Array.from(this.inMemoryTerminalSetups);
+  }
+
+  public saveTerminalSetup(key: string): void {
+    if (!key) return;
+    this.inMemoryTerminalSetups.add(key);
+    if (this.firestoreDb) {
+      setDoc(doc(this.firestoreDb, 'terminal_setups', key.replace(/\//g, '_')), {
+        key,
+        createdAt: Date.now(),
+      }).catch((err) => console.error('[Storage] Firestore saveTerminalSetup error:', err));
+    }
+    this.syncJsonBackups();
+  }
+
+  public isTerminalSetup(key: string): boolean {
+    if (!key) return false;
+    return this.inMemoryTerminalSetups.has(key);
+  }
+
+  public getTelegramDispatches(): string[] {
+    return Array.from(this.inMemoryTelegramDispatches);
+  }
+
+  public saveTelegramDispatch(key: string): void {
+    if (!key) return;
+    this.inMemoryTelegramDispatches.add(key);
+    if (this.firestoreDb) {
+      setDoc(doc(this.firestoreDb, 'telegram_dispatches', key.replace(/\//g, '_')), {
+        key,
+        dispatchedAt: Date.now(),
+      }).catch((err) => console.error('[Storage] Firestore saveTelegramDispatch error:', err));
+    }
+    this.syncJsonBackups();
+  }
+
+  public isTelegramDispatched(key: string): boolean {
+    if (!key) return false;
+    return this.inMemoryTelegramDispatches.has(key);
+  }
+
   public getScannerStatus() {
     return {
       lastScanTimestamp: this.lastScannerTimestamp,
@@ -1236,6 +1335,142 @@ class PersistentStorage {
 
   public getLifecycles(): CandidateLifecycleRecord[] {
     return [...this.inMemoryLifecycles];
+  }
+
+  // =========================================================================
+  // Trade Opportunity State Persistence
+  // =========================================================================
+  public saveOpportunity(opp: TradeOpportunity): void {
+    if (!opp.id) return;
+    this.inMemoryOpportunities.set(opp.id, opp);
+    if (this.firestoreDb) {
+      setDoc(doc(this.firestoreDb, 'opportunities', opp.id.replace(/\//g, '_')), sanitizeFirestoreData(opp)).catch((err) => {
+        console.error('[Storage] Firestore saveOpportunity error:', err);
+      });
+    }
+    this.syncJsonBackups();
+  }
+
+  public getOpportunity(id: string): TradeOpportunity | null {
+    if (!id) return null;
+    return this.inMemoryOpportunities.get(id) || null;
+  }
+
+  public getOpportunities(): TradeOpportunity[] {
+    return Array.from(this.inMemoryOpportunities.values());
+  }
+
+  public clearOpportunities(): void {
+    this.inMemoryOpportunities.clear();
+    this.syncJsonBackups();
+  }
+
+  public async resetTradingState(): Promise<any> {
+    try {
+      const auditBefore = {
+        signalsCount: this.inMemorySignals.length,
+        tradesCount: this.inMemoryTrades.length,
+        openTradesCount: this.inMemoryTrades.filter(t => t.result === 'OPEN').length,
+        opportunitiesCount: this.inMemoryOpportunities.size,
+        terminalSetupsCount: this.inMemoryTerminalSetups.size,
+        telegramDispatchesCount: this.inMemoryTelegramDispatches.size,
+        currentBalance: this.inMemoryCurrentBalance,
+        startingBalance: this.inMemoryStartingBalance,
+      };
+
+      // 1. Reset signals
+      this.inMemorySignals = [];
+
+      // 2. Reset opportunities
+      this.inMemoryOpportunities.clear();
+
+      // 3. Reset terminal setups and Telegram dispatches
+      this.inMemoryTerminalSetups.clear();
+      this.inMemoryTelegramDispatches.clear();
+
+      // 4. Reset lifecycles
+      this.inMemoryLifecycles = [];
+
+      // 5. Preserving completed/realized trades in ledger (WIN/LOSS)
+      const completedTrades = this.inMemoryTrades.filter(t => t.result === 'WIN' || t.result === 'LOSS');
+      this.inMemoryTrades = completedTrades;
+
+      // Recalculate current balance based on preserved completed trades
+      const totalPl = Number(completedTrades.reduce((acc, t) => acc + (t.pl || 0), 0).toFixed(2));
+      this.inMemoryCurrentBalance = Number((this.inMemoryStartingBalance + totalPl).toFixed(2));
+
+      // 6. Sync JSON backups to write the empty collections/cleared state to disk
+      this.syncJsonBackups();
+
+      // 7. Clear Firestore collections asynchronously if firestoreDb is defined
+      if (this.firestoreDb) {
+        try {
+          const signalsSnap = await getDocs(collection(this.firestoreDb, 'signals'));
+          for (const docRef of signalsSnap.docs) {
+            await deleteDoc(docRef.ref).catch(() => {});
+          }
+
+          const oppsSnap = await getDocs(collection(this.firestoreDb, 'opportunities'));
+          for (const docRef of oppsSnap.docs) {
+            await deleteDoc(docRef.ref).catch(() => {});
+          }
+
+          const lifecyclesSnap = await getDocs(collection(this.firestoreDb, 'candidate_lifecycles'));
+          for (const docRef of lifecyclesSnap.docs) {
+            await deleteDoc(docRef.ref).catch(() => {});
+          }
+
+          const terminalSnap = await getDocs(collection(this.firestoreDb, 'terminal_setups'));
+          for (const docRef of terminalSnap.docs) {
+            await deleteDoc(docRef.ref).catch(() => {});
+          }
+
+          const dispatchesSnap = await getDocs(collection(this.firestoreDb, 'telegram_dispatches'));
+          for (const docRef of dispatchesSnap.docs) {
+            await deleteDoc(docRef.ref).catch(() => {});
+          }
+
+          const ledgerSnap = await getDocs(collection(this.firestoreDb, 'trade_ledger'));
+          for (const docRef of ledgerSnap.docs) {
+            const data = docRef.data();
+            if (data && data.result !== 'WIN' && data.result !== 'LOSS') {
+              await deleteDoc(docRef.ref).catch(() => {});
+            }
+          }
+
+          // Save updated account state to Firestore
+          await setDoc(doc(this.firestoreDb, 'account_state', 'main'), sanitizeFirestoreData({
+            currentBalance: this.inMemoryCurrentBalance,
+            startingBalance: this.inMemoryStartingBalance,
+            updatedAt: Date.now(),
+          })).catch(() => {});
+        } catch (fsErr) {
+          console.warn('[Storage] Firestore deletion during reset had some non-blocking errors:', fsErr);
+        }
+      }
+
+      const auditAfter = {
+        signalsCount: this.inMemorySignals.length,
+        tradesCount: this.inMemoryTrades.length,
+        openTradesCount: this.inMemoryTrades.filter(t => t.result === 'OPEN').length,
+        opportunitiesCount: this.inMemoryOpportunities.size,
+        terminalSetupsCount: this.inMemoryTerminalSetups.size,
+        telegramDispatchesCount: this.inMemoryTelegramDispatches.size,
+        currentBalance: this.inMemoryCurrentBalance,
+        startingBalance: this.inMemoryStartingBalance,
+      };
+
+      console.log('[Storage] Total Trading State Reset Complete.', { auditBefore, auditAfter });
+
+      return {
+        success: true,
+        before: auditBefore,
+        after: auditAfter,
+      };
+    } catch (error: any) {
+      console.error('[Storage] Error during resetTradingState:', error);
+      throw error;
+    }
   }
 }
 

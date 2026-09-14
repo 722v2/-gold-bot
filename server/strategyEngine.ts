@@ -9,9 +9,15 @@ import {
   EntryTiming,
   TpPathRunway,
   CandidateLifecycleState,
+  StrategyFamily,
 } from '../src/types.js';
 import { BrokerContractSpecs, DEFAULT_BROKER_SPECS, evaluateTradeRisk } from './riskManager.js';
 import { calculateDynamicTakeProfits } from './tpEngine.js';
+import {
+  detectDoubleTopBottom,
+  detectBareSRLevels,
+  detectHorizontalBreakoutRetest,
+} from './indicators.js';
 import {
   globalPoiTracker,
   globalLifecycleManager,
@@ -22,21 +28,12 @@ import {
   assessTpPathRunway,
   assessStopLossQuality,
   calculateExecutionQualityScore,
+  resolveFinalSignalConflict,
 } from './tradeQualityEngine.js';
 
 export interface SetupCandidate {
   id: string;
-  strategyFamily:
-    | 'MARKET_STRUCTURE'
-    | 'LIQUIDITY_SWEEP'
-    | 'ORDER_BLOCK'
-    | 'FVG_IMBALANCE'
-    | 'FIBONACCI_OTE'
-    | 'BREAK_AND_RETEST'
-    | 'COUNTERTREND_SCALP'
-    | 'FAILED_BREAKOUT'
-    | 'RANGE_SFP_REVERSAL'
-    | 'RANGE_BREAKOUT_EXPANSION';
+  strategyFamily: StrategyFamily;
   setupName: string;
   direction: 'BUY' | 'SELL';
   orderType: 'MARKET' | 'LIMIT';
@@ -60,6 +57,7 @@ export interface SetupCandidate {
   lifecycleState?: CandidateLifecycleState;
   poiId?: string;
   triggers?: string[];
+  patternMetadata?: Record<string, any>;
   executionBreakdown?: {
     timingScore: number;
     triggerScore: number;
@@ -80,6 +78,19 @@ export interface SetupCandidate {
     technicalScore: number;
   };
 }
+
+export interface CandidateEvaluationTelemetry {
+  strategyId: string;
+  strategyFamily: StrategyFamily;
+  setupName: string;
+  direction: 'BUY' | 'SELL';
+  detected: boolean;
+  rejected: boolean;
+  rejectionGate?: string;
+  rejectionReason?: string;
+  candidate?: SetupCandidate;
+}
+
 
 export interface MultiStrategyEngineInput {
   asset: AssetType;
@@ -103,6 +114,7 @@ export interface MultiStrategyEngineResult {
   allCandidates: SetupCandidate[];
   finalSignal: TradeSignal;
   noTradeReason?: string;
+  telemetryRecords?: CandidateEvaluationTelemetry[];
 }
 
 /**
@@ -193,6 +205,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   const c15mMetrics = analyzeCandle(last15m);
 
   const atr5m = Math.max(1.5, indicators5m.atr14 || 2.5);
+  const atr15m = Math.max(2.0, indicators15m.atr14 || 3.5);
   const bufferGold = Math.max(0.3, Math.min(0.8, atr5m * 0.15));
 
   const h1Trend = indicators1h.structure;
@@ -243,7 +256,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       timeframe?: '1H' | '15M' | '5M';
       createdCandleTime?: number;
       invalidationPrice?: number;
-    }
+    },
+    patternMetadata?: Record<string, any>
   ): SetupCandidate | null => {
     // 1. Calculate SL with technical buffer
     const entry = Number(proposedEntry.toFixed(2));
@@ -342,7 +356,15 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       indicators15m.marketRegime || 'UNCLEAR'
     );
 
-    if (pullbackAssessment.quality === 'INVALID' && family !== 'LIQUIDITY_SWEEP' && family !== 'RANGE_SFP_REVERSAL' && family !== 'COUNTERTREND_SCALP') {
+    if (
+      pullbackAssessment.quality === 'INVALID' &&
+      family !== 'LIQUIDITY_SWEEP' &&
+      family !== 'RANGE_SFP_REVERSAL' &&
+      family !== 'COUNTERTREND_SCALP' &&
+      family !== 'DOUBLE_TOP_BOTTOM' &&
+      family !== 'BARE_SR' &&
+      family !== 'STRUCTURE_ENGULFING'
+    ) {
       console.log(`[StrategyEngine] Disqualified ${setupName} due to invalid pullback structure (${pullbackAssessment.reasons.join(', ')})`);
       return null;
     }
@@ -474,6 +496,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       lifecycleState: lifecycleResult.state,
       poiId: registeredPoi.id,
       triggers: triggerAssessment.allTriggers,
+      patternMetadata,
       executionBreakdown: eqResult.breakdown,
       timeframe: '15M / 5M',
       mainReasons: reasons,
@@ -1081,6 +1104,343 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   }
 
   // =========================================================================
+  // STRATEGY 10 (Phase 2): DOUBLE_TOP_BOTTOM_REVERSAL (M & W Formations)
+  // =========================================================================
+  const doubleTopBottomPatterns = detectDoubleTopBottom(candles5m, atr5m);
+  for (const pat of doubleTopBottomPatterns) {
+    if (pat.type === 'DOUBLE_TOP') {
+      const cand = evaluateCandidate(
+        'DOUBLE_TOP_BOTTOM',
+        'Double Top Reversal (M-Formation)',
+        'SELL',
+        'MARKET',
+        currentPrice,
+        pat.extremeLevel,
+        [
+          `رصد نمط قمة مزدوجة (Double Top / M-Formation) عند مستوى $${pat.extremeLevel.toFixed(2)} مع تباعد محوري واضح.`,
+          `رفض السعر من القمة الثانية مع تأكيد إغلاق شمعة زخم أسفل القمة وخط العنق عند $${pat.neckline.toFixed(2)}.`,
+          `استهداف مستويات السيولة السفلى بنسبة عائد تتجاوز ${minRr}R.`,
+        ],
+        ['Double Top M-Pattern', 'Bearish Rejection', 'Neckline Breakout', 'Liquidity Target'],
+        22,
+        20,
+        20,
+        18,
+        {
+          type: 'SFP_ZONE',
+          top: pat.extremeLevel + 0.3 * atr5m,
+          bottom: pat.extremeLevel - 0.5 * atr5m,
+          timeframe: '5M',
+          createdCandleTime: pat.pivot2Time,
+        },
+        {
+          strategyId: 'S10',
+          patternType: 'DOUBLE_TOP',
+          pivot1: pat.pivot1,
+          pivot2: pat.pivot2,
+          pivot1Time: pat.pivot1Time,
+          pivot2Time: pat.pivot2Time,
+          neckline: pat.neckline,
+          extremeLevel: pat.extremeLevel,
+          patternAnchorKey: pat.patternAnchorKey,
+        }
+      );
+      if (cand) candidates.push(cand);
+    } else if (pat.type === 'DOUBLE_BOTTOM') {
+      const cand = evaluateCandidate(
+        'DOUBLE_TOP_BOTTOM',
+        'Double Bottom Reversal (W-Formation)',
+        'BUY',
+        'MARKET',
+        currentPrice,
+        pat.extremeLevel,
+        [
+          `رصد نمط قاع مزدوج (Double Bottom / W-Formation) عند مستوى $${pat.extremeLevel.toFixed(2)} مع تباعد محوري واضح.`,
+          `ارتداد السعر من القاع الثاني مع تأكيد إغلاق شمعة زخم صاعدة أعلاه وخط العنق عند $${pat.neckline.toFixed(2)}.`,
+          `استهداف مستويات السيولة العليا بنسبة عائد تتجاوز ${minRr}R.`,
+        ],
+        ['Double Bottom W-Pattern', 'Bullish Rejection', 'Neckline Breakout', 'Liquidity Target'],
+        22,
+        20,
+        20,
+        18,
+        {
+          type: 'SFP_ZONE',
+          top: pat.extremeLevel + 0.5 * atr5m,
+          bottom: pat.extremeLevel - 0.3 * atr5m,
+          timeframe: '5M',
+          createdCandleTime: pat.pivot2Time,
+        },
+        {
+          strategyId: 'S10',
+          patternType: 'DOUBLE_BOTTOM',
+          pivot1: pat.pivot1,
+          pivot2: pat.pivot2,
+          pivot1Time: pat.pivot1Time,
+          pivot2Time: pat.pivot2Time,
+          neckline: pat.neckline,
+          extremeLevel: pat.extremeLevel,
+          patternAnchorKey: pat.patternAnchorKey,
+        }
+      );
+      if (cand) candidates.push(cand);
+    }
+  }
+
+  // =========================================================================
+  // STRATEGY 11 (Phase 2): BARE_SR_REJECTION (Classic Support / Resistance)
+  // =========================================================================
+  const bareSrLevels = detectBareSRLevels(candles15m, candles5m, atr15m);
+  for (const sr of bareSrLevels) {
+    if (sr.type === 'RESISTANCE') {
+      const isNearLevel = currentPrice <= sr.level + 0.5 * atr15m && currentPrice >= sr.level - 1.2 * atr15m;
+      const recentHighTouched = last5m.high >= sr.level - 0.3 * atr5m;
+      const showsRejection = (c5mMetrics.upperWick >= 0.35 * c5mMetrics.totalRange || c5mMetrics.upperWick >= 0.4 * atr5m) && last5m.close < sr.level;
+
+      if (isNearLevel && recentHighTouched && showsRejection) {
+        const cand = evaluateCandidate(
+          'BARE_SR',
+          'Bare Resistance Rejection',
+          'SELL',
+          'MARKET',
+          currentPrice,
+          sr.level,
+          [
+            `ارتطام ورفض مباشر من مستوى مقاومة أفقية رئيسية ($${sr.level.toFixed(2)}) تم اختبارها ${sr.touches} مرات سابقاً.`,
+            `تكون فتيل رفض علوي بارز (Upper Wick Rejection) مع إغلاق شمعة 5M أسفل مستوى المقاومة.`,
+            `استهداف مستويات الدعم المواجهة والسيولة البيعية بنسبة عائد تتجاوز ${minRr}R.`,
+          ],
+          ['Bare Resistance', 'Multi-Touch Level', 'Upper Wick Rejection', 'Structural Wall'],
+          20,
+          18,
+          20,
+          18,
+          {
+            type: 'SWING_LEVEL',
+            top: sr.level + 0.3 * atr15m,
+            bottom: sr.level - 0.3 * atr15m,
+            timeframe: '15M',
+            createdCandleTime: last5m.timestamp,
+          },
+          {
+            strategyId: 'S11',
+            level: sr.level,
+            touches: sr.touches,
+            strength: sr.strength,
+          }
+        );
+        if (cand) candidates.push(cand);
+      }
+    } else if (sr.type === 'SUPPORT') {
+      const isNearLevel = currentPrice >= sr.level - 0.5 * atr15m && currentPrice <= sr.level + 1.2 * atr15m;
+      const recentLowTouched = last5m.low <= sr.level + 0.3 * atr5m;
+      const showsRejection = (c5mMetrics.lowerWick >= 0.35 * c5mMetrics.totalRange || c5mMetrics.lowerWick >= 0.4 * atr5m) && last5m.close > sr.level;
+
+      if (isNearLevel && recentLowTouched && showsRejection) {
+        const cand = evaluateCandidate(
+          'BARE_SR',
+          'Bare Support Rejection',
+          'BUY',
+          'MARKET',
+          currentPrice,
+          sr.level,
+          [
+            `ارتطام وارتداد مباشر من مستوى دعم أفقي قوي ($${sr.level.toFixed(2)}) تم اختباره ${sr.touches} مرات سابقاً.`,
+            `تكون فتيل رفض سفلي بارز (Lower Wick Rejection) مع إغلاق شمعة 5M أعلى مستوى الدعم.`,
+            `استهداف مستويات المقاومة التالية والسيولة الشرائية بنسبة عائد تتجاوز ${minRr}R.`,
+          ],
+          ['Bare Support', 'Multi-Touch Level', 'Lower Wick Rejection', 'Structural Floor'],
+          20,
+          18,
+          20,
+          18,
+          {
+            type: 'SWING_LEVEL',
+            top: sr.level + 0.3 * atr15m,
+            bottom: sr.level - 0.3 * atr15m,
+            timeframe: '15M',
+            createdCandleTime: last5m.timestamp,
+          },
+          {
+            strategyId: 'S11',
+            level: sr.level,
+            touches: sr.touches,
+            strength: sr.strength,
+          }
+        );
+        if (cand) candidates.push(cand);
+      }
+    }
+  }
+
+  // =========================================================================
+  // STRATEGY 12 (Phase 2): HORIZONTAL_BREAKOUT_RETEST (Breakout & Retest)
+  // =========================================================================
+  const retestPatterns = detectHorizontalBreakoutRetest(candles15m, candles5m, atr15m);
+  for (const retest of retestPatterns) {
+    if (retest.type === 'RESISTANCE_TO_SUPPORT') {
+      const cand = evaluateCandidate(
+        'BREAK_AND_RETEST',
+        'Horizontal Resistance Breakout & Retest',
+        'BUY',
+        'MARKET',
+        currentPrice,
+        retest.brokenLevel,
+        [
+          `إعادة اختبار ناجحة لمستوى مقاومة مخترق سابقاً عند $${retest.brokenLevel.toFixed(2)} تحول إلى دعم هيكلي جديد (Resistance Turned Support).`,
+          `تأكيد رفض هابط عند إعادة الاختبار مع استقرار السعر أعلى المستوى المخترق.`,
+          `استهداف الامتدادات الصاعدة والسيولة الشرائية المستهدفة بنسبة عائد تتجاوز ${minRr}R.`,
+        ],
+        ['Breakout & Retest', 'Role Reversal SR', 'Structural Continuation', 'Clean Confirmation'],
+        22,
+        18,
+        19,
+        19,
+        {
+          type: 'SWING_LEVEL',
+          top: retest.brokenLevel + 0.3 * atr15m,
+          bottom: retest.brokenLevel - 0.3 * atr15m,
+          timeframe: '15M',
+          createdCandleTime: last5m.timestamp,
+        },
+        {
+          strategyId: 'S12',
+          brokenLevel: retest.brokenLevel,
+          breakoutCandleClose: retest.breakoutCandleClose,
+          retestPrice: retest.retestPrice,
+        }
+      );
+      if (cand) candidates.push(cand);
+    } else if (retest.type === 'SUPPORT_TO_RESISTANCE') {
+      const cand = evaluateCandidate(
+        'BREAK_AND_RETEST',
+        'Horizontal Support Breakout & Retest',
+        'SELL',
+        'MARKET',
+        currentPrice,
+        retest.brokenLevel,
+        [
+          `إعادة اختبار ناجحة لمستوى دعم مكسور سابقاً عند $${retest.brokenLevel.toFixed(2)} تحول إلى مقاومة هيكلية جديدة (Support Turned Resistance).`,
+          `تأكيد رفض صاعد عند إعادة الاختبار مع استقرار السعر أسفل المستوى المكسور.`,
+          `استهداف الامتدادات الهابطة والسيولة البيعية المستهدفة بنسبة عائد تتجاوز ${minRr}R.`,
+        ],
+        ['Breakout & Retest', 'Role Reversal SR', 'Structural Continuation', 'Clean Confirmation'],
+        22,
+        18,
+        19,
+        19,
+        {
+          type: 'SWING_LEVEL',
+          top: retest.brokenLevel + 0.3 * atr15m,
+          bottom: retest.brokenLevel - 0.3 * atr15m,
+          timeframe: '15M',
+          createdCandleTime: last5m.timestamp,
+        },
+        {
+          strategyId: 'S12',
+          brokenLevel: retest.brokenLevel,
+          breakoutCandleClose: retest.breakoutCandleClose,
+          retestPrice: retest.retestPrice,
+        }
+      );
+      if (cand) candidates.push(cand);
+    }
+  }
+
+  // =========================================================================
+  // STRATEGY 13 (Phase 2): STRUCTURE_ENGULFING_REVERSAL (Engulfing Candle at Key Structure)
+  // =========================================================================
+  if (candles5m.length >= 3) {
+    const prevCandle = candles5m[candles5m.length - 2];
+    const prevBody = Math.abs(prevCandle.close - prevCandle.open);
+    const currBody = Math.abs(last5m.close - last5m.open);
+
+    const isEngulfingSize = currBody >= Math.max(prevBody * 1.2, 0.4 * atr5m);
+
+    // Structural context checks
+    const nearResistance = Math.abs(currentPrice - indicators15m.resistance) <= 1.0 * atr15m || currentPrice >= indicators15m.swingHigh - 0.8 * atr15m;
+    const nearSupport = Math.abs(currentPrice - indicators15m.support) <= 1.0 * atr15m || currentPrice <= indicators15m.swingLow + 0.8 * atr15m;
+    const isDiscount = indicators15m.premiumDiscountZone === 'DISCOUNT';
+    const isPremium = indicators15m.premiumDiscountZone === 'PREMIUM';
+
+    // Bullish Engulfing (BUY)
+    const isBullEngulfing = prevCandle.close < prevCandle.open && last5m.close > last5m.open && last5m.close > prevCandle.open && isEngulfingSize;
+    if (isBullEngulfing && (nearSupport || isDiscount)) {
+      const cand = evaluateCandidate(
+        'STRUCTURE_ENGULFING',
+        'Bullish Engulfing Reversal at Key Structure',
+        'BUY',
+        'MARKET',
+        currentPrice,
+        Math.min(last5m.low, prevCandle.low),
+        [
+          `ظهور شمعة ابتلاعية صاعدة (Bullish Engulfing) عند منطقة هيكلية هامة ($${currentPrice.toFixed(2)}).`,
+          `تغلب كامل للمشترين على الشمعة البيعية السابقة مع إغلاق أعلى من سعر افتتاح الشمعة السابقة.`,
+          `توافق النمط مع منطقة ${indicators15m.premiumDiscountZone || 'Discount'} بنسبة عائد تتجاوز ${minRr}R.`,
+        ],
+        ['Bullish Engulfing', 'Structural Reversal', 'Candle Pattern Confirmation', 'Discount Zone'],
+        20,
+        17,
+        22,
+        18,
+        {
+          type: 'SWING_LEVEL',
+          top: Math.max(last5m.high, prevCandle.high),
+          bottom: Math.min(last5m.low, prevCandle.low),
+          timeframe: '5M',
+          createdCandleTime: last5m.timestamp,
+        },
+        {
+          strategyId: 'S13',
+          direction: 'BUY',
+          prevBody,
+          currBody,
+          engulfingRatio: (currBody / Math.max(0.01, prevBody)).toFixed(2),
+        }
+      );
+      if (cand) candidates.push(cand);
+    }
+
+    // Bearish Engulfing (SELL)
+    const isBearEngulfing = prevCandle.close > prevCandle.open && last5m.close < last5m.open && last5m.close < prevCandle.open && isEngulfingSize;
+    if (isBearEngulfing && (nearResistance || isPremium)) {
+      const cand = evaluateCandidate(
+        'STRUCTURE_ENGULFING',
+        'Bearish Engulfing Reversal at Key Structure',
+        'SELL',
+        'MARKET',
+        currentPrice,
+        Math.max(last5m.high, prevCandle.high),
+        [
+          `ظهور شمعة ابتلاعية بيعية (Bearish Engulfing) عند منطقة هيكلية هامة ($${currentPrice.toFixed(2)}).`,
+          `تغلب كامل للبائعين على الشمعة الشرائية السابقة مع إغلاق أدنى من سعر افتتاح الشمعة السابقة.`,
+          `توافق النمط مع منطقة ${indicators15m.premiumDiscountZone || 'Premium'} بنسبة عائد تتجاوز ${minRr}R.`,
+        ],
+        ['Bearish Engulfing', 'Structural Reversal', 'Candle Pattern Confirmation', 'Premium Zone'],
+        20,
+        17,
+        22,
+        18,
+        {
+          type: 'SWING_LEVEL',
+          top: Math.max(last5m.high, prevCandle.high),
+          bottom: Math.min(last5m.low, prevCandle.low),
+          timeframe: '5M',
+          createdCandleTime: last5m.timestamp,
+        },
+        {
+          strategyId: 'S13',
+          direction: 'SELL',
+          prevBody,
+          currBody,
+          engulfingRatio: (currBody / Math.max(0.01, prevBody)).toFixed(2),
+        }
+      );
+      if (cand) candidates.push(cand);
+    }
+  }
+
+  // =========================================================================
   // HARD SCORER CONFLICT FILTER: Disqualify candidates directly opposing strong HTF regime
   // =========================================================================
   const regimeFilteredCandidates = candidates.filter((cand) => {
@@ -1089,6 +1449,9 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
         cand.strategyFamily === 'COUNTERTREND_SCALP' ||
         cand.strategyFamily === 'LIQUIDITY_SWEEP' ||
         cand.strategyFamily === 'RANGE_SFP_REVERSAL' ||
+        cand.strategyFamily === 'DOUBLE_TOP_BOTTOM' ||
+        cand.strategyFamily === 'BARE_SR' ||
+        cand.strategyFamily === 'STRUCTURE_ENGULFING' ||
         (cand.strategyFamily === 'MARKET_STRUCTURE' && cand.setupName.includes('CHOCH'));
       if (!isAllowedException) {
         console.log(`[StrategyEngine] Scorer Conflict Filter: Disqualified ${cand.setupName} (${cand.direction}) opposing STRONG_UPTREND`);
@@ -1101,6 +1464,9 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
         cand.strategyFamily === 'COUNTERTREND_SCALP' ||
         cand.strategyFamily === 'LIQUIDITY_SWEEP' ||
         cand.strategyFamily === 'RANGE_SFP_REVERSAL' ||
+        cand.strategyFamily === 'DOUBLE_TOP_BOTTOM' ||
+        cand.strategyFamily === 'BARE_SR' ||
+        cand.strategyFamily === 'STRUCTURE_ENGULFING' ||
         (cand.strategyFamily === 'MARKET_STRUCTURE' && cand.setupName.includes('CHOCH'));
       if (!isAllowedException) {
         console.log(`[StrategyEngine] Scorer Conflict Filter: Disqualified ${cand.setupName} (${cand.direction}) opposing STRONG_DOWNTREND`);
@@ -1110,6 +1476,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
 
     return true;
   });
+
 
   // =========================================================================
   // ACTIVE TRADE OPPOSITION GUARD: Prevent opposing signals while a trade is in-flight
@@ -1207,7 +1574,10 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     };
   }
 
-  const winningCandidate = finalCandidates[0];
+  // Resolve any conflicting candidates (e.g. opposing BUY/SELL signals in same price area)
+  const conflictRes = resolveFinalSignalConflict(finalCandidates, null, indicators15m.marketRegime);
+  const winningCandidate = conflictRes.winningCandidate || finalCandidates[0];
+
   const decision: SignalDecision = winningCandidate.direction === 'BUY'
     ? (winningCandidate.orderType === 'LIMIT' ? 'BUY LIMIT' : 'BUY NOW')
     : (winningCandidate.orderType === 'LIMIT' ? 'SELL LIMIT' : 'SELL NOW');
@@ -1225,8 +1595,13 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     brokerSpecs,
   });
 
+  const setupId = winningCandidate.patternMetadata?.patternAnchorKey
+    || (winningCandidate.patternMetadata as any)?.setupId
+    || `setup_${winningCandidate.strategyFamily}_${winningCandidate.direction}_${Math.round(winningCandidate.entry / 3)}`;
+
   const finalSignal: TradeSignal = {
-    id: `sig_${winningCandidate.direction.toLowerCase()}_${Date.now()}`,
+    id: `sig_${winningCandidate.direction.toLowerCase()}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    setupId,
     timestamp: Date.now(),
     asset,
     signal: decision,
@@ -1260,6 +1635,11 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     tpRunway: winningCandidate.tpRunway,
     lifecycleState: winningCandidate.lifecycleState,
     poiId: winningCandidate.poiId,
+    patternMetadata: winningCandidate.patternMetadata,
+    structuralAnchorKey: winningCandidate.patternMetadata?.patternAnchorKey,
+    setupKey: winningCandidate.patternMetadata?.patternAnchorKey
+      ? `key_${winningCandidate.patternMetadata.patternAnchorKey}`
+      : `key_${winningCandidate.strategyFamily}_${winningCandidate.direction}_${Math.round(winningCandidate.entry)}`,
     triggers: winningCandidate.triggers,
     executionBreakdown: winningCandidate.executionBreakdown,
     timeframe: winningCandidate.timeframe,

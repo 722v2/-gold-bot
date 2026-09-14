@@ -1,7 +1,7 @@
 [
   {
-    "signalId": "pnl_test_1789399858860_e1c0",
-    "tradeId": "pnl_test_1789399858860_e1c0",
+    "signalId": "pnl_test_1789414827371_2xcl",
+    "tradeId": "pnl_test_1789414827371_2xcl",
     "direction": "BUY NOW",
     "orderType": "MARKET",
     "entry": 4284,
@@ -12,13 +12,13 @@
     "exitPrice": 4280,
     "realizedPnl": -4,
     "source": "TELEGRAM_CALLBACK",
-    "timestamp": 1789399858987,
-    "isoTime": "2026-09-14T15:30:58.987Z",
+    "timestamp": 1789414827736,
+    "isoTime": "2026-09-14T19:40:27.736Z",
     "pl": -4
   },
   {
-    "signalId": "pnl_test_1789399858406_ywgu",
-    "tradeId": "pnl_test_1789399858406_ywgu",
+    "signalId": "pnl_test_1789414826794_9gxq",
+    "tradeId": "pnl_test_1789414826794_9gxq",
     "direction": "BUY NOW",
     "orderType": "MARKET",
     "entry": 4284,
@@ -29,13 +29,13 @@
     "exitPrice": 4280,
     "realizedPnl": -4,
     "source": "TELEGRAM_CALLBACK",
-    "timestamp": 1789399858871,
-    "isoTime": "2026-09-14T15:30:58.871Z",
+    "timestamp": 1789414827478,
+    "isoTime": "2026-09-14T19:40:27.478Z",
     "pl": -4
   },
   {
-    "signalId": "stress_buy_win_1789399858860",
-    "tradeId": "stress_buy_win_1789399858860",
+    "signalId": "stress_buy_win_1789414827371",
+    "tradeId": "stress_buy_win_1789414827371",
     "direction": "BUY NOW",
     "orderType": "MARKET",
     "entry": 4284,
@@ -46,8 +46,8 @@
     "exitPrice": 4296,
     "realizedPnl": 12,
     "source": "TELEGRAM_CALLBACK",
-    "timestamp": 1789399858861,
-    "isoTime": "2026-09-14T15:30:58.861Z",
+    "timestamp": 1789414827372,
+    "isoTime": "2026-09-14T19:40:27.372Z",
     "pl": 12
   },
   {
@@ -63,13 +63,13 @@
     "realizedPnl": 17,
     "exitPrice": 4279.49,
     "source": "TELEGRAM_CALLBACK",
-    "timestamp": 1789399858852,
-    "isoTime": "2026-09-14T15:30:58.852Z",
+    "timestamp": 1789414827362,
+    "isoTime": "2026-09-14T19:40:27.362Z",
     "pl": 17
   },
   {
-    "signalId": "stress_buy_win_1789399858406",
-    "tradeId": "stress_buy_win_1789399858406",
+    "signalId": "stress_buy_win_1789414826794",
+    "tradeId": "stress_buy_win_1789414826794",
     "direction": "BUY NOW",
     "orderType": "MARKET",
     "entry": 4284,
@@ -80,8 +80,8 @@
     "exitPrice": 4296,
     "realizedPnl": 12,
     "source": "TELEGRAM_CALLBACK",
-    "timestamp": 1789399858464,
-    "isoTime": "2026-09-14T15:30:58.464Z",
+    "timestamp": 1789414826852,
+    "isoTime": "2026-09-14T19:40:26.852Z",
     "pl": 12
   },
   {
@@ -96,8 +96,8 @@
     "outcome": "WIN",
     "realizedPnl": 10,
     "source": "TELEGRAM_CALLBACK",
-    "timestamp": 1789399858459,
-    "isoTime": "2026-09-14T15:30:58.459Z",
+    "timestamp": 1789414826844,
+    "isoTime": "2026-09-14T19:40:26.844Z",
     "pl": 10
   },
   {
@@ -112,8 +112,8 @@
     "outcome": "WIN",
     "realizedPnl": 5,
     "source": "TELEGRAM_CALLBACK",
-    "timestamp": 1789399858456,
-    "isoTime": "2026-09-14T15:30:58.456Z",
+    "timestamp": 1789414826841,
+    "isoTime": "2026-09-14T19:40:26.841Z",
     "pl": 5
   },
   {
@@ -128,8 +128,8 @@
     "outcome": "WIN",
     "realizedPnl": 5,
     "source": "MANUAL",
-    "timestamp": 1789399858455,
-    "isoTime": "2026-09-14T15:30:58.455Z",
+    "timestamp": 1789414826840,
+    "isoTime": "2026-09-14T19:40:26.840Z",
     "pl": 5
   },
   {
@@ -147,10 +147,10 @@
     "source": "MT5",
     "brokerDealId": "MT5_DEAL_987654321",
     "brokerOrderId": "MT5_ORDER_123456",
-    "closedAt": 1789399858453,
+    "closedAt": 1789414826838,
     "closeReason": "MT5_TP_HIT",
-    "timestamp": 1789399858453,
-    "isoTime": "2026-09-14T15:30:58.453Z",
+    "timestamp": 1789414826838,
+    "isoTime": "2026-09-14T19:40:26.838Z",
     "pl": 30
   },
   {
@@ -165,8 +165,8 @@
     "outcome": "WIN",
     "exitPrice": 4278.29,
     "source": "MANUAL",
-    "timestamp": 1789399858451,
-    "isoTime": "2026-09-14T15:30:58.451Z",
+    "timestamp": 1789414826837,
+    "isoTime": "2026-09-14T19:40:26.837Z",
     "realizedPnl": 18.2,
     "pl": 18.2
   },
@@ -182,8 +182,8 @@
     "outcome": "WIN",
     "realizedPnl": 10,
     "source": "TELEGRAM_CALLBACK",
-    "timestamp": 1789399858450,
-    "isoTime": "2026-09-14T15:30:58.450Z",
+    "timestamp": 1789414826835,
+    "isoTime": "2026-09-14T19:40:26.835Z",
     "pl": 10
   },
   {
@@ -198,8 +198,8 @@
     "outcome": "LOSS",
     "realizedPnl": -8,
     "source": "MANUAL",
-    "timestamp": 1789399858449,
-    "isoTime": "2026-09-14T15:30:58.449Z",
+    "timestamp": 1789414826834,
+    "isoTime": "2026-09-14T19:40:26.834Z",
     "pl": -8
   },
   {
@@ -214,8 +214,8 @@
     "outcome": "WIN",
     "realizedPnl": 12.5,
     "source": "MANUAL",
-    "timestamp": 1789399858447,
-    "isoTime": "2026-09-14T15:30:58.447Z",
+    "timestamp": 1789414826833,
+    "isoTime": "2026-09-14T19:40:26.833Z",
     "pl": 12.5
   },
   {
@@ -231,8 +231,8 @@
     "realizedPnl": -4,
     "exitPrice": 4296,
     "source": "MANUAL",
-    "timestamp": 1789399858445,
-    "isoTime": "2026-09-14T15:30:58.445Z",
+    "timestamp": 1789414826831,
+    "isoTime": "2026-09-14T19:40:26.831Z",
     "pl": -4
   },
   {
@@ -247,8 +247,8 @@
     "outcome": "WIN",
     "exitPrice": 4278.29,
     "source": "MANUAL",
-    "timestamp": 1789399858442,
-    "isoTime": "2026-09-14T15:30:58.442Z",
+    "timestamp": 1789414826829,
+    "isoTime": "2026-09-14T19:40:26.829Z",
     "realizedPnl": 18.2,
     "pl": 18.2
   },
@@ -265,8 +265,8 @@
     "realizedPnl": 17,
     "exitPrice": 4279.49,
     "source": "TELEGRAM_CALLBACK",
-    "timestamp": 1789399858436,
-    "isoTime": "2026-09-14T15:30:58.436Z",
+    "timestamp": 1789414826824,
+    "isoTime": "2026-09-14T19:40:26.824Z",
     "pl": 17
   }
 ]

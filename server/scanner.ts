@@ -1,4 +1,4 @@
-import { AssetType, ScannerConfig, SignalDecision, TradeSignal } from '../src/types.js';
+import { AssetType, ScannerConfig, SignalDecision, TradeSignal, TradeOpportunity } from '../src/types.js';
 import { analyzeTechnicals } from './indicators.js';
 import { fetchCandles, fetchLiveQuote } from './marketData.js';
 import { runAIAnalysis } from './geminiTrader.js';
@@ -8,7 +8,7 @@ import { mt5Bridge } from './mt5Bridge.js';
 import { telegramService } from './telegram.js';
 import { tradeMonitor } from './tradeMonitor.js';
 import { tradeManagementEngine } from './tradeManagementEngine.js';
-import { checkStructuralSameSetupIdentity } from './tradeQualityEngine.js';
+import { checkStructuralSameSetupIdentity, generateOpportunityId } from './tradeQualityEngine.js';
 
 class LiveMarketScanner {
   private config: ScannerConfig = {
@@ -198,6 +198,14 @@ class LiveMarketScanner {
         const matchingTrade = storage.getTrades(300).find((t) => t.id === this.activeSignal?.id);
         if (matchingTrade && matchingTrade.result !== 'OPEN') {
           console.log(`[LiveMarketScanner] Active trade ${this.activeSignal.id} is closed in ledger (${matchingTrade.result}). Clearing activeSignal.`);
+          const oppId = generateOpportunityId(this.activeSignal);
+          const opp = storage.getOpportunity(oppId);
+          if (opp) {
+            opp.status = matchingTrade.result === 'WIN' ? 'COMPLETED' : 'FAILED';
+            if (opp.status === 'FAILED') opp.failedAt = Date.now();
+            else opp.completedAt = Date.now();
+            storage.saveOpportunity(opp);
+          }
           this.activeSignal = null;
           this.config.activeSetupName = null;
         }
@@ -215,10 +223,24 @@ class LiveMarketScanner {
 
         if (slHit) {
           console.log(`[LiveMarketScanner] Active setup ${this.activeSignal.setup} hit Stop Loss. Resetting active setup.`);
+          const oppId = generateOpportunityId(this.activeSignal);
+          const opp = storage.getOpportunity(oppId);
+          if (opp) {
+            opp.status = 'FAILED';
+            opp.failedAt = Date.now();
+            storage.saveOpportunity(opp);
+          }
           this.activeSignal = null;
           this.config.activeSetupName = null;
         } else if (tp2Hit) {
           console.log(`[LiveMarketScanner] Active setup ${this.activeSignal.setup} reached TP2. Resetting active setup.`);
+          const oppId = generateOpportunityId(this.activeSignal);
+          const opp = storage.getOpportunity(oppId);
+          if (opp) {
+            opp.status = 'COMPLETED';
+            opp.completedAt = Date.now();
+            storage.saveOpportunity(opp);
+          }
           this.activeSignal = null;
           this.config.activeSetupName = null;
         }
@@ -322,6 +344,20 @@ class LiveMarketScanner {
           noTradeReason: blockReason,
         };
 
+        const tgRes = await telegramService.sendNoTradeNotification(
+          noTradeSignal.id,
+          blockReason,
+          noTradeSignal.timestamp,
+          currentPrice,
+          noTradeSignal
+        ).catch((tgErr) => {
+          console.error('[LiveMarketScanner] Telegram Capital Guard notification error:', tgErr?.message || tgErr);
+          return { success: false, status: 'FAILED' as const, reason: tgErr?.message || 'Telegram notification exception' };
+        });
+
+        noTradeSignal.telegramDispatchStatus = tgRes.status;
+        noTradeSignal.telegramDispatchReason = tgRes.reason;
+
         storage.saveScan({
           id: noTradeSignal.id,
           timestamp: Date.now(),
@@ -347,20 +383,8 @@ class LiveMarketScanner {
           status: 'NO TRADE',
           invalidation: 'N/A',
           noTradeReason: blockReason,
-        });
-
-        this.config.lastDecision = 'NO TRADE';
-        this.config.lastSignal = noTradeSignal;
-        this.config.lastScanStatus = blockReason;
-
-        telegramService.sendNoTradeNotification(
-          noTradeSignal.id,
-          blockReason,
-          noTradeSignal.timestamp,
-          currentPrice,
-          noTradeSignal
-        ).catch((tgErr) => {
-          console.error('[LiveMarketScanner] Telegram Capital Guard notification error:', tgErr?.message || tgErr);
+          telegramDispatchStatus: tgRes.status,
+          telegramDispatchReason: tgRes.reason,
         });
 
         return noTradeSignal;
@@ -463,6 +487,28 @@ class LiveMarketScanner {
 
       // Step 5 & 6: Prevent duplicate signals if same setup is still active
       if (signal.signal !== 'NO TRADE' && signal.confidence >= this.config.minConfidence) {
+        const oppId = generateOpportunityId(signal);
+        let opp = storage.getOpportunity(oppId);
+
+        if (!opp) {
+          opp = {
+            id: oppId,
+            setupName: signal.setup,
+            strategyFamily: signal.strategyFamily || 'UNKNOWN',
+            direction: signal.signal.toUpperCase().includes('BUY') ? 'BUY' : 'SELL',
+            timeframe: signal.timeframe,
+            status: 'ACTIVE',
+            firstObservedTime: Date.now(),
+            lastUpdatedTime: Date.now(),
+            entry: signal.entry,
+            stopLoss: signal.stopLoss,
+            tp1: signal.tp1,
+            tp2: signal.tp2,
+            confidence: signal.confidence,
+          };
+          storage.saveOpportunity(opp);
+        }
+
         if (isSameSetupActive && this.activeSignal) {
           // DUPLICATE PREVENTED: Update status without generating a new signal or spamming alerts
           this.config.duplicatePrevented = true;
@@ -470,10 +516,40 @@ class LiveMarketScanner {
           this.config.lastScanStatus = `الصفقة لا تزال جارية: ${this.activeSignal.signal} (${this.activeSignal.setup}) | السعر: $${currentPrice.toFixed(2)} [تم منع ${structuralIdentity.status === 'DUPLICATE_ACTIVE_REENTRY' ? 'إعادة الدخول المكرر' : 'تكرار الإشارة'}]`;
           console.log(`[LiveMarketScanner] Blocked ${structuralIdentity.status}: ${signal.setup} @ ${signal.entry}. Active trade ${this.activeSignal.setup} @ ${this.activeSignal.entry} is still OPEN. Telemetry:`, structuralIdentity.details);
 
+          opp.entry = signal.entry;
+          opp.stopLoss = signal.stopLoss;
+          opp.tp1 = signal.tp1;
+          opp.tp2 = signal.tp2;
+          opp.confidence = signal.confidence;
+          opp.lastUpdatedTime = Date.now();
+          storage.saveOpportunity(opp);
+
           // Keep current price updated on active signal
           this.activeSignal.currentPrice = currentPrice;
           this.config.lastSignal = this.activeSignal;
           return this.activeSignal;
+        }
+
+        if (opp.status === 'DISPATCHED') {
+          console.log(`[LiveMarketScanner] Opportunity ${oppId} was already dispatched. Suppressing duplicate evolving alert.`);
+          this.config.duplicatePrevented = true;
+          this.config.lastDecision = signal.signal;
+          this.config.lastScanStatus = `تم منع إعادة إصدار الإشعار للفرصة الجارية: ${signal.signal} (${signal.setup})`;
+
+          opp.entry = signal.entry;
+          opp.stopLoss = signal.stopLoss;
+          opp.tp1 = signal.tp1;
+          opp.tp2 = signal.tp2;
+          opp.confidence = signal.confidence;
+          opp.lastUpdatedTime = Date.now();
+          storage.saveOpportunity(opp);
+
+          if (this.activeSignal) {
+            this.activeSignal.currentPrice = currentPrice;
+            this.config.lastSignal = this.activeSignal;
+            return this.activeSignal;
+          }
+          return signal;
         }
 
         // New genuine setup qualified!
@@ -566,8 +642,56 @@ class LiveMarketScanner {
 
         // Dispatch Telegram notification for newly qualified signal (Requirement 4 & 5)
         signal.currentPrice = currentPrice;
-        telegramService.sendSignalNotification(signal, scanId).catch((tgErr) => {
-          console.error('[LiveMarketScanner] Telegram notification error:', tgErr?.message || tgErr);
+        const tgRes = await telegramService.sendSignalNotification(signal, scanId).catch((tgErr) => {
+          console.error('[LiveMarketScanner] Telegram notification exception:', tgErr?.message || tgErr);
+          return { success: false, status: 'FAILED' as const, reason: tgErr?.message || 'Telegram notification exception' };
+        });
+
+        signal.telegramDispatchStatus = tgRes.status;
+        signal.telegramDispatchReason = tgRes.reason;
+
+        if (tgRes.status === 'FAILED' || tgRes.status === 'SUPPRESSED') {
+          console.warn(`[SCANNER] Valid signal ${signal.id} (${signal.setup}) Telegram dispatch ${tgRes.status}: ${tgRes.reason || 'No details'}`);
+        } else {
+          console.log(`[SCANNER] Valid signal ${signal.id} (${signal.setup}) Telegram dispatch SENT`);
+          opp.status = 'DISPATCHED';
+          opp.dispatchedAt = Date.now();
+          storage.saveOpportunity(opp);
+        }
+
+        // Persist signal with updated telegramDispatchStatus
+        storage.saveSignal(signal);
+
+        // Update the scan record with telegram dispatch status
+        storage.saveScan({
+          id: scanId,
+          timestamp: Date.now(),
+          isoTime: new Date().toISOString(),
+          currentPrice,
+          signal: signal.signal,
+          entry: signal.entry,
+          stopLoss: signal.stopLoss,
+          slPoints: signal.slPoints,
+          tp1: signal.tp1,
+          tp1Points: signal.tp1Points || 0,
+          tp1Rr: signal.tp1RrString || (signal.tp1Rr ? `1:${signal.tp1Rr.toFixed(2)}` : '1:1.50'),
+          tp2: signal.tp2,
+          tp2Points: signal.tp2Points || 0,
+          tp2Rr: signal.tp2RrString || (signal.tp2Rr ? `1:${signal.tp2Rr.toFixed(2)}` : '1:3.00'),
+          rr: signal.rr,
+          confidence: signal.confidence,
+          riskPercent: signal.riskPercent,
+          riskAmount: signal.riskAmount,
+          lotSize: signal.standardLot ?? signal.recommendedLotSize,
+          setup: signal.setup,
+          reasons: signal.mainReasons,
+          status: scanResultStatus,
+          invalidation: signal.invalidation,
+          duplicateReason: isSameSetupActive ? structuralIdentity.status : undefined,
+          duplicateDetails: isSameSetupActive ? structuralIdentity.details : undefined,
+          noTradeReason: signal.noTradeReason,
+          telegramDispatchStatus: tgRes.status,
+          telegramDispatchReason: tgRes.reason,
         });
 
         console.log('[SCANNER] scan completed');
@@ -603,7 +727,7 @@ class LiveMarketScanner {
         signal.currentPrice = currentPrice;
 
         // Dispatch Telegram notification for NO TRADE with exact Biquote price and dynamic analysis reasons
-        telegramService.sendNoTradeNotification(
+        const tgNoTradeRes = await telegramService.sendNoTradeNotification(
           scanId,
           dynamicRejectionReason,
           signal.timestamp || Date.now(),
@@ -611,6 +735,40 @@ class LiveMarketScanner {
           signal
         ).catch((tgErr) => {
           console.error('[LiveMarketScanner] Telegram NO TRADE notification error:', tgErr?.message || tgErr);
+          return { success: false, status: 'FAILED' as const, reason: tgErr?.message || 'Telegram notification exception' };
+        });
+
+        signal.telegramDispatchStatus = tgNoTradeRes.status;
+        signal.telegramDispatchReason = tgNoTradeRes.reason;
+
+        // Save scan record with Telegram dispatch status
+        storage.saveScan({
+          id: scanId,
+          timestamp: Date.now(),
+          isoTime: new Date().toISOString(),
+          currentPrice,
+          signal: signal.signal,
+          entry: signal.entry,
+          stopLoss: signal.stopLoss,
+          slPoints: signal.slPoints,
+          tp1: signal.tp1,
+          tp1Points: signal.tp1Points || 0,
+          tp1Rr: signal.tp1RrString || (signal.tp1Rr ? `1:${signal.tp1Rr.toFixed(2)}` : '1:1.50'),
+          tp2: signal.tp2,
+          tp2Points: signal.tp2Points || 0,
+          tp2Rr: signal.tp2RrString || (signal.tp2Rr ? `1:${signal.tp2Rr.toFixed(2)}` : '1:3.00'),
+          rr: signal.rr,
+          confidence: signal.confidence,
+          riskPercent: signal.riskPercent,
+          riskAmount: signal.riskAmount,
+          lotSize: signal.standardLot ?? signal.recommendedLotSize,
+          setup: signal.setup,
+          reasons: signal.mainReasons,
+          status: scanResultStatus,
+          invalidation: signal.invalidation,
+          noTradeReason: dynamicRejectionReason,
+          telegramDispatchStatus: tgNoTradeRes.status,
+          telegramDispatchReason: tgNoTradeRes.reason,
         });
 
         console.log('[SCANNER] scan completed');
@@ -659,6 +817,20 @@ class LiveMarketScanner {
         noTradeReason: `فشل الفحص: ${error?.message || 'Unknown error'}`,
       };
 
+      // Dispatch Telegram notification for scan failure (Requirement 4)
+      const tgErrRes = await telegramService.sendErrorNotification(
+        errorSignal.id,
+        error?.message || 'Scan execution failure',
+        errorSignal.timestamp,
+        fallbackPrice
+      ).catch((tgErr) => {
+        console.error('[LiveMarketScanner] Telegram ERROR notification error:', tgErr?.message || tgErr);
+        return { success: false, status: 'FAILED' as const, reason: tgErr?.message || 'Telegram notification exception' };
+      });
+
+      errorSignal.telegramDispatchStatus = tgErrRes.status;
+      errorSignal.telegramDispatchReason = tgErrRes.reason;
+
       storage.saveScan({
         id: errorSignal.id,
         timestamp: Date.now(),
@@ -684,19 +856,11 @@ class LiveMarketScanner {
         status: 'FAILED',
         invalidation: 'N/A',
         noTradeReason: error?.message || 'Scan execution failure',
+        telegramDispatchStatus: tgErrRes.status,
+        telegramDispatchReason: tgErrRes.reason,
       });
       console.log('[SCANNER] history saved (FAILED scan recorded)');
       console.log('[SCANNER] scan completed (with error)');
-
-      // Dispatch Telegram notification for scan failure (Requirement 4)
-      telegramService.sendErrorNotification(
-        errorSignal.id,
-        error?.message || 'Scan execution failure',
-        errorSignal.timestamp,
-        fallbackPrice
-      ).catch((tgErr) => {
-        console.error('[LiveMarketScanner] Telegram ERROR notification error:', tgErr?.message || tgErr);
-      });
 
       this.config.lastDecision = 'NO TRADE';
       this.config.lastSignal = errorSignal;
