@@ -489,6 +489,52 @@ Invalidation: ${signal.invalidation}`;
         )}
       </div>
 
+      {/* ⚡ PHASE 3: EXECUTION INTELLIGENCE & QUALITY SCORE */}
+      {signal.executionQualityScore !== undefined && signal.executionQualityScore > 0 && (
+        <div className="bg-stone-950/80 border border-amber-950/60 rounded-xl p-3 space-y-2">
+          <div className="flex items-center justify-between border-b border-stone-800/80 pb-1.5">
+            <div className="flex items-center gap-1.5 font-bold text-amber-400 text-xs uppercase tracking-wider">
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span>جودة التنفيذ والذكاء العملياتي (Execution Intelligence)</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-mono font-bold text-amber-300">
+                {signal.executionQualityScore}/100
+              </span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-950/50 text-amber-300 border border-amber-800/50">
+                {signal.executionQualityScore >= 80 ? 'ممتاز' : signal.executionQualityScore >= 65 ? 'جيد جداً' : 'مقبول'}
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+            <div className="bg-stone-900/60 border border-stone-800/70 rounded-lg p-2">
+              <span className="text-[10px] text-stone-400 block">توقيت الدخول (Timing)</span>
+              <span className="font-semibold text-stone-100">{signal.entryTiming || 'OPTIMAL'}</span>
+            </div>
+            <div className="bg-stone-900/60 border border-stone-800/70 rounded-lg p-2">
+              <span className="text-[10px] text-stone-400 block">حالة المنطقة (Freshness)</span>
+              <span className="font-semibold text-stone-100">{signal.setupFreshness || 'FRESH'}</span>
+            </div>
+            <div className="bg-stone-900/60 border border-stone-800/70 rounded-lg p-2">
+              <span className="text-[10px] text-stone-400 block">جودة التراجع (Pullback)</span>
+              <span className="font-semibold text-stone-100">{signal.pullbackQuality || 'HEALTHY'}</span>
+            </div>
+            <div className="bg-stone-900/60 border border-stone-800/70 rounded-lg p-2">
+              <span className="text-[10px] text-stone-400 block">مسار الهدف (Runway)</span>
+              <span className="font-semibold text-emerald-400">{signal.tpRunway || 'CLEAR'}</span>
+            </div>
+          </div>
+
+          {signal.triggers && signal.triggers.length > 0 && (
+            <div className="text-[11px] text-stone-400 flex items-center gap-1.5 pt-1">
+              <span className="text-amber-400 font-semibold">محفز الحركة:</span>
+              <span className="text-stone-300 truncate">{signal.triggers.join(' • ')}</span>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Main Reasons (Bullet points) */}
       <div className="bg-stone-950/70 border border-stone-800 rounded-xl p-3">
         <div className="text-[11px] font-bold text-stone-300 mb-1.5">

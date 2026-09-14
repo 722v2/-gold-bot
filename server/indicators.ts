@@ -153,14 +153,17 @@ export function analyzeTechnicals(candles: Candle[]): TechnicalIndicators {
   const bollingerBands = calculateBollingerBands(closes, 20);
   const vwap = calculateVWAP(candles.slice(-50)); // Last 50 candles for intraday VWAP
   
-  // Find Swing Highs and Lows in last 30 candles
+  // Find Genuine Swing Highs and Lows in historical window excluding current candle
   const window = Math.min(30, candles.length);
   const recent = candles.slice(-window);
   
-  let swingHigh = Math.max(...recent.map((c) => c.high));
-  let swingLow = Math.min(...recent.map((c) => c.low));
+  // To avoid circular lookahead/tautology:
+  // Calculate established swing levels using prior candles (excluding the current formation candle)
+  const priorCandles = recent.length > 2 ? recent.slice(0, -1) : recent;
+  let swingHigh = Math.max(...priorCandles.map((c) => c.high));
+  let swingLow = Math.min(...priorCandles.map((c) => c.low));
   
-  // Identify Support & Resistance from swing levels
+  // Identify Support & Resistance from established swing levels
   const resistance = swingHigh;
   const support = swingLow;
   
@@ -295,6 +298,119 @@ export function analyzeTechnicals(candles: Candle[]): TechnicalIndicators {
     sellSideLiquidity: Number(swingLow.toFixed(2)),
   };
 
+  // =========================================================================
+  // MARKET REGIME & OVEREXTENSION DETECTOR ENGINE
+  // =========================================================================
+  // 1. Calculate Volatility Ratio (current ATR vs 50-period average ATR)
+  const longAtr = calculateATR(candles, Math.min(50, candles.length));
+  const volatilityRatio = Number((longAtr > 0 ? atr14 / longAtr : 1.0).toFixed(2));
+
+  // 2. Measure EMA Ribbon alignment & slope
+  const isEmaBullishStack = latestClose > ema20 && ema20 > ema50 && (ema200 === 0 || ema50 > ema200);
+  const isEmaBearishStack = latestClose < ema20 && ema20 < ema50 && (ema200 === 0 || ema50 < ema200);
+  const ema20Ema50Spread = Math.abs(ema20 - ema50);
+  const isEmaSpreadExpanding = ema20Ema50Spread >= atr14 * 0.7;
+
+  // 3. Measure Candle Progression (Ratio of trending directional candles in last 12)
+  const last12Candles = recent.slice(-12);
+  let bullCandlesCount = 0;
+  let bearCandlesCount = 0;
+  for (const c of last12Candles) {
+    if (c.close > c.open) bullCandlesCount++;
+    else if (c.close < c.open) bearCandlesCount++;
+  }
+
+  // 4. Overextension Detection
+  // In Gold (XAUUSD), overextension requires significant point distance (>15.0 pts or >3.5x ATR) or extreme RSI in a stacked trend
+  const distFromEma20 = Math.abs(latestClose - ema20);
+  const isDistOverextended = distFromEma20 > Math.max(15.0, atr14 * 3.5);
+  const isRsiOverextended = (isEmaBullishStack && rsi14 >= 78) || (isEmaBearishStack && rsi14 <= 22);
+  const isOverextended = (isEmaBullishStack || isEmaBearishStack || isDistOverextended) && (isDistOverextended || isRsiOverextended);
+  let overextensionReason: string | undefined = undefined;
+  if (isOverextended) {
+    if (isDistOverextended && isRsiOverextended) {
+      overextensionReason = `السعر ممتد بشكل حاد بعيداً عن متوسط EMA20 بمقدار $${distFromEma20.toFixed(2)} (>3.5x ATR) مع وصول RSI إلى ${rsi14.toFixed(1)}.`;
+    } else if (isDistOverextended) {
+      overextensionReason = `السعر ممتد سريعاً بعيداً عن متوسط EMA20 بمقدار $${distFromEma20.toFixed(2)} (>3.5x ATR)؛ ينبغي انتظار تصحيح سطحي قبل الدخول.`;
+    } else {
+      overextensionReason = `مؤشر القوة النسبية RSI وصل إلى مستوى متطرف (${rsi14.toFixed(1)}) في نهاية الموجة الحالية.`;
+    }
+  }
+
+  // 5. Compute Trend Strength (0-100)
+  let trendStrength = 50;
+  if (isEmaBullishStack || isEmaBearishStack) {
+    trendStrength += 15;
+    if (isEmaSpreadExpanding) trendStrength += 15;
+    if (bullCandlesCount >= 8 || bearCandlesCount >= 8) trendStrength += 15;
+    if (macd.histogram > 0 && isEmaBullishStack) trendStrength += 5;
+    if (macd.histogram < 0 && isEmaBearishStack) trendStrength += 5;
+  } else {
+    // Ranging / Churn
+    const bbWidth = bollingerBands.upper - bollingerBands.lower;
+    if (bbWidth < atr14 * 2.5) {
+      trendStrength -= 20; // Squeeze / low volatility
+    }
+  }
+  trendStrength = Math.min(100, Math.max(0, trendStrength));
+
+  // 6. Classify Market Regime into the 8 discrete states
+  let marketRegime: TechnicalIndicators['marketRegime'] = 'UNCLEAR';
+  let recommendedAction: NonNullable<TechnicalIndicators['regimeContext']>['recommendedAction'] = 'NO_EDGE_WAIT';
+  let summaryDescription = '';
+
+  const isTransition = chochDetected || (structureShift && structureShift.includes('CHOCH'));
+  const bbWidth = bollingerBands.upper - bollingerBands.lower;
+
+  if (isTransition) {
+    marketRegime = 'TRANSITION';
+    recommendedAction = 'TRANSITION_CONFIRM';
+    summaryDescription = `تحول في هيكل السوق (${structureShift})؛ يتطلب تأكيد الاستقرار قبل أخذ اتجاه جديد.`;
+  } else if (isEmaBullishStack && trendStructure === 'HH_HL' && trendStrength >= 70) {
+    marketRegime = 'STRONG_UPTREND';
+    recommendedAction = isOverextended ? 'PULLBACK_WAIT' : 'TREND_CONTINUATION';
+    summaryDescription = `اتجاه صاعد قوي متسارع مع سيطرة واضحة للمشترين${isOverextended ? ' (السعر ممتد حالياً - انتظار تراجع تصحيحي)' : ' (فرص استمرار مع التصحيح)'}.`;
+  } else if (isEmaBearishStack && trendStructure === 'LH_LL' && trendStrength >= 70) {
+    marketRegime = 'STRONG_DOWNTREND';
+    recommendedAction = isOverextended ? 'PULLBACK_WAIT' : 'TREND_CONTINUATION';
+    summaryDescription = `اتجاه هابط قوي متسارع مع تدفق سيولة بيعية مستمرة${isOverextended ? ' (السعر ممتد حالياً - انتظار تراجع تصحيحي)' : ' (فرص استمرار مع التصحيح)'}.`;
+  } else if (trendStructure === 'HH_HL') {
+    marketRegime = 'WEAK_UPTREND';
+    recommendedAction = 'TREND_CONTINUATION';
+    summaryDescription = 'اتجاه صاعد معتدل أو متذبذب مع تصحيحات أعمق تناسب استراتيجيات مناطق الـ Discount و OTE.';
+  } else if (trendStructure === 'LH_LL') {
+    marketRegime = 'WEAK_DOWNTREND';
+    recommendedAction = 'TREND_CONTINUATION';
+    summaryDescription = 'اتجاه هابط معتدل أو متذبذب مع تصحيحات أعمق تناسب استراتيجيات مناطق الـ Premium و FVG.';
+  } else if (volatilityRatio >= 1.35 || bbWidth >= atr14 * 4.2) {
+    marketRegime = 'VOLATILE_RANGE';
+    recommendedAction = 'RANGE_EDGES';
+    summaryDescription = 'نطاق عرضي عالي التقلب مع ذيول كسر وهمية عند القمم والقيعان؛ التداول على الأطراف وسحب السيولة فقط.';
+  } else if (Math.abs(swingHigh - swingLow) >= atr14 * 1.2 || trendStructure === 'RANGING') {
+    marketRegime = 'NORMAL_RANGE';
+    recommendedAction = 'RANGE_EDGES';
+    summaryDescription = 'نطاق تداول عرضي متوازن محدد بين الدعم والمقاومة؛ التداول محصور عند أطراف الرينج وتجنب المنتصف.';
+  } else {
+    marketRegime = 'UNCLEAR';
+    recommendedAction = 'NO_EDGE_WAIT';
+    summaryDescription = 'حركة سعرية غير منتظمة بدون ميزة إحصائية واضحة (No Edge)؛ يفضل الانتظار لحماية رأس المال.';
+  }
+
+  const regimeContext: TechnicalIndicators['regimeContext'] = {
+    regime: marketRegime,
+    trendStrength,
+    isOverextended,
+    overextensionReason,
+    volatilityRatio,
+    rangeBoundaries: {
+      high: Number(swingHigh.toFixed(2)),
+      low: Number(swingLow.toFixed(2)),
+      equilibrium: Number(equilibrium.toFixed(2)),
+    },
+    recommendedAction,
+    summaryDescription,
+  };
+
   return {
     ema20,
     ema50,
@@ -318,5 +434,7 @@ export function analyzeTechnicals(candles: Candle[]): TechnicalIndicators {
     fvg,
     liquiditySweepDetected,
     premiumDiscountZone,
+    marketRegime,
+    regimeContext,
   };
 }

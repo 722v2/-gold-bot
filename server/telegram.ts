@@ -15,12 +15,30 @@ interface TelegramStatus {
   lastDetectedChatId?: string | number | null;
 }
 
+interface PendingTelegramOutcome {
+  signalId: string;
+  tradeId: string;
+  direction: string;
+  orderType: string;
+  entry: number;
+  stopLoss: number;
+  tp1: number;
+  tp2: number;
+  outcome: 'WIN' | 'LOSS';
+  lotSize: number;
+  chatId: string | number;
+  messageId?: number;
+  originalText: string;
+  timestamp: number;
+}
+
 class TelegramService {
   private lastStatus: 'CONNECTED' | 'NOT CONFIGURED' | 'ERROR' = 'NOT CONFIGURED';
   private lastError: string | null = null;
   private lastSentTimestamp: number | null = null;
   private lastDetectedChatId: string | number | null = null;
   private sentNotificationIds = new Set<string>();
+  private pendingOutcomes = new Map<string, PendingTelegramOutcome>();
   private readonly sentFilePath: string;
   private readonly detectedChatPath: string;
 
@@ -596,10 +614,11 @@ class TelegramService {
       return { handled: false };
     }
 
-    // Handle incoming direct messages (e.g. /start, /id, or greeting from user)
+    // Handle incoming direct messages (e.g. /start, /id, or manual P&L entry from user)
     if (update.message) {
       const msg = update.message;
       const fromChatId = msg.chat?.id;
+      const fromUserId = msg.from?.id ? String(msg.from.id).trim() : null;
       const fromUser = msg.from?.username ? `@${msg.from.username}` : (msg.from?.first_name || 'User');
       const text = String(msg.text || '').trim();
 
@@ -607,8 +626,104 @@ class TelegramService {
         this.persistDetectedChat(fromChatId);
         console.log(`[TELEGRAM] Direct message received from chat_id=${fromChatId} (${fromUser}): "${text}"`);
 
+        // Check if there is an active pending outcome prompt for this user/chat
+        const pendingKey = fromUserId || String(fromChatId);
+        const pending = this.pendingOutcomes.get(pendingKey) || this.pendingOutcomes.get(String(fromChatId));
+
+        if (pending && text && !text.startsWith('/')) {
+          // Check authorization for recording outcomes
+          if (!isTelegramUserAuthorized(fromUserId)) {
+            await this.sendTelegramMessage('⚠️ غير مصرح لك بتسجيل النتيجة لهذا الحساب.');
+            return { handled: true, error: 'UNAUTHORIZED' };
+          }
+
+          let calculatedPnl: number | null = null;
+          let calculatedExitPrice: number | undefined = undefined;
+
+          // Check if user entered an exit price (e.g. "exit 4278.29" or "4278.29" if > 1000)
+          const exitMatch = text.match(/(?:exit|price|خروج|سعر)?\s*[:=]?\s*(\d{4}(?:\.\d+)?)/i);
+          if (exitMatch) {
+            const exitPrice = parseFloat(exitMatch[1]);
+            if (!isNaN(exitPrice) && exitPrice > 0) {
+              calculatedExitPrice = exitPrice;
+              const isBuy = pending.direction.includes('BUY');
+              const diff = isBuy ? (exitPrice - pending.entry) : (pending.entry - exitPrice);
+              const rawPnl = Number((diff * 100 * (pending.lotSize || 0.01)).toFixed(2));
+              calculatedPnl = pending.outcome === 'WIN' ? Math.abs(rawPnl) : -Math.abs(rawPnl);
+            }
+          }
+
+          // Otherwise, parse direct dollar amount (e.g. "17.78", "+17.78", "$17.78", "-3.50", "3.50")
+          if (calculatedPnl === null) {
+            const cleanNum = text.replace(/[\$,\s\+]/g, '');
+            const parsedNum = parseFloat(cleanNum);
+            if (!isNaN(parsedNum)) {
+              calculatedPnl = pending.outcome === 'WIN' ? Math.abs(parsedNum) : -Math.abs(parsedNum);
+            }
+          }
+
+          if (calculatedPnl !== null) {
+            const outcomeRecord: TradeOutcomeRecord = {
+              signalId: pending.signalId,
+              tradeId: pending.tradeId,
+              direction: pending.direction,
+              orderType: pending.orderType,
+              entry: pending.entry,
+              stopLoss: pending.stopLoss,
+              tp1: pending.tp1,
+              tp2: pending.tp2,
+              outcome: pending.outcome,
+              realizedPnl: calculatedPnl,
+              exitPrice: calculatedExitPrice ?? (pending.outcome === 'WIN' ? pending.tp1 : pending.stopLoss),
+              source: 'MANUAL',
+              closedAt: Date.now(),
+              timestamp: Date.now(),
+              isoTime: new Date().toISOString(),
+              chatId: pending.chatId,
+              userId: fromUserId ? Number(fromUserId) : undefined,
+            };
+
+            const signal = storage.getSignal(pending.signalId);
+            const saveResult = storage.recordTradeOutcome(outcomeRecord, signal);
+            this.pendingOutcomes.delete(pendingKey);
+            this.pendingOutcomes.delete(String(fromChatId));
+
+            const outcomeLabel = pending.outcome === 'WIN' ? '🟢 رابحة (WIN)' : '🔴 خاسرة (LOSS)';
+            const formattedPnl = calculatedPnl >= 0 ? `+$${calculatedPnl.toFixed(2)}` : `-$${Math.abs(calculatedPnl).toFixed(2)}`;
+
+            // Edit original message markup if available
+            if (pending.chatId && pending.messageId) {
+              const outcomeHeader = `النتيجة: ${pending.outcome === 'WIN' ? '🟢 رابحة' : '🔴 خاسرة'} (${formattedPnl})`;
+              const updatedText = pending.originalText.includes('النتيجة:')
+                ? pending.originalText
+                : `${pending.originalText}\n\n━━━━━━━━━━━━━━━\n${outcomeHeader}`;
+
+              await this.editTelegramMessage(
+                pending.chatId,
+                pending.messageId,
+                updatedText,
+                [[{ text: outcomeHeader, callback_data: `noop:${pending.signalId}` }]]
+              );
+            }
+
+            const currentBal = saveResult.trade?.balanceAfterTrade ?? storage.getCurrentBalance();
+            const receiptMsg = [
+              `✅ <b>تم توثيق نتيجة الصفقة بنجاح:</b>`,
+              ``,
+              `📌 <b>الإشارة:</b> <code>${pending.signalId}</code>`,
+              `📊 <b>النتيجة:</b> ${outcomeLabel}`,
+              `💰 <b>الربح/الخسارة المحققة (Realized P&L):</b> <code>${formattedPnl}</code>`,
+              `💼 <b>رصيد الحساب المحدث:</b> <code>$${currentBal.toFixed(2)}</code>`,
+              `🏷️ <b>المصدر:</b> MANUAL`,
+            ].join('\n');
+
+            await this.sendTelegramMessage(receiptMsg);
+            return { handled: true, result: `RECORDED_${pending.outcome}_PNL_${calculatedPnl}` };
+          }
+        }
+
         const token = process.env.TELEGRAM_BOT_TOKEN;
-        if (token) {
+        if (token && (text.startsWith('/') || !pending)) {
           try {
             const welcomeText = [
               `👋 مرحباً بك ${fromUser}!`,
@@ -650,7 +765,7 @@ class TelegramService {
     const messageId = cq.message?.message_id;
     const originalText = String(cq.message?.text || '');
 
-    // Check for already finalized button clicks
+    // Check for already finalized button clicks or info buttons
     if (rawData.startsWith('noop:') || rawData.startsWith('recorded:')) {
       const recordedSignalId = rawData.split(':')[1] || '';
       const existing = storage.getTradeOutcome(recordedSignalId);
@@ -659,7 +774,77 @@ class TelegramService {
       return { handled: true, result: 'ALREADY_DOCUMENTED' };
     }
 
-    // Validate callback_data format strictly: out:(win|loss):<signalId>
+    if (rawData.startsWith('noop_wait:')) {
+      await this.answerCallbackQuery(callbackId, '✍️ اكتب قيمة الربح/الخسارة الفعلية بالدولار كرسالة في المحادثة (مثال: 17.50)', true);
+      return { handled: true, result: 'WAITING_FOR_TEXT_INPUT' };
+    }
+
+    // Security check: Verify authorized user for recording trade outcomes
+    const senderUserId = cq.from?.id ? String(cq.from.id).trim() : null;
+    const isAuthorized = isTelegramUserAuthorized(senderUserId);
+
+    if (!isAuthorized) {
+      console.warn(`[TELEGRAM] Unauthorized outcome button click: user_id=${senderUserId || 'UNKNOWN'}, chat_id=${chatId}`);
+      await this.answerCallbackQuery(callbackId, '⚠️ غير مصرح لك بتسجيل النتيجة لهذا الحساب.', true);
+      return { handled: true, error: 'UNAUTHORIZED' };
+    }
+
+    // Handle Quick P&L option click: out_pnl:<signalId>:<win|loss>:<pnl>:<exitPrice>
+    const pnlMatch = rawData.match(/^out_pnl:([a-zA-Z0-9_\-]+):(win|loss):([\-0-9\.]+):([0-9\.]+)$/i);
+    if (pnlMatch) {
+      const signalId = pnlMatch[1];
+      const action = pnlMatch[2].toLowerCase() as 'win' | 'loss';
+      const pnlValue = parseFloat(pnlMatch[3]);
+      const exitPriceValue = parseFloat(pnlMatch[4]);
+      const signal = storage.getSignal(signalId);
+      const outcome: 'WIN' | 'LOSS' = action === 'win' ? 'WIN' : 'LOSS';
+
+      const outcomeRecord: TradeOutcomeRecord = {
+        signalId,
+        tradeId: signal?.id || signalId,
+        direction: signal?.signal || 'BUY NOW',
+        orderType: 'MARKET',
+        entry: signal?.entry ?? 0,
+        stopLoss: signal?.stopLoss ?? 0,
+        tp1: signal?.tp1 ?? 0,
+        tp2: signal?.tp2 ?? 0,
+        outcome,
+        realizedPnl: pnlValue,
+        exitPrice: exitPriceValue,
+        source: 'MANUAL',
+        closedAt: Date.now(),
+        timestamp: Date.now(),
+        isoTime: new Date().toISOString(),
+        chatId: chatId,
+        userId: cq.from?.id,
+      };
+
+      const saveResult = storage.recordTradeOutcome(outcomeRecord, signal);
+      const formattedPnl = pnlValue >= 0 ? `+$${pnlValue.toFixed(2)}` : `-$${Math.abs(pnlValue).toFixed(2)}`;
+      const outcomeHeader = `النتيجة: ${outcome === 'WIN' ? '🟢 رابحة' : '🔴 خاسرة'} (${formattedPnl})`;
+
+      await this.answerCallbackQuery(callbackId, `✅ تم تسجيل النتيجة (${formattedPnl}) بنجاح!`, false);
+
+      if (chatId && messageId) {
+        const updatedText = originalText.includes('النتيجة:')
+          ? originalText
+          : `${originalText}\n\n━━━━━━━━━━━━━━━\n${outcomeHeader}`;
+
+        await this.editTelegramMessage(
+          chatId,
+          messageId,
+          updatedText,
+          [[{ text: outcomeHeader, callback_data: `noop:${signalId}` }]]
+        );
+      }
+
+      if (senderUserId) this.pendingOutcomes.delete(senderUserId);
+      if (chatId) this.pendingOutcomes.delete(String(chatId));
+
+      return { handled: true, result: `RECORDED_${outcome}_QUICK` };
+    }
+
+    // Validate initial button click format: out:(win|loss):<signalId>
     const match = rawData.match(/^out:(win|loss):([a-zA-Z0-9_\-]+)$/i);
     if (!match) {
       return { handled: false, error: 'INVALID_CALLBACK_DATA' };
@@ -668,112 +853,102 @@ class TelegramService {
     const action = match[1].toLowerCase() as 'win' | 'loss';
     const signalId = match[2];
 
-    // Security check: Verify authorized chat or user if TELEGRAM_CHAT_ID is set (Requirement 10 & 11)
-    const allowedChatId = process.env.TELEGRAM_CHAT_ID;
-    const token = process.env.TELEGRAM_BOT_TOKEN;
-    const botId = token ? token.split(':')[0] : null;
-
-    if (allowedChatId) {
-      const senderChatId = chatId ? String(chatId) : null;
-      const senderUserId = cq.from?.id ? String(cq.from.id) : null;
-      const detectedIdStr = this.lastDetectedChatId ? String(this.lastDetectedChatId) : null;
-
-      const isDirectMatch = senderChatId === allowedChatId || senderUserId === allowedChatId;
-      const isDetectedMatch = (allowedChatId === botId || allowedChatId === `@${botId}`) &&
-        (senderChatId === detectedIdStr || senderUserId === detectedIdStr);
-
-      if (!isDirectMatch && !isDetectedMatch) {
-        console.warn(`[TELEGRAM] Unauthorized callback attempt from chat ${senderChatId} / user ${senderUserId}`);
-        await this.answerCallbackQuery(callbackId, '⚠️ غير مصرح لك بتسجيل النتيجة لهذا الحساب.', true);
-        return { handled: true, error: 'UNAUTHORIZED' };
-      }
-    }
-
-    // Check for existing recorded outcome (Requirement 4: Prevent duplicate/conflicting submissions)
+    // Check for existing recorded outcome
     const existingOutcome = storage.getTradeOutcome(signalId);
     if (existingOutcome) {
       const existingArabic = existingOutcome.outcome === 'WIN' ? '🟢 رابحة' : '🔴 خاسرة';
+      const existingPnl = typeof existingOutcome.realizedPnl === 'number' ? ` (${existingOutcome.realizedPnl >= 0 ? '+' : ''}$${existingOutcome.realizedPnl.toFixed(2)})` : '';
       await this.answerCallbackQuery(
         callbackId,
-        `⚠️ تم تسجيل هذه الصفقة مسبقاً (${existingArabic}). لا يمكن تعديل النتيجة.`,
+        `⚠️ تم تسجيل هذه الصفقة مسبقاً: ${existingArabic}${existingPnl}.`,
         true
       );
 
-      // Update buttons so user sees the finalized outcome and cannot click again
       if (chatId && messageId) {
         await this.editTelegramMessageReplyMarkup(chatId, messageId, [
-          [{ text: `النتيجة: ${existingArabic}`, callback_data: `noop:${signalId}` }],
+          [{ text: `النتيجة: ${existingArabic}${existingPnl}`, callback_data: `noop:${signalId}` }],
         ]);
       }
       return { handled: true, result: 'ALREADY_RECORDED' };
     }
 
-    // Retrieve signal details from memory/disk or parse from message text
+    // Retrieve signal details
     const signal = storage.getSignal(signalId);
     const outcome: 'WIN' | 'LOSS' = action === 'win' ? 'WIN' : 'LOSS';
-    const outcomeArabic = outcome === 'WIN' ? '🟢 رابحة' : '🔴 خاسرة';
 
-    // Parse fallback values from message text if signal wasn't cached in active memory
-    const isBuy = /BUY/i.test(originalText);
+    const isBuy = /BUY/i.test(originalText) || (signal?.signal && signal.signal.includes('BUY'));
     const isLimit = /LIMIT/i.test(originalText);
     const parsedEntry = parseFloat((originalText.match(/(?:📍\s*(?:Limit\s+)?Entry|Entry).*?:\s*\$?([\d\.]+)/i) || [])[1]) || 0;
     const parsedSl = parseFloat((originalText.match(/(?:🛑\s*(?:Stop\s+Loss|SL)|Stop\s+Loss|SL).*?:\s*\$?([\d\.]+)/i) || [])[1]) || 0;
     const parsedTp1 = parseFloat((originalText.match(/(?:🎯\s*TP1|TP1).*?:\s*\$?([\d\.]+)/i) || [])[1]) || 0;
     const parsedTp2 = parseFloat((originalText.match(/(?:🎯\s*TP2|TP2).*?:\s*\$?([\d\.]+)/i) || [])[1]) || 0;
 
-    const outcomeRecord: TradeOutcomeRecord = {
+    const entry = signal?.entry ?? parsedEntry;
+    const tp1 = signal?.tp1 ?? parsedTp1;
+    const tp2 = signal?.tp2 ?? parsedTp2;
+    const sl = signal?.stopLoss ?? parsedSl;
+    const lotSize = signal?.recommendedLotSize || (signal as any)?.lotSize || 0.01;
+
+    // Real physical dollar calculations for Gold contract: 1 lot = 100 oz ($100 per 1.00 move)
+    const tp1ProfitUsd = Number((Math.abs(tp1 - entry) * 100 * lotSize).toFixed(2));
+    const tp2ProfitUsd = Number((Math.abs(tp2 - entry) * 100 * lotSize).toFixed(2));
+    const slLossUsd = Number((Math.abs(sl - entry) * 100 * lotSize).toFixed(2));
+
+    const pendingItem: PendingTelegramOutcome = {
       signalId,
       tradeId: signal?.id || signalId,
       direction: signal?.signal || (isLimit ? (isBuy ? 'BUY LIMIT' : 'SELL LIMIT') : (isBuy ? 'BUY NOW' : 'SELL NOW')),
       orderType: isLimit ? (isBuy ? 'BUY LIMIT' : 'SELL LIMIT') : 'MARKET',
-      entry: signal?.entry ?? parsedEntry,
-      stopLoss: signal?.stopLoss ?? parsedSl,
-      tp1: signal?.tp1 ?? parsedTp1,
-      tp2: signal?.tp2 ?? parsedTp2,
+      entry,
+      stopLoss: sl,
+      tp1,
+      tp2,
       outcome,
+      lotSize,
+      chatId: chatId || 0,
+      messageId,
+      originalText,
       timestamp: Date.now(),
-      isoTime: new Date().toISOString(),
-      chatId: chatId,
-      userId: cq.from?.id,
     };
 
-    // Save persistently into trade_outcomes.json and link with Trade Log (Requirements 2, 3, 6, 7, 8)
-    const saveResult = storage.recordTradeOutcome(outcomeRecord, signal);
-    if (!saveResult.success && saveResult.isDuplicate) {
-      const existingArabic = saveResult.outcome?.outcome === 'WIN' ? '🟢 رابحة' : '🔴 خاسرة';
-      await this.answerCallbackQuery(
-        callbackId,
-        `⚠️ تم تسجيل هذه الصفقة مسبقاً (${existingArabic}). لا يمكن تعديل النتيجة.`,
-        true
-      );
+    if (senderUserId) this.pendingOutcomes.set(senderUserId, pendingItem);
+    if (chatId) this.pendingOutcomes.set(String(chatId), pendingItem);
+
+    if (outcome === 'WIN') {
+      await this.answerCallbackQuery(callbackId, '🟢 اختر قيمة الهدف أو اكتب الربح الفعلي ($) كرسالة في المحادثة', false);
+
+      const promptKeyboard = [
+        [
+          { text: `🎯 الهدف الأول TP1 (+$${tp1ProfitUsd.toFixed(2)})`, callback_data: `out_pnl:${signalId}:win:${tp1ProfitUsd}:${tp1}` },
+          { text: `🎯 الهدف الثاني TP2 (+$${tp2ProfitUsd.toFixed(2)})`, callback_data: `out_pnl:${signalId}:win:${tp2ProfitUsd}:${tp2}` },
+        ],
+        [
+          { text: '✍️ سأكتب الربح الفعلي بالدولار في رسالة', callback_data: `noop_wait:${signalId}` },
+        ],
+      ];
+
       if (chatId && messageId) {
-        await this.editTelegramMessageReplyMarkup(chatId, messageId, [
-          [{ text: `النتيجة: ${existingArabic}`, callback_data: `noop:${signalId}` }],
-        ]);
+        await this.editTelegramMessageReplyMarkup(chatId, messageId, promptKeyboard);
       }
-      return { handled: true, result: 'ALREADY_RECORDED' };
+    } else {
+      await this.answerCallbackQuery(callbackId, '🔴 اختر وقف الخسارة أو اكتب الخسارة الفعلية ($) كرسالة في المحادثة', false);
+
+      const promptKeyboard = [
+        [
+          { text: `🛑 ضرب الوقف SL (-$${slLossUsd.toFixed(2)})`, callback_data: `out_pnl:${signalId}:loss:-${slLossUsd}:${sl}` },
+        ],
+        [
+          { text: '✍️ سأكتب الخسارة الفعلية بالدولار في رسالة', callback_data: `noop_wait:${signalId}` },
+        ],
+      ];
+
+      if (chatId && messageId) {
+        await this.editTelegramMessageReplyMarkup(chatId, messageId, promptKeyboard);
+      }
     }
 
-    // Answer callback query with toast confirmation
-    await this.answerCallbackQuery(callbackId, `✅ تم تسجيل الصفقة بنجاح: ${outcomeArabic}`, false);
-
-    // Edit original message to display the final result clearly (Requirement 5)
-    if (chatId && messageId) {
-      const outcomeHeader = `النتيجة: ${outcomeArabic}`;
-      const updatedText = originalText.includes('النتيجة:')
-        ? originalText
-        : `${originalText}\n\n━━━━━━━━━━━━━━━\n${outcomeHeader}`;
-
-      await this.editTelegramMessage(
-        chatId,
-        messageId,
-        updatedText,
-        [[{ text: outcomeHeader, callback_data: `noop:${signalId}` }]]
-      );
-    }
-
-    console.log(`[TELEGRAM] Outcome recorded for signal ${signalId}: ${outcome}`);
-    return { handled: true, result: `RECORDED_${outcome}` };
+    console.log(`[TELEGRAM] Outcome prompt initiated for signal ${signalId}: ${outcome}`);
+    return { handled: true, result: `PROMPTED_${outcome}` };
   }
 
   /**
@@ -960,6 +1135,10 @@ class TelegramService {
       lines.push(`📐 Setup: ${signal.setup}`);
     }
 
+    if (signal.executionQualityScore !== undefined && signal.executionQualityScore > 0) {
+      lines.push(`⚡ Execution Quality: ${signal.executionQualityScore}/100 [Timing: ${signal.entryTiming || 'N/A'} | State: ${signal.setupFreshness || 'FRESH'} | Runway: ${signal.tpRunway || 'CLEAR'}]`);
+    }
+
     lines.push('', '🧠 الأسباب:', reasonsList);
 
     if (invalidation) {
@@ -1091,3 +1270,74 @@ class TelegramService {
 export const telegramService = new TelegramService();
 export const sendTelegramMessage = (message: string, replyMarkup?: any) =>
   telegramService.sendTelegramMessage(message, replyMarkup);
+
+/**
+ * Retrieves the list of authorized Telegram user IDs for trade outcome recording.
+ * Parses comma-separated user IDs from process.env.TELEGRAM_AUTHORIZED_USER_IDS,
+ * normalizing whitespace and ignoring empty entries.
+ * Safely falls back to TELEGRAM_CHAT_ID only if it represents a personal user ID (positive integer without '-' prefix).
+ */
+export function getAuthorizedTelegramUserIds(customEnv?: {
+  TELEGRAM_AUTHORIZED_USER_IDS?: string;
+  TELEGRAM_CHAT_ID?: string;
+}): string[] {
+  const envUserIds = customEnv ? customEnv.TELEGRAM_AUTHORIZED_USER_IDS : process.env.TELEGRAM_AUTHORIZED_USER_IDS;
+  const envChatId = customEnv ? customEnv.TELEGRAM_CHAT_ID : process.env.TELEGRAM_CHAT_ID;
+
+  const ids: string[] = [];
+
+  if (envUserIds !== undefined && envUserIds !== null) {
+    const parts = String(envUserIds).split(',');
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (trimmed && trimmed.length > 0) {
+        ids.push(trimmed);
+      }
+    }
+  }
+
+  // Fallback: If no TELEGRAM_AUTHORIZED_USER_IDS are configured, check TELEGRAM_CHAT_ID.
+  // CRITICAL: Group/Channel destination IDs (which begin with '-') MUST NEVER be treated as authorized user IDs.
+  if (ids.length === 0 && envChatId) {
+    const trimmedChatId = String(envChatId).trim();
+    if (/^\d+$/.test(trimmedChatId)) {
+      ids.push(trimmedChatId);
+    }
+  }
+
+  return ids;
+}
+
+/**
+ * Validates whether a Telegram user (by senderUserId) is authorized to record trade outcomes.
+ */
+export function isTelegramUserAuthorized(
+  senderUserId: string | number | null | undefined,
+  customEnv?: { TELEGRAM_AUTHORIZED_USER_IDS?: string; TELEGRAM_CHAT_ID?: string; TELEGRAM_BOT_TOKEN?: string }
+): boolean {
+  if (senderUserId === null || senderUserId === undefined) {
+    return false;
+  }
+  const userStr = String(senderUserId).trim();
+  if (!userStr || userStr.length === 0) {
+    return false;
+  }
+
+  const authorizedIds = getAuthorizedTelegramUserIds(customEnv);
+
+  // If specific authorized user IDs are configured or derived, strictly validate against them
+  if (authorizedIds.length > 0) {
+    return authorizedIds.includes(userStr);
+  }
+
+  // If neither TELEGRAM_AUTHORIZED_USER_IDS nor a user-based TELEGRAM_CHAT_ID is set:
+  // If no Telegram bot or chat is configured at all, return true in local/unrestricted mode
+  const botToken = customEnv ? customEnv.TELEGRAM_BOT_TOKEN : process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = customEnv ? customEnv.TELEGRAM_CHAT_ID : process.env.TELEGRAM_CHAT_ID;
+  if (!botToken && !chatId) {
+    return true;
+  }
+
+  return false;
+}
+

@@ -15,7 +15,41 @@ import {
   deleteDoc,
   writeBatch
 } from 'firebase/firestore';
-import { AppSettings, DEFAULT_APP_SETTINGS, SignalDecision, TradeLedgerItem, TradeSignal } from '../src/types.js';
+import {
+  AppSettings,
+  DEFAULT_APP_SETTINGS,
+  SignalDecision,
+  TradeLedgerItem,
+  TradeSignal,
+  PoiRecord,
+  CandidateLifecycleRecord,
+  DuplicateDetails,
+} from '../src/types.js';
+
+/**
+ * Recursively strips undefined values from objects/arrays before passing to Firestore setDoc(),
+ * preventing "Unsupported field value: undefined" errors.
+ */
+export function sanitizeFirestoreData<T>(data: T): T {
+  if (data === null || data === undefined) {
+    return data;
+  }
+  if (Array.isArray(data)) {
+    return data
+      .filter((item) => item !== undefined)
+      .map((item) => sanitizeFirestoreData(item)) as unknown as T;
+  }
+  if (typeof data === 'object' && !(data instanceof Date)) {
+    const cleaned: Record<string, any> = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (value !== undefined) {
+        cleaned[key] = sanitizeFirestoreData(value);
+      }
+    }
+    return cleaned as T;
+  }
+  return data;
+}
 
 export interface ScanRecord {
   id: string;
@@ -42,6 +76,8 @@ export interface ScanRecord {
   status: string; // e.g., 'NO TRADE', 'QUALIFIED', 'DUPLICATE_ACTIVE'
   invalidation?: string;
   noTradeReason?: string;
+  duplicateReason?: string;
+  duplicateDetails?: DuplicateDetails;
 }
 
 export interface DailyTradeStats {
@@ -71,6 +107,13 @@ export interface TradeOutcomeRecord {
   chatId?: string | number;
   userId?: string | number;
   pl?: number;
+  realizedPnl?: number; // Authoritative realized P&L ($)
+  exitPrice?: number;
+  source?: 'MANUAL' | 'TELEGRAM_CALLBACK' | 'MT5' | 'SYSTEM';
+  brokerDealId?: string;
+  brokerOrderId?: string;
+  closedAt?: number;
+  closeReason?: string;
 }
 
 export interface DashboardStatsResult {
@@ -122,6 +165,9 @@ class PersistentStorage {
   private inMemoryCurrentBalance = 25.0;
   private lastScannerStatus = 'جاهز - المسح التلقائي نشط';
   private lastScannerTimestamp: number | null = null;
+
+  private inMemoryPois: PoiRecord[] = [];
+  private inMemoryLifecycles: CandidateLifecycleRecord[] = [];
 
   constructor() {
     this.initPromise = this.init();
@@ -208,7 +254,7 @@ class PersistentStorage {
           }
         }
         this.inMemorySettings = initialSettings;
-        await setDoc(settingsRef, { ...this.inMemorySettings, updatedAt: Date.now() });
+        await setDoc(settingsRef, sanitizeFirestoreData({ ...this.inMemorySettings, updatedAt: Date.now() }));
         console.log('[Storage] Seeded app_settings to Firestore.');
       }
 
@@ -237,11 +283,11 @@ class PersistentStorage {
         }
         this.inMemoryStartingBalance = starting;
         this.inMemoryCurrentBalance = current;
-        await setDoc(accountRef, {
+        await setDoc(accountRef, sanitizeFirestoreData({
           startingBalance: this.inMemoryStartingBalance,
           currentBalance: this.inMemoryCurrentBalance,
           updatedAt: Date.now()
-        });
+        }));
         console.log(`[Storage] Seeded account_state to Firestore: starting=$${starting}, current=$${current}`);
       }
 
@@ -260,7 +306,7 @@ class PersistentStorage {
             const list: TradeLedgerItem[] = JSON.parse(raw || '[]');
             for (const t of list) {
               if (!t.id) continue;
-              await setDoc(doc(this.firestoreDb, 'trade_ledger', t.id), t);
+              await setDoc(doc(this.firestoreDb, 'trade_ledger', t.id), sanitizeFirestoreData(t));
             }
             this.inMemoryTrades = list;
             console.log(`[Storage] Seeded ${list.length} trades to Firestore.`);
@@ -279,7 +325,7 @@ class PersistentStorage {
           legacy.pl = 0;
           legacy.isActive = false;
           legacy.notes = 'Executed via MT5 Bridge [Mode: DEMO] - Status: SIMULATED_DEMO (Voided legacy test record)';
-          await setDoc(doc(this.firestoreDb, 'trade_ledger', legacy.id), legacy);
+          await setDoc(doc(this.firestoreDb, 'trade_ledger', legacy.id), sanitizeFirestoreData(legacy));
           console.log('[Storage] Enforced VOID status on legacy trade_1788789672022 in Firestore.');
         }
       }
@@ -296,7 +342,7 @@ class PersistentStorage {
           const list: TradeOutcomeRecord[] = JSON.parse(raw || '[]');
           for (const o of list) {
             if (!o.signalId) continue;
-            await setDoc(doc(this.firestoreDb, 'trade_outcomes', o.signalId), o);
+            await setDoc(doc(this.firestoreDb, 'trade_outcomes', o.signalId), sanitizeFirestoreData(o));
           }
           this.inMemoryOutcomes = list;
         } catch (e) {
@@ -316,7 +362,7 @@ class PersistentStorage {
           const list: TradeSignal[] = JSON.parse(raw || '[]');
           for (const s of list) {
             if (!s.id) continue;
-            await setDoc(doc(this.firestoreDb, 'signals', s.id), s);
+            await setDoc(doc(this.firestoreDb, 'signals', s.id), sanitizeFirestoreData(s));
           }
           this.inMemorySignals = list;
         } catch (e) {
@@ -340,7 +386,7 @@ class PersistentStorage {
           const list: ScanRecord[] = JSON.parse(raw || '[]');
           for (const s of list) {
             if (!s.id) continue;
-            await setDoc(doc(this.firestoreDb, 'scans', s.id), s);
+            await setDoc(doc(this.firestoreDb, 'scans', s.id), sanitizeFirestoreData(s));
           }
           this.inMemoryScans = list;
           if (list.length > 0) {
@@ -427,7 +473,7 @@ class PersistentStorage {
 
       // Asynchronous non-blocking Firestore write
       if (this.firestoreDb && record.id) {
-        setDoc(doc(this.firestoreDb, 'scans', record.id), record).catch((err) => {
+        setDoc(doc(this.firestoreDb, 'scans', record.id), sanitizeFirestoreData(record)).catch((err) => {
           console.error(`[Storage] Firestore saveScan error for ${record.id}:`, err?.message || err);
         });
       }
@@ -465,7 +511,7 @@ class PersistentStorage {
 
       // Asynchronous non-blocking Firestore write
       if (this.firestoreDb && signal.id) {
-        setDoc(doc(this.firestoreDb, 'signals', signal.id), signal).catch((err) => {
+        setDoc(doc(this.firestoreDb, 'signals', signal.id), sanitizeFirestoreData(signal)).catch((err) => {
           console.error(`[Storage] Firestore saveSignal error for ${signal.id}:`, err?.message || err);
         });
       }
@@ -509,7 +555,7 @@ class PersistentStorage {
 
       // Asynchronous Firestore write
       if (this.firestoreDb && tradeWithActive.id) {
-        setDoc(doc(this.firestoreDb, 'trade_ledger', tradeWithActive.id), tradeWithActive).catch((err) => {
+        setDoc(doc(this.firestoreDb, 'trade_ledger', tradeWithActive.id), sanitizeFirestoreData(tradeWithActive)).catch((err) => {
           console.error(`[Storage] Firestore saveTrade error for ${tradeWithActive.id}:`, err?.message || err);
         });
       }
@@ -554,32 +600,84 @@ class PersistentStorage {
   } {
     try {
       const existing = this.getTradeOutcome(record.signalId) || (record.tradeId ? this.getTradeOutcome(record.tradeId) : undefined);
-      if (existing) {
-        return {
-          success: false,
-          isDuplicate: true,
-          outcome: existing,
-          message: `تم تسجيل نتيجة هذه الصفقة مسبقاً (${existing.outcome === 'WIN' ? '🟢 رابحة' : '🔴 خاسرة'}). لا يمكن تعديلها.`,
-        };
-      }
-
       const existingTrade = this.inMemoryTrades.find((t) => t.id === record.signalId || t.id === record.tradeId);
-      if (existingTrade && (existingTrade.result === 'WIN' || existingTrade.result === 'LOSS')) {
-        return {
-          success: false,
-          isDuplicate: true,
-          outcome: { ...record, outcome: existingTrade.result },
-          trade: existingTrade,
-          message: `تم تسجيل نتيجة هذه الصفقة مسبقاً (${existingTrade.result === 'WIN' ? '🟢 رابحة' : '🔴 خاسرة'}). لا يمكن تعديلها.`,
-        };
+
+      // 1. Authoritative Realized P&L Calculation (Never calculate from riskAmount * RR)
+      let finalRealizedPnl: number;
+      if (typeof record.realizedPnl === 'number' && !isNaN(record.realizedPnl)) {
+        finalRealizedPnl = Number(record.realizedPnl.toFixed(2));
+      } else if (typeof record.pl === 'number' && !isNaN(record.pl)) {
+        finalRealizedPnl = Number(record.pl.toFixed(2));
+      } else if (record.exitPrice !== undefined && typeof record.exitPrice === 'number' && !isNaN(record.exitPrice)) {
+        // Price-action based P&L for Gold: 1 lot = 100 oz. Contract multiplier = 100
+        const isBuy = String(record.direction || signalData?.signal || existingTrade?.direction || '').toUpperCase().includes('BUY');
+        const entryPrice = Number(record.entry || existingTrade?.entry || signalData?.entry || record.exitPrice);
+        const priceDiff = isBuy ? (record.exitPrice - entryPrice) : (entryPrice - record.exitPrice);
+        const lotSize = existingTrade?.lotSize || signalData?.recommendedLotSize || (signalData as any)?.lotSize || 0.01;
+        finalRealizedPnl = Number((priceDiff * 100 * lotSize).toFixed(2));
+      } else {
+        finalRealizedPnl = 0;
       }
 
-      this.inMemoryOutcomes.unshift(record);
+      // Enforce directional sign consistency with outcome if non-zero
+      if (record.outcome === 'WIN' && finalRealizedPnl < 0) {
+        finalRealizedPnl = Math.abs(finalRealizedPnl);
+      } else if (record.outcome === 'LOSS' && finalRealizedPnl > 0) {
+        finalRealizedPnl = -Math.abs(finalRealizedPnl);
+      }
+
+      record.realizedPnl = finalRealizedPnl;
+      record.pl = finalRealizedPnl;
+      const source = record.source || 'MANUAL';
+
+      // 2. Idempotency Check: Avoid duplicate balance counting
+      if (existing) {
+        const existingPnl = typeof existing.realizedPnl === 'number' ? existing.realizedPnl : existing.pl;
+        if (existing.outcome === record.outcome && existingPnl === finalRealizedPnl && source !== 'MT5') {
+          return {
+            success: true,
+            isDuplicate: true,
+            outcome: existing,
+            trade: existingTrade,
+            message: `تم توثيق نتيجة هذه الصفقة مسبقاً (${existing.outcome === 'WIN' ? '🟢 رابحة' : '🔴 خاسرة'}) بقيمة $${finalRealizedPnl}.`,
+          };
+        }
+      }
+
+      if (existingTrade && (existingTrade.result === 'WIN' || existingTrade.result === 'LOSS')) {
+        const existingTradePnl = typeof existingTrade.realizedPnl === 'number' ? existingTrade.realizedPnl : (existingTrade.pl || 0);
+        if (existingTrade.result === record.outcome && existingTradePnl === finalRealizedPnl && source !== 'MT5') {
+          return {
+            success: true,
+            isDuplicate: true,
+            outcome: { ...record, outcome: existingTrade.result, realizedPnl: existingTradePnl },
+            trade: existingTrade,
+            message: `تم توثيق نتيجة هذه الصفقة مسبقاً (${existingTrade.result === 'WIN' ? '🟢 رابحة' : '🔴 خاسرة'}) بقيمة $${finalRealizedPnl}.`,
+          };
+        }
+      }
+
+      // 3. Update outcome list
+      const outcomeIndex = this.inMemoryOutcomes.findIndex((o) => o.signalId === record.signalId || (record.tradeId && o.tradeId === record.tradeId));
+      if (outcomeIndex >= 0) {
+        this.inMemoryOutcomes[outcomeIndex] = record;
+      } else {
+        this.inMemoryOutcomes.unshift(record);
+      }
       if (this.inMemoryOutcomes.length > 500) {
         this.inMemoryOutcomes = this.inMemoryOutcomes.slice(0, 500);
       }
 
       const isWin = record.outcome === 'WIN';
+      const lotSize = existingTrade?.lotSize || signalData?.recommendedLotSize || (signalData as any)?.lotSize || 0.01;
+      const entryPrice = Number(record.entry || existingTrade?.entry || signalData?.entry || 0);
+      const tp1Price = Number(record.tp1 || existingTrade?.tp1 || signalData?.tp1 || 0);
+      const tp2Price = Number(record.tp2 || existingTrade?.tp2 || signalData?.tp2 || 0);
+      const slPrice = Number(record.stopLoss || existingTrade?.sl || signalData?.stopLoss || 0);
+
+      const theoreticalTp1Profit = Number((Math.abs(entryPrice - tp1Price) * 100 * lotSize).toFixed(2));
+      const theoreticalTp2Profit = Number((Math.abs(entryPrice - tp2Price) * 100 * lotSize).toFixed(2));
+
       const riskAmount = Number(
         (existingTrade?.riskAmount || signalData?.riskAmount || (this.inMemorySettings.manualCapital * (this.inMemorySettings.riskPerTrade / 100))).toFixed(2)
       );
@@ -587,23 +685,33 @@ class PersistentStorage {
       let updatedTrade: TradeLedgerItem;
 
       if (existingTrade) {
-        const rrRatio = parseFloat(String(existingTrade.rr || signalData?.rr || '1.5').replace('1:', '')) || 1.5;
-        const pl = isWin ? Number((existingTrade.riskAmount * rrRatio).toFixed(2)) : -Number(existingTrade.riskAmount.toFixed(2));
+        const previousPnl = typeof existingTrade.realizedPnl === 'number'
+          ? existingTrade.realizedPnl
+          : (existingTrade.result === 'WIN' || existingTrade.result === 'LOSS' ? (existingTrade.pl || 0) : 0);
+
+        const delta = Number((finalRealizedPnl - previousPnl).toFixed(2));
 
         existingTrade.result = record.outcome;
-        existingTrade.pl = pl;
-        existingTrade.exitPrice = isWin ? (existingTrade.tp1 || record.tp1) : (existingTrade.sl || record.stopLoss);
-        existingTrade.exitTime = new Date(record.timestamp).toISOString();
-        existingTrade.notes = `${existingTrade.notes ? existingTrade.notes + ' | ' : ''}النتيجة: ${isWin ? '🟢 رابحة' : '🔴 خاسرة'} (عبر تلغرام)`;
-        existingTrade.balanceAfterTrade = Number(((existingTrade.balanceAfterTrade || this.inMemoryCurrentBalance) + pl).toFixed(2));
+        existingTrade.pl = finalRealizedPnl;
+        existingTrade.realizedPnl = finalRealizedPnl;
+        existingTrade.source = source;
+        if (record.brokerDealId) existingTrade.brokerDealId = record.brokerDealId;
+        if (record.brokerOrderId) existingTrade.brokerOrderId = record.brokerOrderId;
+        if (record.closedAt) existingTrade.closedAt = record.closedAt;
+        if (record.closeReason) existingTrade.closeReason = record.closeReason;
+        existingTrade.theoreticalTp1Profit = theoreticalTp1Profit;
+        existingTrade.theoreticalTp2Profit = theoreticalTp2Profit;
+        existingTrade.exitPrice = record.exitPrice !== undefined ? record.exitPrice : (isWin ? (existingTrade.tp1 || record.tp1) : (existingTrade.sl || record.stopLoss));
+        existingTrade.exitTime = new Date(record.timestamp || Date.now()).toISOString();
+        existingTrade.notes = `${existingTrade.notes ? existingTrade.notes + ' | ' : ''}النتيجة: ${isWin ? '🟢 رابحة' : '🔴 خاسرة'} [P&L: ${finalRealizedPnl >= 0 ? '+' : ''}$${finalRealizedPnl.toFixed(2)}] (${source})`;
+        existingTrade.isActive = false;
 
-        this.inMemoryCurrentBalance = existingTrade.balanceAfterTrade;
+        this.inMemoryCurrentBalance = Number((this.inMemoryCurrentBalance + delta).toFixed(2));
+        existingTrade.balanceAfterTrade = this.inMemoryCurrentBalance;
+
         updatedTrade = existingTrade;
       } else {
-        const rrRatio = parseFloat(String(signalData?.rr || '1.5').replace('1:', '')) || 1.5;
-        const pl = isWin ? Number((riskAmount * rrRatio).toFixed(2)) : -riskAmount;
-
-        this.inMemoryCurrentBalance = Number((this.inMemoryCurrentBalance + pl).toFixed(2));
+        this.inMemoryCurrentBalance = Number((this.inMemoryCurrentBalance + finalRealizedPnl).toFixed(2));
 
         const newTrade: TradeLedgerItem = {
           id: record.signalId,
@@ -627,15 +735,24 @@ class PersistentStorage {
           rr: signalData?.rr || '1:1.5',
           riskPercent: signalData?.riskPercent || this.inMemorySettings.riskPerTrade,
           riskAmount: riskAmount,
-          lotSize: signalData?.recommendedLotSize || (signalData as any)?.lotSize || 0.01,
+          lotSize: lotSize,
           confidence: signalData?.confidence || 80,
           setup: signalData?.setup || 'SMC Liquidity Engine',
           result: record.outcome,
-          pl: pl,
+          pl: finalRealizedPnl,
+          realizedPnl: finalRealizedPnl,
           balanceAfterTrade: this.inMemoryCurrentBalance,
-          exitPrice: isWin ? record.tp1 : record.stopLoss,
+          exitPrice: record.exitPrice !== undefined ? record.exitPrice : (isWin ? record.tp1 : record.stopLoss),
           exitTime: new Date(record.timestamp).toISOString(),
-          notes: `سجلت يدوياً (${isWin ? '🟢 رابحة' : '🔴 خاسرة'}) عبر تلغرام`,
+          closedAt: record.closedAt || record.timestamp,
+          closeReason: record.closeReason,
+          source: source,
+          brokerDealId: record.brokerDealId,
+          brokerOrderId: record.brokerOrderId,
+          theoreticalTp1Profit,
+          theoreticalTp2Profit,
+          isActive: false,
+          notes: `سجلت (${source}: ${isWin ? '🟢 رابحة' : '🔴 خاسرة'}) [P&L: ${finalRealizedPnl >= 0 ? '+' : ''}$${finalRealizedPnl.toFixed(2)}]`,
         };
 
         this.inMemoryTrades.unshift(newTrade);
@@ -644,17 +761,17 @@ class PersistentStorage {
 
       // Firestore persistence
       if (this.firestoreDb) {
-        setDoc(doc(this.firestoreDb, 'trade_outcomes', record.signalId), record).catch((err) => {
+        setDoc(doc(this.firestoreDb, 'trade_outcomes', record.signalId), sanitizeFirestoreData(record)).catch((err) => {
           console.error('[Storage] Firestore recordTradeOutcome error:', err);
         });
-        setDoc(doc(this.firestoreDb, 'trade_ledger', updatedTrade.id), updatedTrade).catch((err) => {
+        setDoc(doc(this.firestoreDb, 'trade_ledger', updatedTrade.id), sanitizeFirestoreData(updatedTrade)).catch((err) => {
           console.error('[Storage] Firestore saveTrade error in outcome:', err);
         });
-        setDoc(doc(this.firestoreDb, 'account_state', 'main'), {
+        setDoc(doc(this.firestoreDb, 'account_state', 'main'), sanitizeFirestoreData({
           currentBalance: this.inMemoryCurrentBalance,
           startingBalance: this.inMemoryStartingBalance,
           updatedAt: Date.now(),
-        }).catch((err) => {
+        })).catch((err) => {
           console.error('[Storage] Firestore account_state update error:', err);
         });
       }
@@ -672,8 +789,54 @@ class PersistentStorage {
         success: false,
         isDuplicate: false,
         outcome: record,
-        message: err?.message || 'Error recording outcome',
+        message: err?.message || 'Failed to record trade outcome',
       };
+    }
+  }
+
+  public reconcileMt5Trade(params: {
+    signalOrTradeId: string;
+    brokerDealId: string;
+    brokerOrderId?: string;
+    entryPrice?: number;
+    exitPrice: number;
+    lotSize?: number;
+    realizedPnl: number;
+    closedAt?: number;
+    closeReason?: string;
+    direction?: string;
+  }): { success: boolean; trade?: TradeLedgerItem; message?: string } {
+    try {
+      const outcome: 'WIN' | 'LOSS' = params.realizedPnl >= 0 ? 'WIN' : 'LOSS';
+      const record: TradeOutcomeRecord = {
+        signalId: params.signalOrTradeId,
+        tradeId: params.signalOrTradeId,
+        direction: params.direction || 'BUY NOW',
+        orderType: 'MARKET',
+        entry: params.entryPrice || 0,
+        stopLoss: 0,
+        tp1: 0,
+        tp2: 0,
+        outcome,
+        realizedPnl: params.realizedPnl,
+        exitPrice: params.exitPrice,
+        source: 'MT5',
+        brokerDealId: params.brokerDealId,
+        brokerOrderId: params.brokerOrderId,
+        closedAt: params.closedAt || Date.now(),
+        closeReason: params.closeReason || 'MT5_CLOSED',
+        timestamp: params.closedAt || Date.now(),
+        isoTime: new Date(params.closedAt || Date.now()).toISOString(),
+      };
+      const res = this.recordTradeOutcome(record);
+      return {
+        success: res.success,
+        trade: res.trade,
+        message: res.message,
+      };
+    } catch (e: any) {
+      console.error('[Storage] reconcileMt5Trade error:', e);
+      return { success: false, message: e?.message };
     }
   }
 
@@ -754,27 +917,51 @@ class PersistentStorage {
     };
   }
 
+  public getCurrentBalance(): number {
+    return this.inMemoryCurrentBalance;
+  }
+
+  public getStartingBalance(): number {
+    return this.inMemoryStartingBalance;
+  }
+
+  public setStartingBalance(val: number): void {
+    if (typeof val === 'number' && !isNaN(val) && val > 0) {
+      this.inMemoryStartingBalance = Number(val.toFixed(2));
+      this.inMemoryCurrentBalance = this.inMemoryStartingBalance;
+      this.inMemorySettings.manualCapital = this.inMemoryStartingBalance;
+      this.syncJsonBackups();
+    }
+  }
+
+  public setCurrentBalance(val: number): void {
+    if (typeof val === 'number' && !isNaN(val)) {
+      this.inMemoryCurrentBalance = Number(val.toFixed(2));
+      this.syncJsonBackups();
+    }
+  }
+
   public updateBalance(current: number, starting?: number): { currentBalance: number; startingBalance: number } {
     this.inMemoryCurrentBalance = Number(current.toFixed(2));
     if (typeof starting === 'number' && !isNaN(starting) && starting > 0) {
       this.inMemoryStartingBalance = Number(starting.toFixed(2));
       this.inMemorySettings.manualCapital = this.inMemoryStartingBalance;
       if (this.firestoreDb) {
-        setDoc(doc(this.firestoreDb, 'app_settings', 'main'), {
+        setDoc(doc(this.firestoreDb, 'app_settings', 'main'), sanitizeFirestoreData({
           ...this.inMemorySettings,
           updatedAt: Date.now(),
-        }).catch((err) => {
+        })).catch((err) => {
           console.error('[Storage] Firestore updateBalance settings error:', err);
         });
       }
     }
 
     if (this.firestoreDb) {
-      setDoc(doc(this.firestoreDb, 'account_state', 'main'), {
+      setDoc(doc(this.firestoreDb, 'account_state', 'main'), sanitizeFirestoreData({
         currentBalance: this.inMemoryCurrentBalance,
         startingBalance: this.inMemoryStartingBalance,
         updatedAt: Date.now(),
-      }).catch((err) => {
+      })).catch((err) => {
         console.error('[Storage] Firestore updateBalance account error:', err);
       });
     }
@@ -814,11 +1001,11 @@ class PersistentStorage {
           }
 
           if (this.firestoreDb) {
-            setDoc(doc(this.firestoreDb, 'account_state', 'main'), {
+            setDoc(doc(this.firestoreDb, 'account_state', 'main'), sanitizeFirestoreData({
               currentBalance: this.inMemoryCurrentBalance,
               startingBalance: this.inMemoryStartingBalance,
               updatedAt: Date.now(),
-            }).catch((err) => {
+            })).catch((err) => {
               console.error('[Storage] Firestore saveSettings account update error:', err);
             });
           }
@@ -826,10 +1013,10 @@ class PersistentStorage {
       }
 
       if (this.firestoreDb) {
-        setDoc(doc(this.firestoreDb, 'app_settings', 'main'), {
+        setDoc(doc(this.firestoreDb, 'app_settings', 'main'), sanitizeFirestoreData({
           ...this.inMemorySettings,
           updatedAt: Date.now(),
-        }).catch((err) => {
+        })).catch((err) => {
           console.error('[Storage] Firestore saveSettings app_settings error:', err);
         });
       }
@@ -909,15 +1096,15 @@ class PersistentStorage {
         }
 
         if (this.firestoreDb) {
-          setDoc(doc(this.firestoreDb, 'trade_ledger', id), this.inMemoryTrades[idx]).catch((err) => {
+          setDoc(doc(this.firestoreDb, 'trade_ledger', id), sanitizeFirestoreData(this.inMemoryTrades[idx])).catch((err) => {
             console.error(`[Storage] Firestore closeTrade error for ${id}:`, err);
           });
           if (isRealizedTrade) {
-            setDoc(doc(this.firestoreDb, 'account_state', 'main'), {
+            setDoc(doc(this.firestoreDb, 'account_state', 'main'), sanitizeFirestoreData({
               currentBalance: this.inMemoryCurrentBalance,
               startingBalance: this.inMemoryStartingBalance,
               updatedAt: Date.now(),
-            }).catch((err) => {
+            })).catch((err) => {
               console.error('[Storage] Firestore closeTrade account error:', err);
             });
           }
@@ -942,11 +1129,11 @@ class PersistentStorage {
         deleteDoc(doc(this.firestoreDb, 'trade_ledger', id)).catch((err) => {
           console.error(`[Storage] Firestore deleteTrade error for ${id}:`, err);
         });
-        setDoc(doc(this.firestoreDb, 'account_state', 'main'), {
+        setDoc(doc(this.firestoreDb, 'account_state', 'main'), sanitizeFirestoreData({
           currentBalance: this.inMemoryCurrentBalance,
           startingBalance: this.inMemoryStartingBalance,
           updatedAt: Date.now(),
-        }).catch((err) => {
+        })).catch((err) => {
           console.error('[Storage] Firestore deleteTrade account error:', err);
         });
       }
@@ -989,6 +1176,66 @@ class PersistentStorage {
     } catch (error) {
       return null;
     }
+  }
+
+  // =========================================================================
+  // POI Tracking & Setup Freshness Persistence
+  // =========================================================================
+  public savePoi(poi: PoiRecord): void {
+    const idx = this.inMemoryPois.findIndex((p) => p.id === poi.id);
+    if (idx >= 0) {
+      this.inMemoryPois[idx] = poi;
+    } else {
+      this.inMemoryPois.push(poi);
+      if (this.inMemoryPois.length > 200) {
+        this.inMemoryPois.shift();
+      }
+    }
+    if (this.firestoreDb) {
+      setDoc(doc(this.firestoreDb, 'poi_records', poi.id), sanitizeFirestoreData(poi)).catch((err) => {
+        console.error(`[Storage] Firestore savePoi error for ${poi.id}:`, err);
+      });
+    }
+  }
+
+  public savePois(pois: PoiRecord[]): void {
+    for (const p of pois) {
+      this.savePoi(p);
+    }
+  }
+
+  public getPois(): PoiRecord[] {
+    return [...this.inMemoryPois];
+  }
+
+  // =========================================================================
+  // Candidate Lifecycle State Persistence
+  // =========================================================================
+  public saveLifecycle(record: CandidateLifecycleRecord): void {
+    const idx = this.inMemoryLifecycles.findIndex((l) => l.id === record.id);
+    if (idx >= 0) {
+      this.inMemoryLifecycles[idx] = record;
+    } else {
+      this.inMemoryLifecycles.push(record);
+      if (this.inMemoryLifecycles.length > 200) {
+        this.inMemoryLifecycles.shift();
+      }
+    }
+    if (this.firestoreDb) {
+      setDoc(doc(this.firestoreDb, 'candidate_lifecycles', record.id), sanitizeFirestoreData(record)).catch((err) => {
+        console.error(`[Storage] Firestore saveLifecycle error for ${record.id}:`, err);
+      });
+    }
+  }
+
+  public saveLifecycles(records: CandidateLifecycleRecord[]): void {
+    for (const r of records) {
+      this.saveLifecycle(r);
+    }
+  }
+
+  public getLifecycles(): CandidateLifecycleRecord[] {
+    return [...this.inMemoryLifecycles];
   }
 }
 

@@ -81,6 +81,8 @@ export default function App() {
   const [candles, setCandles] = useState<Candle[]>([]);
   const [atr, setAtr] = useState<number>(2.4);
   const [structure, setStructure] = useState<string>('BULLISH');
+  const [marketRegime, setMarketRegime] = useState<string | undefined>(undefined);
+  const [isOverextended, setIsOverextended] = useState<boolean>(false);
   const [isLiveConnected, setIsLiveConnected] = useState<boolean>(false);
   const [multitimeframe, setMultitimeframe] = useState<any>(null);
 
@@ -157,6 +159,10 @@ export default function App() {
         if (data.technicals) {
           if (typeof data.technicals.atr14 === 'number') setAtr(data.technicals.atr14);
           if (data.technicals.structure) setStructure(data.technicals.structure);
+          if (data.technicals.marketRegime) setMarketRegime(data.technicals.marketRegime);
+          if (typeof data.technicals.regimeContext?.isOverextended === 'boolean') {
+            setIsOverextended(data.technicals.regimeContext.isOverextended);
+          }
         }
       } catch (e) {
         console.warn('Candle fetch error:', e);
@@ -172,6 +178,10 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setMultitimeframe(data);
+        if (data.marketRegime) setMarketRegime(data.marketRegime);
+        if (typeof data.regimeContext?.isOverextended === 'boolean') {
+          setIsOverextended(data.regimeContext.isOverextended);
+        }
       }
     } catch (e) {
       console.warn('Multitimeframe fetch error:', e);
@@ -596,6 +606,8 @@ export default function App() {
               candles={candles}
               atr={atr}
               structure={structure}
+              marketRegime={marketRegime}
+              isOverextended={isOverextended}
               isLiveConnected={isLiveConnected}
               isAnalyzing={isAnalyzing}
               multitimeframe={multitimeframe}

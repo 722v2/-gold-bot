@@ -7,6 +7,8 @@ import { storage } from './storage.js';
 import { mt5Bridge } from './mt5Bridge.js';
 import { telegramService } from './telegram.js';
 import { tradeMonitor } from './tradeMonitor.js';
+import { tradeManagementEngine } from './tradeManagementEngine.js';
+import { checkStructuralSameSetupIdentity } from './tradeQualityEngine.js';
 
 class LiveMarketScanner {
   private config: ScannerConfig = {
@@ -188,6 +190,19 @@ class LiveMarketScanner {
       const ind15m = analyzeTechnicals(candles15m);
       const ind5m = analyzeTechnicals(candles5m);
 
+      // Synchronize in-flight trade state with TradeLedger & TradeMonitor
+      const openTrades = storage.getTrades(300).filter((t) => t.result === 'OPEN' && t.isActive !== false);
+
+      // Check if our activeSignal's trade was closed in the trade ledger
+      if (this.activeSignal) {
+        const matchingTrade = storage.getTrades(300).find((t) => t.id === this.activeSignal?.id);
+        if (matchingTrade && matchingTrade.result !== 'OPEN') {
+          console.log(`[LiveMarketScanner] Active trade ${this.activeSignal.id} is closed in ledger (${matchingTrade.result}). Clearing activeSignal.`);
+          this.activeSignal = null;
+          this.config.activeSetupName = null;
+        }
+      }
+
       // Check active signal status against live price (TP / SL reached)
       if (this.activeSignal && this.activeSignal.signal !== 'NO TRADE') {
         const isBuy = this.activeSignal.signal.includes('BUY');
@@ -209,11 +224,39 @@ class LiveMarketScanner {
         }
       }
 
+      // Determine active trade direction for opposition guard
+      let activeTradeDirection: 'BUY' | 'SELL' | null = null;
+      if (openTrades.length > 0) {
+        activeTradeDirection = openTrades[0].direction.toUpperCase().includes('BUY') ? 'BUY' : 'SELL';
+      } else if (this.activeSignal && this.activeSignal.signal !== 'NO TRADE') {
+        activeTradeDirection = this.activeSignal.signal.toUpperCase().includes('BUY') ? 'BUY' : 'SELL';
+      }
+
       // Step 4: Sync with global settings and evaluate activeCapital
       const settings = storage.getSettings();
       let activeCapital = settings.manualCapital;
       let isExecutionBlocked = false;
       let blockReason = '';
+
+      // Phase 4: Continuous Trade Lifecycle & Health Management for active open trades
+      if (openTrades.length > 0 && settings.enableTradeManagement !== false) {
+        tradeManagementEngine
+          .evaluateActiveTrades(
+            currentPrice,
+            candles1h,
+            candles15m,
+            candles5m,
+            candles1m,
+            ind1h,
+            ind15m,
+            ind5m,
+            activeCapital,
+            settings
+          )
+          .catch((err) => {
+            console.error('[LiveMarketScanner] Trade management engine evaluation error:', err);
+          });
+      }
 
       if (settings.capitalSource === 'MT5') {
         const mt5Status = await mt5Bridge.getAccountStatus();
@@ -338,28 +381,39 @@ class LiveMarketScanner {
         recent1mCandles: candles1m,
         losingStreak: this.losingStreak,
         brokerSpecs: this.brokerSpecs,
+        activeTradeDirection,
       });
       console.log('[SCANNER] AI analysis completed');
       console.log(`[SCANNER] result: ${signal.signal}`);
 
       this.config.scanCount += 1;
 
-      // Check if an existing active setup is already ongoing
-      const isSameSetupActive =
-        this.activeSignal !== null &&
+      // Check if candidate signal opposes an active in-flight trade
+      const isOpposingActiveTrade =
+        activeTradeDirection !== null &&
         signal.signal !== 'NO TRADE' &&
-        this.activeSignal.signal === signal.signal &&
-        (this.activeSignal.setup === signal.setup || Math.abs(this.activeSignal.entry - signal.entry) <= 1.5);
+        ((activeTradeDirection === 'BUY' && signal.signal.toUpperCase().includes('SELL')) ||
+          (activeTradeDirection === 'SELL' && signal.signal.toUpperCase().includes('BUY')));
+
+      // Check structural same-setup identity against active in-flight trade
+      const structuralIdentity = checkStructuralSameSetupIdentity(this.activeSignal, signal);
+      const isSameSetupActive = structuralIdentity.isDuplicate;
 
       // Status text for storage
       let scanResultStatus = 'NO TRADE';
       if (signal.signal !== 'NO TRADE') {
-        scanResultStatus = isSameSetupActive ? 'DUPLICATE_ACTIVE' : 'QUALIFIED_SIGNAL';
+        if (isOpposingActiveTrade) {
+          scanResultStatus = 'OPPOSING_ACTIVE_BLOCKED';
+        } else if (isSameSetupActive) {
+          scanResultStatus = structuralIdentity.status;
+        } else {
+          scanResultStatus = 'QUALIFIED_SIGNAL';
+        }
       }
 
       const scanId = `scan_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
-      // Step 7 & 8: Store EVERY scan in persistent storage with all 15 required fields
+      // Step 7 & 8: Store EVERY scan in persistent storage with all required fields
       storage.saveScan({
         id: scanId,
         timestamp: Date.now(),
@@ -384,9 +438,28 @@ class LiveMarketScanner {
         reasons: signal.mainReasons,
         status: scanResultStatus,
         invalidation: signal.invalidation,
-        noTradeReason: signal.noTradeReason,
+        duplicateReason: isSameSetupActive ? structuralIdentity.status : undefined,
+        duplicateDetails: isSameSetupActive ? structuralIdentity.details : undefined,
+        noTradeReason: isOpposingActiveTrade
+          ? `توجد صفقة نشطة في الاتجاه المعاكس (${activeTradeDirection}). تم حظر الإشارة المعارضة حتى اكتمال أو إغلاق الصفقة الجارية.`
+          : isSameSetupActive
+          ? structuralIdentity.reason
+          : signal.noTradeReason,
       });
       console.log(`[SCANNER] history saved: ${signal.signal} (${scanResultStatus})`);
+
+      // Active Trade Opposition Guard: Block emission of opposing signals
+      if (isOpposingActiveTrade) {
+        console.log(`[LiveMarketScanner] Active Trade Opposition Guard: Blocked ${signal.signal} because active ${activeTradeDirection} is in-flight.`);
+        if (this.activeSignal) {
+          this.activeSignal.currentPrice = currentPrice;
+          this.config.lastSignal = this.activeSignal;
+          this.config.lastDecision = this.activeSignal.signal;
+          this.config.lastScanStatus = `صفقة ${activeTradeDirection} جارية حالياً | تم حظر إشارة ${signal.signal} المعارضة لمنع التضارب`;
+          return this.activeSignal;
+        }
+        return signal;
+      }
 
       // Step 5 & 6: Prevent duplicate signals if same setup is still active
       if (signal.signal !== 'NO TRADE' && signal.confidence >= this.config.minConfidence) {
@@ -394,8 +467,8 @@ class LiveMarketScanner {
           // DUPLICATE PREVENTED: Update status without generating a new signal or spamming alerts
           this.config.duplicatePrevented = true;
           this.config.lastDecision = this.activeSignal.signal;
-          this.config.lastScanStatus = `الصفقة لا تزال جارية: ${this.activeSignal.signal} (${this.activeSignal.setup}) | السعر: $${currentPrice.toFixed(2)} [تم منع تكرار الإشارة]`;
-          console.log(`[LiveMarketScanner] Same setup is still active: ${this.activeSignal.setup}. Duplicate signal prevented.`);
+          this.config.lastScanStatus = `الصفقة لا تزال جارية: ${this.activeSignal.signal} (${this.activeSignal.setup}) | السعر: $${currentPrice.toFixed(2)} [تم منع ${structuralIdentity.status === 'DUPLICATE_ACTIVE_REENTRY' ? 'إعادة الدخول المكرر' : 'تكرار الإشارة'}]`;
+          console.log(`[LiveMarketScanner] Blocked ${structuralIdentity.status}: ${signal.setup} @ ${signal.entry}. Active trade ${this.activeSignal.setup} @ ${this.activeSignal.entry} is still OPEN. Telemetry:`, structuralIdentity.details);
 
           // Keep current price updated on active signal
           this.activeSignal.currentPrice = currentPrice;

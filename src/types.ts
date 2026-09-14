@@ -1,5 +1,130 @@
 export type AssetType = 'XAU/USD' | 'BTC/USD';
 
+// ============================================================================
+// PHASE 3 — TRADE QUALITY & EXECUTION INTELLIGENCE TYPES
+// ============================================================================
+
+export type PoiFreshnessState =
+  | 'FRESH'
+  | 'TESTED_ONCE'
+  | 'TESTED_TWICE'
+  | 'EXHAUSTED'
+  | 'INVALIDATED';
+
+export interface PoiRecord {
+  id: string;
+  type: 'ORDER_BLOCK' | 'FVG' | 'SFP_ZONE' | 'SWING_LEVEL';
+  timeframe: '1H' | '15M' | '5M';
+  direction: 'BULLISH' | 'BEARISH';
+  top: number;
+  bottom: number;
+  createdTimestamp: number;
+  createdCandleTime?: number;
+  lastTestedCandleTime?: number;
+  tapCount: number;
+  state: PoiFreshnessState;
+  invalidationPrice?: number;
+}
+
+export type PullbackQuality = 'HEALTHY' | 'ACCEPTABLE' | 'WEAK' | 'INVALID';
+
+export interface PullbackAssessment {
+  quality: PullbackQuality;
+  retracementDepth: number; // e.g. 0.50, 0.618
+  speedRating: 'CONTROLLED' | 'FAST_IMPULSIVE' | 'STALLED';
+  momentumContrast: 'CORRECTIVE' | 'COUNTER_IMPULSE' | 'NEUTRAL';
+  candleCount: number;
+  volumeBehavior: 'DECLINING_CORRECTIVE' | 'EXPANDING_COUNTER' | 'AVERAGE';
+  reasons: string[];
+}
+
+export type EntryTiming = 'OPTIMAL' | 'ACCEPTABLE' | 'LATE' | 'CHASED';
+
+export interface EntryTimingAssessment {
+  timing: EntryTiming;
+  distanceFromPoiAtr: number;
+  displacementAtr: number;
+  isChasing: boolean;
+  timingPenalty: number; // 0 to 40
+  reason: string;
+}
+
+export type PriceActionTriggerType =
+  | 'REJECTION_WICK'
+  | 'ENGULFING'
+  | 'DISPLACEMENT_CANDLE'
+  | 'MICRO_BOS'
+  | 'MICRO_CHOCH'
+  | 'PULLBACK_STRUCTURE_BREAK'
+  | 'STRONG_EXPANSION_CLOSE';
+
+export interface TriggerAssessment {
+  hasTrigger: boolean;
+  primaryTrigger: PriceActionTriggerType | null;
+  allTriggers: PriceActionTriggerType[];
+  triggerTimeframe: string;
+  triggerCandleTime?: number;
+  rejectionRatio?: number;
+  confirmationScore: number; // 0 to 30
+  description: string;
+}
+
+export type TpPathRunway = 'CLEAR' | 'MINOR_OBSTACLE' | 'MAJOR_OBSTACLE' | 'BLOCKED';
+
+export interface TpObstacle {
+  type: string;
+  price: number;
+  distancePoints: number;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH';
+}
+
+export interface TpPathAssessment {
+  runway: TpPathRunway;
+  clearRunwayRatio: number; // distanceToFirstObstacle / distanceToTp1
+  obstacles: TpObstacle[];
+  runwayScore: number; // 0 to 25
+  description: string;
+}
+
+export interface LiquidityContextInfo {
+  equalHighs: { price: number; touches: number; spread: number }[];
+  equalLows: { price: number; touches: number; spread: number }[];
+  recentSweptLevel?: { type: 'BSL' | 'SSL'; price: number; sweptBy: number; timestamp: number } | null;
+  internalLiquidityTarget?: number;
+  externalLiquidityTarget?: number;
+  liquidityScoreBonus: number;
+  summary: string;
+}
+
+export type CandidateLifecycleState =
+  | 'WATCHING'
+  | 'DEVELOPING'
+  | 'READY'
+  | 'TRIGGERED'
+  | 'INVALIDATED'
+  | 'CLOSED'
+  | 'EXPIRED';
+
+export interface CandidateLifecycleRecord {
+  id: string;
+  setupName: string;
+  strategyFamily: string;
+  direction: 'BUY' | 'SELL';
+  timeframe: string;
+  poiId?: string;
+  state: CandidateLifecycleState;
+  firstObservedTime: number;
+  lastUpdatedTime: number;
+  entryProposed: number;
+  stopLoss: number;
+  tp1: number;
+  tp2: number;
+  triggersDetected: string[];
+  rejectionReason?: string;
+  executionQualityScore?: number;
+  strategyConfidence?: number;
+}
+
 export type NavigationTab =
   | 'dashboard'
   | 'scanner'
@@ -65,6 +190,37 @@ export interface TechnicalIndicators {
   };
   liquiditySweepDetected?: boolean;
   premiumDiscountZone?: 'PREMIUM' | 'DISCOUNT' | 'EQUILIBRIUM';
+  marketRegime?:
+    | 'STRONG_UPTREND'
+    | 'WEAK_UPTREND'
+    | 'STRONG_DOWNTREND'
+    | 'WEAK_DOWNTREND'
+    | 'NORMAL_RANGE'
+    | 'VOLATILE_RANGE'
+    | 'TRANSITION'
+    | 'UNCLEAR';
+  regimeContext?: {
+    regime:
+      | 'STRONG_UPTREND'
+      | 'WEAK_UPTREND'
+      | 'STRONG_DOWNTREND'
+      | 'WEAK_DOWNTREND'
+      | 'NORMAL_RANGE'
+      | 'VOLATILE_RANGE'
+      | 'TRANSITION'
+      | 'UNCLEAR';
+    trendStrength: number; // 0-100
+    isOverextended: boolean; // Overextension flag
+    overextensionReason?: string;
+    volatilityRatio: number; // current ATR / avg ATR
+    rangeBoundaries?: {
+      high: number;
+      low: number;
+      equilibrium: number;
+    };
+    recommendedAction: 'TREND_CONTINUATION' | 'PULLBACK_WAIT' | 'RANGE_EDGES' | 'TRANSITION_CONFIRM' | 'NO_EDGE_WAIT';
+    summaryDescription: string;
+  };
 }
 
 export type CapitalSource = 'MANUAL' | 'MT5';
@@ -105,6 +261,8 @@ export interface AppSettings {
   minGoldSlPoints?: number;
   maxGoldSlPoints: number;
   maxLoss?: number; // User-configured maximum monetary loss limit in USD (e.g. $5.00)
+  partialClosePercent?: number; // Configurable percentage to close at TP1 (e.g. 50%)
+  enableTradeManagement?: boolean; // Enable Phase 4 continuous trade lifecycle management
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -128,6 +286,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   minGoldSlPoints: 40,
   maxGoldSlPoints: 50,
   maxLoss: 5.0,
+  partialClosePercent: 50,
+  enableTradeManagement: true,
 };
 
 export interface BrokerSettings {
@@ -181,6 +341,31 @@ export interface PositionSizingDetails {
   lotStep: number;
 }
 
+export type StrategyFamily =
+  | 'MARKET_STRUCTURE'
+  | 'LIQUIDITY_SWEEP'
+  | 'ORDER_BLOCK'
+  | 'FVG_IMBALANCE'
+  | 'FIBONACCI_OTE'
+  | 'BREAK_AND_RETEST'
+  | 'COUNTERTREND_SCALP'
+  | 'FAILED_BREAKOUT'
+  | 'RANGE_SFP_REVERSAL'
+  | 'RANGE_BREAKOUT_EXPANSION';
+
+export interface DuplicateDetails {
+  duplicateReason: 'DUPLICATE_ACTIVE_REENTRY' | 'DUPLICATE_ACTIVE';
+  activeSignalId: string;
+  candidateSignalId: string;
+  activeStrategyFamily: string;
+  candidateStrategyFamily: string;
+  samePoi: boolean;
+  sameStructuralOrigin: boolean;
+  sameTargetObjective: boolean;
+  sameLifecycle: boolean;
+  entryDistance: number;
+}
+
 export interface TradeSignal {
   id: string;
   timestamp: number;
@@ -213,6 +398,30 @@ export interface TradeSignal {
   nonExecutableReason?: string;
   positionSizing?: PositionSizingDetails;
   confidence: number; // 0 - 100
+  strategyConfidence?: number; // 0 - 100 structural edge
+  executionQualityScore?: number; // 0 - 100 operational execution quality
+  strategyFamily?: StrategyFamily | string;
+  duplicateReason?: string;
+  duplicateDetails?: DuplicateDetails;
+  structuralOrigin?: string;
+  targetObjective?: number;
+  entryTiming?: EntryTiming;
+  setupFreshness?: PoiFreshnessState;
+  pullbackQuality?: PullbackQuality;
+  tpRunway?: TpPathRunway;
+  lifecycleState?: CandidateLifecycleState;
+  poiId?: string;
+  triggers?: string[];
+  executionBreakdown?: {
+    timingScore: number;
+    triggerScore: number;
+    runwayScore: number;
+    pullbackScore: number;
+    freshnessScore: number;
+    slScore: number;
+  };
+  liquidityContext?: string;
+  actionTrigger?: string;
   timeframe: string; // "1H / 15M / 5M / 1M"
   setup: string; // Name of setup
   mainReasons: string[]; // 3 main reasons
@@ -251,15 +460,89 @@ export interface TradeLedgerItem {
   setup: string;
   result: 'OPEN' | 'WIN' | 'LOSS' | 'CANCELLED' | 'VOID' | 'EXPIRED';
   isActive?: boolean;
-  pl: number;
+  pl: number; // Stored numeric P&L (realized if closed, 0 if open)
+  realizedPnl?: number; // Authoritative realized P&L ($)
   balanceAfterTrade: number;
   exitPrice?: number;
   exitTime?: string;
+  closedAt?: number;
+  closeReason?: string;
+  source?: 'MANUAL' | 'TELEGRAM_CALLBACK' | 'MT5' | 'SYSTEM';
+  brokerDealId?: string;
+  brokerOrderId?: string;
+  theoreticalTp1Profit?: number;
+  theoreticalTp2Profit?: number;
   notes?: string;
   // Reinforcement/scale-in support
   reinforcements?: Reinforcement[];
   averageEntry?: number;
   totalRiskAmount?: number;
+  // Phase 4 Trade Management fields
+  managementState?: TradeManagementState;
+  lastManagementAction?: ManagementActionType;
+  lastManagementTimestamp?: number;
+  partialClosed?: boolean;
+  partialClosePercent?: number;
+  tp1HitTimestamp?: number;
+  reversalWatchTimestamp?: number;
+  suggestedSL?: number;
+  suggestedTP2?: number;
+}
+
+export type TradeManagementState =
+  | 'HOLD'
+  | 'TP1_APPROACHING'
+  | 'TP1_HIT'
+  | 'PROTECT_PROFIT'
+  | 'TRAIL_STOP'
+  | 'TARGET_EXTENSION'
+  | 'REVERSAL_WATCH'
+  | 'EARLY_EXIT'
+  | 'REVERSE_CANDIDATE'
+  | 'INVALIDATED'
+  | 'CLOSED';
+
+export type ManagementActionType =
+  | 'HOLD'
+  | 'PARTIAL_CLOSE_TP1'
+  | 'UPDATE_SL'
+  | 'UPDATE_TP2'
+  | 'REVERSAL_WATCH'
+  | 'EARLY_EXIT'
+  | 'REVERSE_POSITION';
+
+export interface ManagementAction {
+  actionType: ManagementActionType;
+  tradeId: string;
+  direction: 'BUY' | 'SELL';
+  currentPrice: number;
+  entryPrice: number;
+  oldSL: number;
+  newSL?: number;
+  oldTP1: number;
+  newTP1?: number;
+  oldTP2?: number;
+  newTP2?: number;
+  partialClosePercent?: number;
+  floatingPnl?: number;
+  currentR?: number;
+  managementState: TradeManagementState;
+  reason: string;
+  confidence: number;
+  timestamp: number;
+  source: 'DETERMINISTIC' | 'AI_REASONING' | 'HYBRID';
+  requiresConfirmation: boolean;
+  oppositeSetupCandidate?: {
+    direction: 'BUY' | 'SELL';
+    setupName: string;
+    entry: number;
+    stopLoss: number;
+    tp1: number;
+    tp2: number;
+    confidence: number;
+    score?: number;
+  };
+  telegramNotified?: boolean;
 }
 
 export interface AccountStats {

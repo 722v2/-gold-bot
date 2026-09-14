@@ -63,6 +63,7 @@ export interface MarketAnalysisInput {
   candles15m?: Candle[];
   losingStreak: number;
   brokerSpecs?: Partial<BrokerContractSpecs>;
+  activeTradeDirection?: 'BUY' | 'SELL' | null;
 }
 
 /**
@@ -96,6 +97,7 @@ export function algorithmicScreening(input: MarketAnalysisInput): {
     candles1m: input.recent1mCandles || [],
     losingStreak: input.losingStreak,
     brokerSpecs: input.brokerSpecs,
+    activeTradeDirection: input.activeTradeDirection,
   });
 
   if (candidateResult.hasValidSignal && candidateResult.selectedCandidate) {
@@ -222,6 +224,8 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
       ssl: indicators1h.liquidityLevels?.sellSideLiquidity || indicators1h.swingLow,
     },
     m15: {
+      marketRegime: indicators15m.marketRegime,
+      regimeContext: indicators15m.regimeContext,
       structure: indicators15m.structure,
       structureShift: indicators15m.structureShift || 'None',
       premiumDiscount: indicators15m.premiumDiscountZone,
@@ -257,17 +261,23 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
 
   const systemInstruction = `أنت AI Trading Agent فائق الذكاء ومحترف للغاية متخصص في تداول الذهب XAU/USD بنظام Scalping على حساب صغير (يبدأ من $10).
 القواعد الصارمة لمحرك التداول والأهداف الربحية:
-1. الهدف الأساسي: حماية رأس المال واختيار صفقات نوعية عالية الجودة بناءً على استراتيجيات الهيكل (Structure)، والسيولة (Liquidity Sweeps)، وOrder Blocks، وFVG، وFibonacci OTE.
-2. القرارات المسموحة فقط: "BUY NOW" أو "SELL NOW" أو "BUY LIMIT" أو "SELL LIMIT" أو "NO TRADE". قرار واحد حصرياً.
-3. حساب وقف الخسارة (SL):
+1. الهدف الأساسي: حماية رأس المال واختيار صفقات نوعية عالية الجودة بناءً على حالة السوق (Market Regime)، واستراتيجيات الهيكل (Structure)، والسيولة (Liquidity Sweeps)، وOrder Blocks، وFVG، وFibonacci OTE، واستمرار الترند (Trend Continuation)، واستراتيجيات النطاق (Range SFP Reversal & Breakout Expansion).
+2. تقييم بيئة السوق (Market Regime Awareness):
+   - STRONG_UPTREND / STRONG_DOWNTREND: ابحث عن فرص استمرار الترند مع التصحيح (Pullbacks).
+   - إذا كان السعر ممتداً بشكل مفرط (isOverextended=true)، لا تطارد السعر بالدخول المباشر؛ بل اختر انتظار التصحيح السطحي أو اعطِ قرار NO TRADE مؤقت لحين انتهاء التمدد.
+   - NORMAL_RANGE / VOLATILE_RANGE: النطاق العرضي لا يعني تلقائياً NO TRADE؛ ابحث عن سحب السيولة عند أطراف الرينج (Range High/Low sweeps & SFP) أو الكسر التوسعي الحقيقي (Breakout Expansion)، وتجنب الدخول العشوائي في منتصف النطاق (Equilibrium).
+   - TRANSITION: يتطلب تأكيد كسر الهيكل واستقراره قبل اتخاذ اتجاه جديد.
+   - UNCLEAR: لا توجد ميزة إحصائية واضحة؛ اختر NO TRADE لحماية رأس المال.
+3. القرارات المسموحة فقط: "BUY NOW" أو "SELL NOW" أو "BUY LIMIT" أو "SELL LIMIT" أو "NO TRADE". قرار واحد حصرياً.
+4. حساب وقف الخسارة (SL):
    - للذهب: 1 point = 0.10$ حركة سعر (abs(Entry - SL) / 0.10).
    - نطاق الـStop Loss الفني المسموح به هو من 35 إلى 65 نقطة.
-4. قواعد محرك الأهداف الهيكلية (Dynamic TP Engine Rules):
-   - الهدف الأول (TP1): يجب أن يحقق نسبة عائد لا تقل عن ${minRr}R (حيث R = مسافة الـSL).
-   - الهدف الثاني (TP2): 2.5R أو 3R فما فوق لاستهداف سيولة هيكلية أبعد.
+5. قواعد محرك الأهداف الهيكلية والامتدادية (Dynamic TP Engine Rules):
+   - الهدف الأول (TP1): يجب أن يحقق نسبة عائد لا تقل عن ${minRr}R (حيث R = مسافة الـSL)، سواء تم تحديده من مستويات هيكلية سابقة أو امتدادات فيبوناتشي / ATR في حال كسر القمم/القيعان التاريخية.
+   - الهدف الثاني (TP2): 2.5R أو 3R فما فوق لاستهداف سيولة هيكلية أو امتدادية أبعد.
    - إذا تم توفير مرشحات استراتيجية صالحة في "topCandidates"، قم بتقييمها واختيار الأقوى أو تأكيدها.
-5. الثقة (Confidence): من 70 إلى 96 للصفقات الصالحة.
-6. في حال عدم وجود فرصة حقيقية أو تذبذب في منتصف الرينج، اختر "NO TRADE" واذكر السبب بالتفصيل.`;
+6. الثقة (Confidence): من 70 إلى 96 للصفقات الصالحة.
+7. في حال عدم وجود فرصة حقيقية أو تذبذب في منتصف الرينج، اختر "NO TRADE" واذكر السبب بالتفصيل.`;
 
   isAiCallRunning = true;
   try {

@@ -13,6 +13,8 @@ interface PriceActionCardProps {
   provider?: string;
   atr?: number;
   structure?: string;
+  marketRegime?: string;
+  isOverextended?: boolean;
   lastBar?: {
     open: number;
     high: number;
@@ -40,6 +42,8 @@ export const PriceActionCard = ({
   provider = 'Biquote',
   atr = 2.4,
   structure = 'BULLISH',
+  marketRegime,
+  isOverextended,
   lastBar,
   lastUpdated,
   isConnected = true,
@@ -126,23 +130,46 @@ export const PriceActionCard = ({
         </div>
 
         <div className="text-right flex flex-col items-end gap-1">
-          <span className="text-[10px] text-stone-400 uppercase tracking-wider">
-            Structure (الهيكل)
-          </span>
-          <span
-            className={`text-xs font-semibold px-2 py-0.5 rounded-md border ${
-              structure === 'BULLISH'
-                ? 'bg-emerald-950/40 text-emerald-400 border-emerald-800/50'
-                : structure === 'BEARISH'
-                ? 'bg-rose-950/40 text-rose-400 border-rose-800/50'
-                : 'bg-stone-800 text-stone-300 border-stone-700'
-            }`}
-          >
-            {structure}
-          </span>
-          <span className="text-[10px] text-stone-400 font-mono">
-            ATR(14): ${atr.toFixed(2)}
-          </span>
+          <div className="flex items-center gap-1.5">
+            {marketRegime && (
+              <span
+                className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                  marketRegime.includes('UPTREND')
+                    ? 'bg-emerald-950/60 text-emerald-300 border-emerald-700/60'
+                    : marketRegime.includes('DOWNTREND')
+                    ? 'bg-rose-950/60 text-rose-300 border-rose-700/60'
+                    : marketRegime.includes('RANGE')
+                    ? 'bg-amber-950/60 text-amber-300 border-amber-700/60'
+                    : 'bg-stone-800 text-stone-300 border-stone-700'
+                }`}
+              >
+                {marketRegime}
+              </span>
+            )}
+            <span
+              className={`text-xs font-semibold px-2 py-0.5 rounded-md border ${
+                structure === 'BULLISH'
+                  ? 'bg-emerald-950/40 text-emerald-400 border-emerald-800/50'
+                  : structure === 'BEARISH'
+                  ? 'bg-rose-950/40 text-rose-400 border-rose-800/50'
+                  : 'bg-stone-800 text-stone-300 border-stone-700'
+              }`}
+            >
+              {structure}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {isOverextended && (
+              <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                ممتد (Pullback Wait)
+              </span>
+            )}
+            <span className="text-[10px] text-stone-400 font-mono">
+              ATR(14): ${atr.toFixed(2)}
+            </span>
+          </div>
+
           {high !== undefined && low !== undefined && (
             <span className="text-[9px] text-stone-500 font-mono">
               H: {high.toFixed(1)} / L: {low.toFixed(1)}

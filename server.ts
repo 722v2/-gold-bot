@@ -16,6 +16,9 @@ import { storage } from './server/storage.js';
 import { mt5Bridge } from './server/mt5Bridge.js';
 import { telegramService } from './server/telegram.js';
 import { tradeMonitor } from './server/tradeMonitor.js';
+import { tradeManagementEngine } from './server/tradeManagementEngine.js';
+import { runTradeManagementTests } from './server/tradeManagementTests.js';
+import { runAccountingTests } from './server/accountingTests.js';
 
 async function startServer() {
   const app = express();
@@ -142,6 +145,8 @@ async function startServer() {
         asset,
         currentPrice: mtfData.currentPrice,
         marketState,
+        marketRegime: ind15m.marketRegime,
+        regimeContext: ind15m.regimeContext,
         h1: {
           trend: ind1h.structure, // BULLISH | BEARISH | RANGING
           rsi: ind1h.rsi14,
@@ -208,6 +213,8 @@ async function startServer() {
           currentPrice: marketData.currentPrice,
           h1Structure: ind1h.structure,
           m15Zone: ind15m.premiumDiscountZone,
+          marketRegime: ind15m.marketRegime,
+          regimeContext: ind15m.regimeContext,
           m5Atr: ind5m.atr14,
           m5Rsi: ind5m.rsi14,
           support: ind15m.support,
@@ -825,6 +832,46 @@ async function startServer() {
     }
   });
 
+  // Phase 4: Trade Management Test Suite
+  app.get('/api/trade-management/tests', async (req, res) => {
+    try {
+      const testReport = await runTradeManagementTests();
+      res.json({ success: true, ...testReport });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // Phase 4: Trade Management Status
+  app.get('/api/trade-management/status', (req, res) => {
+    try {
+      const openTrades = storage.getTrades(300).filter((t) => t.result === 'OPEN' && t.isActive !== false);
+      const settings = storage.getSettings();
+      res.json({
+        success: true,
+        enabled: settings.enableTradeManagement !== false,
+        partialClosePercent: settings.partialClosePercent || 50,
+        autoTradingEnabled: settings.autoTradingEnabled === true,
+        activeTradesCount: openTrades.length,
+        activeTrades: openTrades.map((t) => ({
+          id: t.id,
+          direction: t.direction,
+          entry: t.entry,
+          sl: t.sl,
+          tp1: t.tp1,
+          tp2: t.tp2,
+          managementState: t.managementState || 'HOLD',
+          lastAction: t.lastManagementAction,
+          partialClosed: t.partialClosed || false,
+          suggestedSL: t.suggestedSL,
+          suggestedTP2: t.suggestedTP2,
+        })),
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
   // External 24/7 Cron Tick Webhook (Requirement 11)
   // Can be called every 60s by Cloud Scheduler, cron-job.org, GitHub Actions, or UptimeRobot
   const handleCronTick = async (req: express.Request, res: express.Response) => {
@@ -883,7 +930,7 @@ async function startServer() {
   // Manual or programmatic trade outcome recording endpoint
   app.post('/api/telegram/record-outcome', (req, res) => {
     try {
-      const { signalId, outcome } = req.body || {};
+      const { signalId, outcome, realizedPnl, exitPrice, source, brokerDealId, brokerOrderId, closeReason } = req.body || {};
       if (!signalId || (outcome !== 'WIN' && outcome !== 'LOSS')) {
         return res.status(400).json({ success: false, error: 'signalId and outcome (WIN or LOSS) are required' });
       }
@@ -899,6 +946,13 @@ async function startServer() {
         tp1: signal?.tp1 ?? 0,
         tp2: signal?.tp2 ?? 0,
         outcome,
+        realizedPnl: realizedPnl !== undefined ? Number(realizedPnl) : undefined,
+        exitPrice: exitPrice !== undefined ? Number(exitPrice) : undefined,
+        source: source || 'MANUAL',
+        brokerDealId,
+        brokerOrderId,
+        closeReason,
+        closedAt: Date.now(),
         timestamp: Date.now(),
         isoTime: new Date().toISOString(),
       };
@@ -907,6 +961,47 @@ async function startServer() {
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message || 'Failed to record outcome' });
+    }
+  });
+
+  // Future MT5 trade reconciliation endpoint
+  app.post('/api/mt5/reconcile', (req, res) => {
+    try {
+      const { signalOrTradeId, brokerDealId, brokerOrderId, entryPrice, exitPrice, lotSize, realizedPnl, closedAt, closeReason, direction } = req.body || {};
+      if (!signalOrTradeId || !brokerDealId || realizedPnl === undefined || exitPrice === undefined) {
+        return res.status(400).json({ success: false, error: 'signalOrTradeId, brokerDealId, exitPrice, and realizedPnl are required' });
+      }
+
+      const result = storage.reconcileMt5Trade({
+        signalOrTradeId,
+        brokerDealId,
+        brokerOrderId,
+        entryPrice: entryPrice ? Number(entryPrice) : undefined,
+        exitPrice: Number(exitPrice),
+        lotSize: lotSize ? Number(lotSize) : undefined,
+        realizedPnl: Number(realizedPnl),
+        closedAt: closedAt ? Number(closedAt) : Date.now(),
+        closeReason,
+        direction,
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || 'Failed to reconcile MT5 trade' });
+    }
+  });
+
+  // Accounting and P&L diagnostic test suite endpoint
+  app.get('/api/tests/accounting', (req, res) => {
+    try {
+      const suiteResult = runAccountingTests();
+      res.json({
+        success: true,
+        allPassed: suiteResult.allPassed,
+        results: suiteResult.results,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || 'Failed to run accounting tests' });
     }
   });
 

@@ -41,6 +41,8 @@ interface DashboardViewProps {
   candles?: Candle[];
   atr?: number;
   structure?: string;
+  marketRegime?: string;
+  isOverextended?: boolean;
   isLiveConnected?: boolean;
   hasGeminiKey?: boolean;
   workerUptimeFormatted?: string;
@@ -52,6 +54,8 @@ interface DashboardViewProps {
   isAnalyzing?: boolean;
   multitimeframe?: {
     marketState: 'TREND' | 'RANGE' | 'CONSOLIDATION';
+    marketRegime?: string;
+    regimeContext?: any;
     h1Trend: string;
     m15Structure: string;
     m5Atr: number;
@@ -66,6 +70,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   candles = [],
   atr = 2.4,
   structure = 'BULLISH',
+  marketRegime,
+  isOverextended,
   isLiveConnected = false,
   hasGeminiKey = true,
   workerUptimeFormatted = 'Active',
@@ -87,6 +93,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const displayPrice = typeof currentPrice === 'number' ? currentPrice : 2718.5;
   const displayAtr = typeof atr === 'number' ? atr : typeof multitimeframe?.m5Atr === 'number' ? multitimeframe.m5Atr : 2.4;
   const marketState = multitimeframe?.marketState || (structure === 'RANGING' ? 'RANGE' : 'TREND');
+  const resolvedRegime = marketRegime || multitimeframe?.marketRegime || (structure === 'RANGING' ? 'NORMAL_RANGE' : structure === 'BULLISH' ? 'STRONG_UPTREND' : 'STRONG_DOWNTREND');
+  const isPriceOverextended = isOverextended || multitimeframe?.regimeContext?.isOverextended || false;
   const h1Trend = multitimeframe?.h1Trend || structure;
   const m15Structure = multitimeframe?.m15Structure || (structure === 'BULLISH' ? 'DISCOUNT' : 'PREMIUM');
 
@@ -494,25 +502,42 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span className="text-[10px] text-stone-400 block mt-1">متوسط حركة الشمعة</span>
           </div>
 
-          {/* Market State */}
+          {/* Market Regime */}
           <div className="bg-stone-950/80 border border-stone-800/90 rounded-xl p-3">
             <div className="flex items-center justify-between text-[11px] text-stone-400 mb-1">
-              <span className="font-mono font-bold">Market State</span>
+              <span className="font-mono font-bold">Regime (البيئة)</span>
               <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
             </div>
-            <span
-              className={`text-xs sm:text-sm font-mono font-black ${
-                marketState === 'TREND'
-                  ? 'text-emerald-400'
-                  : marketState === 'RANGE'
-                  ? 'text-amber-400'
-                  : 'text-stone-300'
-              }`}
-            >
-              {marketState}
-            </span>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span
+                className={`text-[11px] sm:text-xs font-mono font-black ${
+                  resolvedRegime.includes('UPTREND')
+                    ? 'text-emerald-400'
+                    : resolvedRegime.includes('DOWNTREND')
+                    ? 'text-rose-400'
+                    : resolvedRegime.includes('RANGE')
+                    ? 'text-amber-400'
+                    : 'text-stone-300'
+                }`}
+              >
+                {resolvedRegime}
+              </span>
+              {isPriceOverextended && (
+                <span className="text-[8px] font-bold px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  EXTENDED
+                </span>
+              )}
+            </div>
             <span className="text-[10px] text-stone-400 block mt-1">
-              {marketState === 'TREND' ? 'اتجاه واضح' : marketState === 'RANGE' ? 'نطاق تذبذب' : 'تجميع سيولة'}
+              {resolvedRegime.includes('STRONG')
+                ? 'زخم قوي للترند'
+                : resolvedRegime.includes('WEAK')
+                ? 'ترند ضعيف / تصحيحي'
+                : resolvedRegime.includes('RANGE')
+                ? 'نطاق تداول عرضي'
+                : resolvedRegime.includes('TRANSITION')
+                ? 'تحول هيكلي محتمل'
+                : 'حالة السوق الحالية'}
             </span>
           </div>
         </div>

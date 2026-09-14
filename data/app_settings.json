@@ -30,5 +30,7 @@
   "minGoldSlPoints": 40,
   "maxGoldSlPoints": 50,
   "maxLoss": 5,
+  "partialClosePercent": 50,
+  "enableTradeManagement": true,
   "updatedAt": 1789375263970
 }

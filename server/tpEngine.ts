@@ -19,7 +19,10 @@ export type StructuralSourceType =
   | '15M_OB'
   | '15M_FVG'
   | '15M_BB'
-  | 'SESSION_LIQUIDITY';
+  | 'SESSION_LIQUIDITY'
+  | 'FIB_EXTENSION_1272'
+  | 'FIB_EXTENSION_1618'
+  | 'ATR_PROJECTION';
 
 export interface StructuralLevel {
   price: number;
@@ -185,125 +188,250 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
   // A. 15M Swing Pivots (Priority 1)
   if (isBuy && indicators15m.swingHigh > entry) {
     const dist = Number((indicators15m.swingHigh - entry).toFixed(2));
-    candidateLevels.push({
-      price: Number(indicators15m.swingHigh.toFixed(2)),
-      type: '15M_SWING',
-      priority: 1,
-      name: '15M Swing High Pivot',
-      distance: dist,
-      rr: Number((dist / slDistance).toFixed(2)),
-    });
+    const rr = Number((dist / slDistance).toFixed(2));
+    if (rr >= minRr) {
+      candidateLevels.push({
+        price: Number(indicators15m.swingHigh.toFixed(2)),
+        type: '15M_SWING',
+        priority: 1,
+        name: '15M Swing High Pivot',
+        distance: dist,
+        rr,
+      });
+    }
   } else if (!isBuy && indicators15m.swingLow < entry) {
     const dist = Number((entry - indicators15m.swingLow).toFixed(2));
-    candidateLevels.push({
-      price: Number(indicators15m.swingLow.toFixed(2)),
-      type: '15M_SWING',
-      priority: 1,
-      name: '15M Swing Low Pivot',
-      distance: dist,
-      rr: Number((dist / slDistance).toFixed(2)),
-    });
+    const rr = Number((dist / slDistance).toFixed(2));
+    if (rr >= minRr) {
+      candidateLevels.push({
+        price: Number(indicators15m.swingLow.toFixed(2)),
+        type: '15M_SWING',
+        priority: 1,
+        name: '15M Swing Low Pivot',
+        distance: dist,
+        rr,
+      });
+    }
   }
 
   // B. 24H Session High / Low Liquidity (Priority 1)
   if (candles1h.length > 0) {
     const sessionCandles = candles1h.slice(-24);
-    const sessionHigh = Math.max(...sessionCandles.map((c) => c.high));
-    const sessionLow = Math.min(...sessionCandles.map((c) => c.low));
+    const priorSessionCandles = sessionCandles.length > 2 ? sessionCandles.slice(0, -1) : sessionCandles;
+    const sessionHigh = Math.max(...priorSessionCandles.map((c) => c.high));
+    const sessionLow = Math.min(...priorSessionCandles.map((c) => c.low));
 
     if (isBuy && sessionHigh > entry && sessionHigh - entry <= 4.0 * atr1h) {
       const dist = Number((sessionHigh - entry).toFixed(2));
-      candidateLevels.push({
-        price: Number(sessionHigh.toFixed(2)),
-        type: 'SESSION_LIQUIDITY',
-        priority: 1,
-        name: '24H Session High Liquidity',
-        distance: dist,
-        rr: Number((dist / slDistance).toFixed(2)),
-      });
+      const rr = Number((dist / slDistance).toFixed(2));
+      if (rr >= minRr) {
+        candidateLevels.push({
+          price: Number(sessionHigh.toFixed(2)),
+          type: 'SESSION_LIQUIDITY',
+          priority: 1,
+          name: '24H Session High Liquidity',
+          distance: dist,
+          rr,
+        });
+      }
     } else if (!isBuy && sessionLow < entry && entry - sessionLow <= 4.0 * atr1h) {
       const dist = Number((entry - sessionLow).toFixed(2));
-      candidateLevels.push({
-        price: Number(sessionLow.toFixed(2)),
-        type: 'SESSION_LIQUIDITY',
-        priority: 1,
-        name: '24H Session Low Liquidity',
-        distance: dist,
-        rr: Number((dist / slDistance).toFixed(2)),
-      });
+      const rr = Number((dist / slDistance).toFixed(2));
+      if (rr >= minRr) {
+        candidateLevels.push({
+          price: Number(sessionLow.toFixed(2)),
+          type: 'SESSION_LIQUIDITY',
+          priority: 1,
+          name: '24H Session Low Liquidity',
+          distance: dist,
+          rr,
+        });
+      }
     }
   }
 
   // C. 15M Order Block Target (Priority 2)
   if (isBuy && indicators15m.orderBlock?.type === 'BEARISH' && indicators15m.orderBlock.low > entry) {
     const dist = Number((indicators15m.orderBlock.low - entry).toFixed(2));
-    candidateLevels.push({
-      price: Number(indicators15m.orderBlock.low.toFixed(2)),
-      type: '15M_OB',
-      priority: 2,
-      name: '15M Bearish Order Block Base',
-      distance: dist,
-      rr: Number((dist / slDistance).toFixed(2)),
-    });
+    const rr = Number((dist / slDistance).toFixed(2));
+    if (rr >= minRr) {
+      candidateLevels.push({
+        price: Number(indicators15m.orderBlock.low.toFixed(2)),
+        type: '15M_OB',
+        priority: 2,
+        name: '15M Bearish Order Block Base',
+        distance: dist,
+        rr,
+      });
+    }
   } else if (!isBuy && indicators15m.orderBlock?.type === 'BULLISH' && indicators15m.orderBlock.high < entry) {
     const dist = Number((entry - indicators15m.orderBlock.high).toFixed(2));
-    candidateLevels.push({
-      price: Number(indicators15m.orderBlock.high.toFixed(2)),
-      type: '15M_OB',
-      priority: 2,
-      name: '15M Bullish Order Block Top',
-      distance: dist,
-      rr: Number((dist / slDistance).toFixed(2)),
-    });
+    const rr = Number((dist / slDistance).toFixed(2));
+    if (rr >= minRr) {
+      candidateLevels.push({
+        price: Number(indicators15m.orderBlock.high.toFixed(2)),
+        type: '15M_OB',
+        priority: 2,
+        name: '15M Bullish Order Block Top',
+        distance: dist,
+        rr,
+      });
+    }
   }
 
   // D. 15M FVG Target (Priority 3)
   if (isBuy && indicators15m.fvg?.type === 'BEARISH' && indicators15m.fvg.bottom > entry) {
     const dist = Number((indicators15m.fvg.bottom - entry).toFixed(2));
-    candidateLevels.push({
-      price: Number(indicators15m.fvg.bottom.toFixed(2)),
-      type: '15M_FVG',
-      priority: 3,
-      name: '15M Bearish FVG Entry Zone',
-      distance: dist,
-      rr: Number((dist / slDistance).toFixed(2)),
-    });
+    const rr = Number((dist / slDistance).toFixed(2));
+    if (rr >= minRr) {
+      candidateLevels.push({
+        price: Number(indicators15m.fvg.bottom.toFixed(2)),
+        type: '15M_FVG',
+        priority: 3,
+        name: '15M Bearish FVG Entry Zone',
+        distance: dist,
+        rr,
+      });
+    }
   } else if (!isBuy && indicators15m.fvg?.type === 'BULLISH' && indicators15m.fvg.top < entry) {
     const dist = Number((entry - indicators15m.fvg.top).toFixed(2));
-    candidateLevels.push({
-      price: Number(indicators15m.fvg.top.toFixed(2)),
-      type: '15M_FVG',
-      priority: 3,
-      name: '15M Bullish FVG Entry Zone',
-      distance: dist,
-      rr: Number((dist / slDistance).toFixed(2)),
-    });
+    const rr = Number((dist / slDistance).toFixed(2));
+    if (rr >= minRr) {
+      candidateLevels.push({
+        price: Number(indicators15m.fvg.top.toFixed(2)),
+        type: '15M_FVG',
+        priority: 3,
+        name: '15M Bullish FVG Entry Zone',
+        distance: dist,
+        rr,
+      });
+    }
   }
 
   // E. 15M Bollinger Band Extreme (Priority 4)
   if (isBuy && indicators15m.bollingerBands.upper > entry) {
     const dist = Number((indicators15m.bollingerBands.upper - entry).toFixed(2));
-    candidateLevels.push({
-      price: Number(indicators15m.bollingerBands.upper.toFixed(2)),
-      type: '15M_BB',
-      priority: 4,
-      name: '15M Upper Volatility Band',
-      distance: dist,
-      rr: Number((dist / slDistance).toFixed(2)),
-    });
+    const rr = Number((dist / slDistance).toFixed(2));
+    if (rr >= minRr) {
+      candidateLevels.push({
+        price: Number(indicators15m.bollingerBands.upper.toFixed(2)),
+        type: '15M_BB',
+        priority: 4,
+        name: '15M Upper Volatility Band',
+        distance: dist,
+        rr,
+      });
+    }
   } else if (!isBuy && indicators15m.bollingerBands.lower < entry) {
     const dist = Number((entry - indicators15m.bollingerBands.lower).toFixed(2));
-    candidateLevels.push({
-      price: Number(indicators15m.bollingerBands.lower.toFixed(2)),
-      type: '15M_BB',
-      priority: 4,
-      name: '15M Lower Volatility Band',
-      distance: dist,
-      rr: Number((dist / slDistance).toFixed(2)),
-    });
+    const rr = Number((dist / slDistance).toFixed(2));
+    if (rr >= minRr) {
+      candidateLevels.push({
+        price: Number(indicators15m.bollingerBands.lower.toFixed(2)),
+        type: '15M_BB',
+        priority: 4,
+        name: '15M Lower Volatility Band',
+        distance: dist,
+        rr,
+      });
+    }
   }
 
-  // If no genuine structural candidates exist ahead of entry
+  // D. Dynamic Extension Targets (Fibonacci 1.272 / 1.618 & ATR projection)
+  // Used when price is breaking out into all-time/session highs/lows or no structural target exists ahead
+  const swingRange = Math.abs(indicators15m.swingHigh - indicators15m.swingLow);
+  if (isBuy) {
+    // 1. Fib 1.272 Extension
+    if (swingRange > atr15m * 0.8) {
+      const fib1272 = Number((indicators15m.swingLow + swingRange * 1.272).toFixed(2));
+      const dist1272 = Number((fib1272 - entry).toFixed(2));
+      if (fib1272 > entry && (dist1272 / slDistance) >= minRr) {
+        candidateLevels.push({
+          price: fib1272,
+          type: 'FIB_EXTENSION_1272',
+          priority: 5,
+          name: 'Fibonacci 1.272 Extension Target',
+          distance: dist1272,
+          rr: Number((dist1272 / slDistance).toFixed(2)),
+        });
+      }
+
+      // 2. Fib 1.618 Extension
+      const fib1618 = Number((indicators15m.swingLow + swingRange * 1.618).toFixed(2));
+      const dist1618 = Number((fib1618 - entry).toFixed(2));
+      if (fib1618 > entry && (dist1618 / slDistance) >= minRr) {
+        candidateLevels.push({
+          price: fib1618,
+          type: 'FIB_EXTENSION_1618',
+          priority: 5,
+          name: 'Fibonacci 1.618 Extension Target',
+          distance: dist1618,
+          rr: Number((dist1618 / slDistance).toFixed(2)),
+        });
+      }
+    }
+
+    // 3. Dynamic ATR Projection (1.5x - 2.5x ATR1H projection above entry)
+    const atrProj1 = Number((entry + Math.max(minRr * slDistance, atr1h * 1.5)).toFixed(2));
+    const distAtr1 = Number((atrProj1 - entry).toFixed(2));
+    if (distAtr1 > 0) {
+      candidateLevels.push({
+        price: atrProj1,
+        type: 'ATR_PROJECTION',
+        priority: 6,
+        name: 'Dynamic ATR Projection Target',
+        distance: distAtr1,
+        rr: Number((distAtr1 / slDistance).toFixed(2)),
+      });
+    }
+  } else {
+    // SELL
+    // 1. Fib 1.272 Extension
+    if (swingRange > atr15m * 0.8) {
+      const fib1272 = Number((indicators15m.swingHigh - swingRange * 1.272).toFixed(2));
+      const dist1272 = Number((entry - fib1272).toFixed(2));
+      if (fib1272 < entry && (dist1272 / slDistance) >= minRr) {
+        candidateLevels.push({
+          price: fib1272,
+          type: 'FIB_EXTENSION_1272',
+          priority: 5,
+          name: 'Fibonacci 1.272 Extension Target',
+          distance: dist1272,
+          rr: Number((dist1272 / slDistance).toFixed(2)),
+        });
+      }
+
+      // 2. Fib 1.618 Extension
+      const fib1618 = Number((indicators15m.swingHigh - swingRange * 1.618).toFixed(2));
+      const dist1618 = Number((entry - fib1618).toFixed(2));
+      if (fib1618 < entry && (dist1618 / slDistance) >= minRr) {
+        candidateLevels.push({
+          price: fib1618,
+          type: 'FIB_EXTENSION_1618',
+          priority: 5,
+          name: 'Fibonacci 1.618 Extension Target',
+          distance: dist1618,
+          rr: Number((dist1618 / slDistance).toFixed(2)),
+        });
+      }
+    }
+
+    // 3. Dynamic ATR Projection (1.5x - 2.5x ATR1H projection below entry)
+    const atrProj1 = Number((entry - Math.max(minRr * slDistance, atr1h * 1.5)).toFixed(2));
+    const distAtr1 = Number((entry - atrProj1).toFixed(2));
+    if (distAtr1 > 0) {
+      candidateLevels.push({
+        price: atrProj1,
+        type: 'ATR_PROJECTION',
+        priority: 6,
+        name: 'Dynamic ATR Projection Target',
+        distance: distAtr1,
+        rr: Number((distAtr1 / slDistance).toFixed(2)),
+      });
+    }
+  }
+
+  // If no genuine structural candidates or extensions exist ahead of entry
   if (candidateLevels.length === 0) {
     return {
       valid: false,
@@ -321,19 +449,19 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
       tp2RrString: '1:0',
       tp1TargetName: 'None',
       tp2TargetName: 'None',
-      tpSelectionReason: 'لا يوجد أي مستوى هيكلي حقيقي متاح أمام السعر -> NO TRADE',
+      tpSelectionReason: 'لا يوجد أي مستوى فني أو امتداد متاح أمام السعر -> NO TRADE',
       structuralTargetUsed: 'None',
       passedVolatilityCheck: false,
       atrAtEntry,
       noFutureDataUsed: true,
-      rejectionReason: 'غياب الأهداف الهيكلية الصالحة في اتجاه الصفقة.',
+      rejectionReason: 'غياب الأهداف الفنية والامتدادية في اتجاه الصفقة.',
       rawStructuralTarget: entry,
       finalTp1: entry,
       targetSourceType: 'NONE',
       targetDistance: 0,
       actualRr: 0,
       isModified: false,
-      modificationReason: 'No structural candidate found in trade direction',
+      modificationReason: 'No target candidate found in trade direction',
     };
   }
 
