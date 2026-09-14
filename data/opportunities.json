@@ -1,1 +1,17 @@
-[]
+[
+  {
+    "id": "opp_double_bottom_reversal__w_formation__BUY_4295",
+    "setupName": "Double Bottom Reversal (W-Formation)",
+    "strategyFamily": "UNKNOWN",
+    "direction": "BUY",
+    "timeframe": "15M / 5M",
+    "status": "ACTIVE",
+    "firstObservedTime": 1789418950189,
+    "lastUpdatedTime": 1789418950189,
+    "entry": 4296.56,
+    "stopLoss": 4292.56,
+    "tp1": 4318.08,
+    "tp2": 4320.71,
+    "confidence": 77
+  }
+]

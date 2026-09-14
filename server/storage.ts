@@ -162,6 +162,7 @@ class PersistentStorage {
   private firestoreDb: Firestore | null = null;
   private isReady = false;
   private initPromise: Promise<void>;
+  private isTestMode = false;
 
   private inMemoryScans: ScanRecord[] = [];
   private inMemorySignals: TradeSignal[] = [];
@@ -180,7 +181,19 @@ class PersistentStorage {
   private inMemoryOpportunities: Map<string, TradeOpportunity> = new Map();
 
   constructor() {
+    this.isTestMode = process.env.IS_TESTING === 'true';
     this.initPromise = this.init();
+  }
+
+  public setTestingMode(val: boolean): void {
+    this.isTestMode = val;
+    if (val) {
+      console.log('[Storage] ENTERED TEST MODE. All writes are in-memory only and isolated from Firestore / JSON files.');
+    }
+  }
+
+  private shouldPersist(): boolean {
+    return !this.isTestMode && process.env.IS_TESTING !== 'true';
   }
 
   public async waitUntilReady(): Promise<void> {
@@ -481,6 +494,9 @@ class PersistentStorage {
   }
 
   private syncJsonBackups(): void {
+    if (!this.shouldPersist()) {
+      return;
+    }
     try {
       if (!fs.existsSync(DATA_DIR)) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -529,7 +545,7 @@ class PersistentStorage {
       }
 
       // Asynchronous non-blocking Firestore write
-      if (this.firestoreDb && record.id) {
+      if (this.firestoreDb && this.shouldPersist() && record.id) {
         setDoc(doc(this.firestoreDb, 'scans', record.id), sanitizeFirestoreData(record)).catch((err) => {
           console.error(`[Storage] Firestore saveScan error for ${record.id}:`, err?.message || err);
         });
@@ -567,7 +583,7 @@ class PersistentStorage {
       }
 
       // Asynchronous non-blocking Firestore write
-      if (this.firestoreDb && signal.id) {
+      if (this.firestoreDb && this.shouldPersist() && signal.id) {
         setDoc(doc(this.firestoreDb, 'signals', signal.id), sanitizeFirestoreData(signal)).catch((err) => {
           console.error(`[Storage] Firestore saveSignal error for ${signal.id}:`, err?.message || err);
         });
@@ -611,7 +627,7 @@ class PersistentStorage {
       }
 
       // Asynchronous Firestore write
-      if (this.firestoreDb && tradeWithActive.id) {
+      if (this.firestoreDb && this.shouldPersist() && tradeWithActive.id) {
         setDoc(doc(this.firestoreDb, 'trade_ledger', tradeWithActive.id), sanitizeFirestoreData(tradeWithActive)).catch((err) => {
           console.error(`[Storage] Firestore saveTrade error for ${tradeWithActive.id}:`, err?.message || err);
         });
@@ -817,7 +833,7 @@ class PersistentStorage {
       }
 
       // Firestore persistence
-      if (this.firestoreDb) {
+      if (this.firestoreDb && this.shouldPersist()) {
         setDoc(doc(this.firestoreDb, 'trade_outcomes', record.signalId), sanitizeFirestoreData(record)).catch((err) => {
           console.error('[Storage] Firestore recordTradeOutcome error:', err);
         });
@@ -1003,7 +1019,7 @@ class PersistentStorage {
     if (typeof starting === 'number' && !isNaN(starting) && starting > 0) {
       this.inMemoryStartingBalance = Number(starting.toFixed(2));
       this.inMemorySettings.manualCapital = this.inMemoryStartingBalance;
-      if (this.firestoreDb) {
+      if (this.firestoreDb && this.shouldPersist()) {
         setDoc(doc(this.firestoreDb, 'app_settings', 'main'), sanitizeFirestoreData({
           ...this.inMemorySettings,
           updatedAt: Date.now(),
@@ -1013,7 +1029,7 @@ class PersistentStorage {
       }
     }
 
-    if (this.firestoreDb) {
+    if (this.firestoreDb && this.shouldPersist()) {
       setDoc(doc(this.firestoreDb, 'account_state', 'main'), sanitizeFirestoreData({
         currentBalance: this.inMemoryCurrentBalance,
         startingBalance: this.inMemoryStartingBalance,
@@ -1057,7 +1073,7 @@ class PersistentStorage {
             this.inMemoryCurrentBalance = Number((this.inMemoryStartingBalance + totalPl).toFixed(2));
           }
 
-          if (this.firestoreDb) {
+          if (this.firestoreDb && this.shouldPersist()) {
             setDoc(doc(this.firestoreDb, 'account_state', 'main'), sanitizeFirestoreData({
               currentBalance: this.inMemoryCurrentBalance,
               startingBalance: this.inMemoryStartingBalance,
@@ -1069,7 +1085,7 @@ class PersistentStorage {
         }
       }
 
-      if (this.firestoreDb) {
+      if (this.firestoreDb && this.shouldPersist()) {
         setDoc(doc(this.firestoreDb, 'app_settings', 'main'), sanitizeFirestoreData({
           ...this.inMemorySettings,
           updatedAt: Date.now(),
@@ -1107,7 +1123,7 @@ class PersistentStorage {
   public saveTerminalSetup(key: string): void {
     if (!key) return;
     this.inMemoryTerminalSetups.add(key);
-    if (this.firestoreDb) {
+    if (this.firestoreDb && this.shouldPersist()) {
       setDoc(doc(this.firestoreDb, 'terminal_setups', key.replace(/\//g, '_')), {
         key,
         createdAt: Date.now(),
@@ -1128,7 +1144,7 @@ class PersistentStorage {
   public saveTelegramDispatch(key: string): void {
     if (!key) return;
     this.inMemoryTelegramDispatches.add(key);
-    if (this.firestoreDb) {
+    if (this.firestoreDb && this.shouldPersist()) {
       setDoc(doc(this.firestoreDb, 'telegram_dispatches', key.replace(/\//g, '_')), {
         key,
         dispatchedAt: Date.now(),
@@ -1194,7 +1210,7 @@ class PersistentStorage {
           this.inMemoryCurrentBalance = newBalance;
         }
 
-        if (this.firestoreDb) {
+        if (this.firestoreDb && this.shouldPersist()) {
           setDoc(doc(this.firestoreDb, 'trade_ledger', id), sanitizeFirestoreData(this.inMemoryTrades[idx])).catch((err) => {
             console.error(`[Storage] Firestore closeTrade error for ${id}:`, err);
           });
@@ -1224,7 +1240,7 @@ class PersistentStorage {
       const totalPl = Number(closedTrades.reduce((acc, t) => acc + (t.pl || 0), 0).toFixed(2));
       this.inMemoryCurrentBalance = closedTrades.length === 0 ? this.inMemoryStartingBalance : Number((this.inMemoryStartingBalance + totalPl).toFixed(2));
 
-      if (this.firestoreDb) {
+      if (this.firestoreDb && this.shouldPersist()) {
         deleteDoc(doc(this.firestoreDb, 'trade_ledger', id)).catch((err) => {
           console.error(`[Storage] Firestore deleteTrade error for ${id}:`, err);
         });
@@ -1290,7 +1306,7 @@ class PersistentStorage {
         this.inMemoryPois.shift();
       }
     }
-    if (this.firestoreDb) {
+    if (this.firestoreDb && this.shouldPersist()) {
       setDoc(doc(this.firestoreDb, 'poi_records', poi.id), sanitizeFirestoreData(poi)).catch((err) => {
         console.error(`[Storage] Firestore savePoi error for ${poi.id}:`, err);
       });
@@ -1320,7 +1336,7 @@ class PersistentStorage {
         this.inMemoryLifecycles.shift();
       }
     }
-    if (this.firestoreDb) {
+    if (this.firestoreDb && this.shouldPersist()) {
       setDoc(doc(this.firestoreDb, 'candidate_lifecycles', record.id), sanitizeFirestoreData(record)).catch((err) => {
         console.error(`[Storage] Firestore saveLifecycle error for ${record.id}:`, err);
       });
@@ -1343,7 +1359,7 @@ class PersistentStorage {
   public saveOpportunity(opp: TradeOpportunity): void {
     if (!opp.id) return;
     this.inMemoryOpportunities.set(opp.id, opp);
-    if (this.firestoreDb) {
+    if (this.firestoreDb && this.shouldPersist()) {
       setDoc(doc(this.firestoreDb, 'opportunities', opp.id.replace(/\//g, '_')), sanitizeFirestoreData(opp)).catch((err) => {
         console.error('[Storage] Firestore saveOpportunity error:', err);
       });
@@ -1402,8 +1418,8 @@ class PersistentStorage {
       // 6. Sync JSON backups to write the empty collections/cleared state to disk
       this.syncJsonBackups();
 
-      // 7. Clear Firestore collections asynchronously if firestoreDb is defined
-      if (this.firestoreDb) {
+      // 7. Clear Firestore collections asynchronously if firestoreDb is defined and persistence is enabled
+      if (this.firestoreDb && this.shouldPersist()) {
         try {
           const signalsSnap = await getDocs(collection(this.firestoreDb, 'signals'));
           for (const docRef of signalsSnap.docs) {

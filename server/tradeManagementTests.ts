@@ -106,10 +106,13 @@ function generateMockIndicators(currentPrice: number, trend: 'BULLISH' | 'BEARIS
 }
 
 export async function runTradeManagementTests(): Promise<{ allPassed: boolean; results: TestResult[] }> {
-  const results: TestResult[] = [];
-  tradeManagementEngine.clearNotificationCache();
+  const wasTesting = process.env.IS_TESTING === 'true';
+  storage.setTestingMode(true);
+  try {
+    const results: TestResult[] = [];
+    tradeManagementEngine.clearNotificationCache();
 
-  const baseSettings: AppSettings = {
+    const baseSettings: AppSettings = {
     ...DEFAULT_APP_SETTINGS,
     partialClosePercent: 50,
     enableTradeManagement: true,
@@ -1156,4 +1159,7 @@ export async function runTradeManagementTests(): Promise<{ allPassed: boolean; r
 
   const allPassed = results.every((r) => r.passed);
   return { allPassed, results };
+  } finally {
+    storage.setTestingMode(wasTesting);
+  }
 }

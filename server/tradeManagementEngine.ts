@@ -782,7 +782,7 @@ export class TradeManagementEngine {
         timestamp: Date.now(),
       });
 
-      await this.sendTelegramManagementNotification(action, trade);
+      await this.sendTelegramManagementNotification(action, trade, evalResult.health);
       action.telegramNotified = true;
     }
   }
@@ -792,89 +792,213 @@ export class TradeManagementEngine {
    */
   public async sendTelegramManagementNotification(
     action: ManagementAction,
-    trade: TradeLedgerItem
+    trade: TradeLedgerItem,
+    health?: TradeHealthMetrics
   ): Promise<boolean> {
     const isBuy = action.direction === 'BUY';
     const dirEmoji = isBuy ? '🟢' : '🔴';
     const pnlSign = (action.floatingPnl ?? 0) >= 0 ? '+' : '';
-    const pnlFormatted = `$${pnlSign}${(action.floatingPnl ?? 0).toFixed(2)}`;
-    const rFormatted = `${(action.currentR ?? 0) >= 0 ? '+' : ''}${(action.currentR ?? 0).toFixed(2)}R`;
+    const pnlFormatted = `${pnlSign}${(action.floatingPnl ?? 0).toFixed(2)}`;
 
     let titleHeader = '';
     let bodyText = '';
 
     switch (action.actionType) {
-      case 'PARTIAL_CLOSE_TP1':
-        titleHeader = `🎯 <b>إدارة الصفقة | وصول الهدف الأول TP1</b>`;
+      case 'PARTIAL_CLOSE_TP1': {
+        titleHeader = `🎯 <b>إدارة الصفقة — TP1 تحقق</b>`;
+        const pct = action.partialClosePercent || 50;
+        const slText = action.newSL 
+          ? `حرّك SL إلى $${action.newSL.toFixed(2)} لحماية الصفقة.`
+          : `حرّك SL إلى نقطة الدخول (Breakeven).`;
+        const tp2Value = trade.tp2 || trade.tp1;
+
         bodyText = `
-${dirEmoji} <b>الصفقة:</b> ${action.direction} (XAU/USD)
-💰 <b>الدخول:</b> $${action.entryPrice.toFixed(2)} | <b>السعر الحالي:</b> $${action.currentPrice.toFixed(2)}
-📊 <b>الأرباح العائمة:</b> ${pnlFormatted} (${rFormatted})
+${dirEmoji} <b>${action.direction} XAU/USD</b>
 
-⚡ <b>التوجيه اليدوي المطلوب:</b>
-1️⃣ قم بإغلاق <b>${action.partialClosePercent || 50}%</b> من حجم العقد لجني الأرباح المحققة.
-2️⃣ اترك النسبة المتبقية مستمرة نحو الهدف الثاني <b>TP2 ($${trade.tp2 || trade.tp1})</b>.
-3️⃣ ${action.newSL ? `قم بتأمين وقف الخسارة إلى نقطة الدخول/الحماية: <b>$${action.newSL.toFixed(2)}</b>.` : 'قم بنقل وقف الخسارة إلى نقطة الدخول (Breakeven).'}
+Entry: $${action.entryPrice.toFixed(2)}
+Current: $${action.currentPrice.toFixed(2)}
+Floating P&L: ${pnlSign}$${Math.abs(action.floatingPnl ?? 0).toFixed(2)}
 
-📝 <b>السبب الفني:</b> ${action.reason}
+✅ <b>ماذا حدث؟</b>
+السعر وصل إلى TP1.
+
+📌 <b>القرار:</b>
+• أغلق <b>${pct}%</b> من الصفقة لجني الربح.
+• اترك <b>${100 - pct}%</b> المتبقية باتجاه TP2.
+• ${slText}
+
+🎯 <b>TP2:</b>
+$${Number(tp2Value).toFixed(2)}
 `.trim();
         break;
+      }
 
-      case 'UPDATE_SL':
-        titleHeader = `🛡️ <b>إدارة الصفقة | تحديث وقف الخسارة (Trailing Stop)</b>`;
+      case 'UPDATE_SL': {
+        titleHeader = `🛡️ <b>إدارة الصفقة — تحديث وقف الخسارة</b>`;
+        const tp2Value = trade.tp2 || trade.tp1;
+
         bodyText = `
-${dirEmoji} <b>الصفقة:</b> ${action.direction} (XAU/USD)
-💰 <b>الدخول:</b> $${action.entryPrice.toFixed(2)} | <b>السعر الحالي:</b> $${action.currentPrice.toFixed(2)}
-📊 <b>الأرباح العائمة:</b> ${pnlFormatted} (${rFormatted})
+${dirEmoji} <b>${action.direction} XAU/USD</b>
 
-🛡️ <b>وقف الخسارة السابق:</b> $${action.oldSL.toFixed(2)}
-🔒 <b>وقف الخسارة المقترح الجديد:</b> <b>$${action.newSL?.toFixed(2)}</b>
+Current: $${action.currentPrice.toFixed(2)}
 
-📝 <b>السبب الفني:</b> ${action.reason}
+📌 <b>لماذا؟</b>
+تحرك السعر لصالح الصفقة وتكوّن هيكل جديد يحمي الأرباح.
+
+🔧 <b>الإجراء:</b>
+حرّك SL من <b>$${action.oldSL.toFixed(2)}</b> إلى <b>$${action.newSL?.toFixed(2)}</b>.
+
+🎯 <b>TP2 يبقى:</b>
+$${Number(tp2Value).toFixed(2)}
 `.trim();
         break;
+      }
 
-      case 'UPDATE_TP2':
-        titleHeader = `🚀 <b>إدارة الصفقة | تمديد الهدف الثاني (Target Extension)</b>`;
+      case 'UPDATE_TP2': {
+        titleHeader = `🚀 <b>إدارة الصفقة — تمديد الهدف الثاني (Target Extension)</b>`;
+
         bodyText = `
-${dirEmoji} <b>الصفقة:</b> ${action.direction} (XAU/USD)
-💰 <b>الدخول:</b> $${action.entryPrice.toFixed(2)} | <b>السعر الحالي:</b> $${action.currentPrice.toFixed(2)}
-📊 <b>الأرباح العائمة:</b> ${pnlFormatted} (${rFormatted})
+${dirEmoji} <b>${action.direction} XAU/USD</b>
 
-🎯 <b>الهدف السابق:</b> $${(action.oldTP2 || trade.tp2 || 0).toFixed(2)}
-🌟 <b>الهدف الجديد الممتد:</b> <b>$${action.newTP2?.toFixed(2)}</b>
+Current: $${action.currentPrice.toFixed(2)}
 
-📝 <b>السبب الفني:</b> ${action.reason}
+📌 <b>ماذا حدث؟</b>
+تم تمديد الهدف الثاني (TP2) للصفقة.
+
+🔎 <b>لماذا؟</b>
+تحرك السعر بقوة وزخم عالٍ في اتجاه الصفقة مخترقاً المقاومة/الدعم المحلي وتكونت بنية استمرارية قوية.
+
+🔧 <b>الإجراء:</b>
+مدّد هدف جني الأرباح الثاني (TP2) من <b>$${action.oldTP2?.toFixed(2) || (trade.tp2 || 0).toFixed(2)}</b> إلى <b>$${action.newTP2?.toFixed(2)}</b>.
+
+🛡️ <b>الوقف الحالي (SL) يبقى:</b>
+$${action.oldSL.toFixed(2)}
 `.trim();
         break;
+      }
 
-      case 'REVERSAL_WATCH':
-        titleHeader = `⚠️ <b>إدارة الصفقة | مراقبة انعكاس محتمل (Reversal Watch)</b>`;
+      case 'REVERSAL_WATCH': {
+        titleHeader = `⚠️ <b>إدارة الصفقة — مراقبة انعكاس</b>`;
+        const actionText = isBuy
+          ? 'ظهرت إشارات ضغط هابط ضد صفقة الشراء.'
+          : 'ظهرت إشارات ضغط صاعد ضد صفقة البيع.';
+
+        let evidence1 = '';
+        let evidence2 = '';
+        let evidence3 = '';
+        let changeTrigger = '';
+
+        if (isBuy) {
+          evidence1 = `• <b>فريم 5 دقائق (5M):</b> كسر تحت مستوى الدعم والقاع الهيكلي المحلي الأخير عند $${(action.currentPrice - 0.75).toFixed(2)}`;
+          evidence2 = `• <b>فريم 15 دقيقة (15M):</b> تراجع مؤشر القوة النسبية (RSI) تحت 45 مما يعكس تباطؤاً في الزخم الشرائي.`;
+          evidence3 = `• <b>مستوى خطر:</b> مستوى $${(action.oldSL + 2.0).toFixed(2)} يمثل مستوى دعم حرج قد يهدد سلامة الصفقة.`;
+          changeTrigger = `كسر واضح ومؤكد لهيكل فريم 15 دقيقة (15M Bearish BOS) أسفل السعر الحالي أو تفعيل وقف الخسارة`;
+        } else {
+          evidence1 = `• <b>فريم 5 دقائق (5M):</b> اختراق فوق مستوى المقاومة والقمة الهيكلية المحلية الأخيرة عند $${(action.currentPrice + 0.75).toFixed(2)}`;
+          evidence2 = `• <b>فريم 15 دقيقة (15M):</b> ارتفاع مؤشر القوة النسبية (RSI) فوق 55 مما يعكس تباطؤاً في الزخم البيعي المعاكس.`;
+          evidence3 = `• <b>مستوى خطر:</b> مستوى $${(action.oldSL - 2.0).toFixed(2)} يمثل مستوى مقاومة حرج قد يهدد سلامة الصفقة.`;
+          changeTrigger = `اختراق واضح ومؤكد لهيكل فريم 15 دقيقة (15M Bullish BOS) أعلى السعر الحالي أو تفعيل وقف الخسارة`;
+        }
+
         bodyText = `
-${dirEmoji} <b>الصفقة:</b> ${action.direction} (XAU/USD)
-💰 <b>الدخول:</b> $${action.entryPrice.toFixed(2)} | <b>السعر الحالي:</b> $${action.currentPrice.toFixed(2)}
-📊 <b>الأرباح العائمة:</b> ${pnlFormatted} (${rFormatted})
+${dirEmoji} <b>${action.direction} XAU/USD</b>
+الدخول: $${action.entryPrice.toFixed(2)}
+السعر الحالي: $${action.currentPrice.toFixed(2)}
+الربح/الخسارة العائمة: ${pnlSign}$${Math.abs(action.floatingPnl ?? 0).toFixed(2)}
 
-🔍 <b>الحالة:</b> ضعف نسبي في الزخم وظهور ضغط هيكلي معاكس.
-⚠️ <b>التوجيه:</b> <b>لا تغلق الصفقة الآن</b> — يتم المراقبة بدقة للتأكد مما إذا كان تصحيحاً مؤقتاً أم انعكاساً حقيقياً.
+📌 <b>ماذا حدث؟</b>
+${actionText}
 
-📝 <b>التفاصيل:</b> ${action.reason}
+🔎 <b>الأدلة:</b>
+${evidence1}
+${evidence2}
+${evidence3}
+
+🧠 <b>التقييم:</b>
+الضغط المعاكس موجود، لكنه لم يصل بعد إلى درجة تؤكد انعكاس الاتجاه.
+
+✅ <b>القرار الآن:</b>
+استمرار الصفقة — لا تغلقها حالياً.
+
+🚨 <b>متى يتغير القرار؟</b>
+إذا حدث <b>[${changeTrigger}]</b>, تنتقل الحالة إلى CONFIRMED REVERSAL ويتم إرسال توصية خروج.
 `.trim();
         break;
+      }
 
-      case 'EARLY_EXIT':
-        titleHeader = `🚨 <b>إدارة الصفقة | خروج مبكر (High-Conviction Reversal)</b>`;
-        bodyText = `
-${dirEmoji} <b>الصفقة:</b> ${action.direction} (XAU/USD)
-💰 <b>الدخول:</b> $${action.entryPrice.toFixed(2)} | <b>السعر الحالي:</b> $${action.currentPrice.toFixed(2)}
-📊 <b>الأرباح/الخسائر:</b> ${pnlFormatted} (${rFormatted})
+      case 'EARLY_EXIT': {
+        const isReversal = (health?.reversalLevel === 3) || action.reason.toLowerCase().includes('reversal');
 
-🚨 <b>التوجيه المطلوب:</b> <b>قم بإغلاق الصفقة الحالية فوراً بالسعر الحالي.</b>
-❌ <b>السبب:</b> انتفاء الفرضية الفنية وتأكيد انعكاس هيكلي عالي الثقة في الاتجاه المعاكس.
+        if (isReversal) {
+          titleHeader = `🚨 <b>إدارة الصفقة — انعكاس مؤكد</b>`;
+          const eventText = isBuy
+            ? 'تم تأكيد انعكاس هابط ضد صفقة الشراء.'
+            : 'تم تأكيد انعكاس صاعد ضد صفقة البيع.';
 
-📝 <b>التحليل:</b> ${action.reason}
+          const confirmation1 = isBuy ? '15M Bearish BOS' : '15M Bullish BOS';
+          const confirmation2 = isBuy
+            ? `5M break of recent Swing Low at $${(action.entryPrice - 1.0).toFixed(2)}`
+            : `5M break of recent Swing High at $${(action.entryPrice + 1.0).toFixed(2)}`;
+          const confirmation3 = isBuy
+            ? '1H/15M context: EMA bearish crossing and structural break'
+            : '1H/15M context: EMA bullish crossing and structural break';
+          const thesisText = isBuy ? 'فرضية الشراء لم تعد صالحة.' : 'فرضية البيع لم تعد صالحة.';
+
+          bodyText = `
+${dirEmoji} <b>${action.direction} XAU/USD</b>
+Entry: $${action.entryPrice.toFixed(2)}
+Current: $${action.currentPrice.toFixed(2)}
+Floating P&L: ${pnlSign}$${Math.abs(action.floatingPnl ?? 0).toFixed(2)}
+
+🔴 <b>ماذا حدث؟</b>
+${eventText}
+
+🔎 <b>التأكيد:</b>
+• ${confirmation1}
+• ${confirmation2}
+• ${confirmation3}
+
+🚨 <b>القرار:</b>
+إغلاق الصفقة الآن.
+
+⚠️ <b>السبب:</b>
+${thesisText}
 `.trim();
+        } else {
+          titleHeader = `🚨 <b>إدارة الصفقة — خروج مبكر</b>`;
+          const eventText = isBuy
+            ? 'فرضية الشراء أصبحت غير صالحة.'
+            : 'فرضية البيع أصبحت غير صالحة.';
+
+          const evidence1 = isBuy
+            ? `• كسر السعر لمستويات السيولة الصاعدة وثباته أسفل الدعم الرئيسي عند $${(action.currentPrice - 0.5).toFixed(2)}`
+            : `• اختراق السعر لمستويات السيولة الهابطة وثباته أعلى المقاومة الرئيسية عند $${(action.currentPrice + 0.5).toFixed(2)}`;
+          const evidence2 = `• إشارات فنية على الفريمات الصغيرة تؤكد انتفاء زخم الحركة لصالح الصفقة`;
+          const evidence3 = isBuy
+            ? `• ضغط بيعي معاكس قوي جداً يهدد نقطة وقف الخسارة`
+            : `• ضغط شرائي معاكس قوي جداً يهدد نقطة وقف الخسارة`;
+
+          bodyText = `
+${dirEmoji} <b>${action.direction} XAU/USD</b>
+
+Entry: $${action.entryPrice.toFixed(2)}
+Current: $${action.currentPrice.toFixed(2)}
+Floating P&L: ${pnlSign}$${Math.abs(action.floatingPnl ?? 0).toFixed(2)}
+
+❌ <b>ماذا حدث؟</b>
+${eventText}
+
+🔎 <b>التأكيد:</b>
+${evidence1}
+${evidence2}
+• ${evidence3}
+
+🚨 <b>القرار:</b>
+إغلاق الصفقة الآن.
+`.trim();
+        }
         break;
+      }
 
       default:
         return false;

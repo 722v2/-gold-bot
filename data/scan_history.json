@@ -1,1 +1,34 @@
-[]
+[
+  {
+    "id": "scan_1789418950184_mlob",
+    "timestamp": 1789418950308,
+    "isoTime": "2026-09-14T20:49:10.308Z",
+    "currentPrice": 4296.56,
+    "signal": "BUY NOW",
+    "entry": 4296.56,
+    "stopLoss": 4292.56,
+    "slPoints": 40,
+    "tp1": 4318.08,
+    "tp1Points": 215.2,
+    "tp1Rr": "1:5.38",
+    "tp2": 4320.71,
+    "tp2Points": 241.5,
+    "tp2Rr": "1:6.04",
+    "rr": "TP1: 1:5.38 (215.2 pts) | TP2: 1:6.04 (241.5 pts)",
+    "confidence": 77,
+    "riskPercent": 16,
+    "riskAmount": 4,
+    "lotSize": 0.01,
+    "setup": "Double Bottom Reversal (W-Formation)",
+    "reasons": [
+      "رصد نمط قاع مزدوج (Double Bottom / W-Formation) عند مستوى $4294.63 مع تباعد محوري واضح.",
+      "ارتداد السعر من القاع الثاني مع تأكيد إغلاق شمعة زخم صاعدة أعلاه وخط العنق عند $4302.55.",
+      "استهداف مستويات السيولة العليا بنسبة عائد تتجاوز 1.5R.",
+      "الهدف الأول TP1 (4318.08) يستهدف 15M Swing High Pivot بنسبة عائد 1:5.38 (215.2 نقطة ≥ 1.5R)."
+    ],
+    "status": "QUALIFIED_SIGNAL",
+    "invalidation": "كسر وإغلاق شمعة 5M أدنى مستوى وقف الخسارة $4292.56",
+    "telegramDispatchStatus": "FAILED",
+    "telegramDispatchReason": "خطأ: المحادثة (8714148060) غير موجودة أو لم تقم ببدء محادثة مع البوت بعد. يرجى فتح البوت في تلغرام والضغط على /start أولاً."
+  }
+]

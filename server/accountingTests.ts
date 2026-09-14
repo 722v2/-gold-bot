@@ -9,10 +9,13 @@ interface TestResult {
 }
 
 export function runAccountingTests(): { allPassed: boolean; results: TestResult[] } {
-  const results: TestResult[] = [];
+  const wasTesting = process.env.IS_TESTING === 'true';
+  storage.setTestingMode(true);
+  try {
+    const results: TestResult[] = [];
 
-  const initialStartingBalance = 100.00;
-  storage.setStartingBalance(initialStartingBalance);
+    const initialStartingBalance = 100.00;
+    storage.setStartingBalance(initialStartingBalance);
 
   // --------------------------------------------------------------------------
   // TEST 1: WIN outcome with explicit realized P&L (+$17.00 for Trade #2) updates balance by exactly +$17.00
@@ -457,6 +460,9 @@ export function runAccountingTests(): { allPassed: boolean; results: TestResult[
     });
   }
 
-  const allPassed = results.every((r) => r.passed);
-  return { allPassed, results };
+    const allPassed = results.every((r) => r.passed);
+    return { allPassed, results };
+  } finally {
+    storage.setTestingMode(wasTesting);
+  }
 }
