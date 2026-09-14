@@ -108,7 +108,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const standardPointRisk = (settings?.contractSizeOz ?? 100) * 0.1 * 40; // 400
   const typicalLot = standardPointRisk > 0 ? liveRiskAmount / standardPointRisk : 0;
   const minLotLossAt40pts = (settings?.minimumLot ?? 0.01) * standardPointRisk; // $4.00
-  const isMinLotExceedingRisk = liveRiskAmount > 0 && minLotLossAt40pts > liveRiskAmount;
+  const maxLossLimit = typeof settings?.maxLoss === 'number' && settings.maxLoss > 0 ? settings.maxLoss : 5.0;
+  const isMinLotExceedingMaxLoss = minLotLossAt40pts > maxLossLimit + 0.0001;
+  const isMinLotExceedingRiskBudget = liveRiskAmount > 0 && minLotLossAt40pts > liveRiskAmount;
 
   return (
     <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-250">
@@ -167,27 +169,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           {/* 3. RISK AMOUNT */}
-          <div className="bg-stone-950/80 border border-rose-950/80 rounded-xl p-2.5 sm:p-3">
-            <div className="flex items-center justify-between text-rose-400 text-[10px] sm:text-xs mb-0.5">
+          <div className="bg-stone-950/80 border border-amber-950/80 rounded-xl p-2.5 sm:p-3">
+            <div className="flex items-center justify-between text-amber-400 text-[10px] sm:text-xs mb-0.5">
               <span>RISK AMOUNT</span>
-              <DollarSign className="w-3.5 h-3.5 text-rose-400" />
+              <DollarSign className="w-3.5 h-3.5 text-amber-400" />
             </div>
-            <span className="text-lg sm:text-xl font-black text-rose-400 block">
+            <span className="text-lg sm:text-xl font-black text-amber-400 block">
               ${liveRiskAmount.toFixed(2)}
             </span>
-            <span className="text-[9px] text-stone-400 block mt-0.5">أقصى خسارة مسموحة</span>
+            <span className="text-[9px] text-stone-400 block mt-0.5">{effectiveRiskPercent}% ميزانية المخاطرة</span>
           </div>
 
-          {/* 4. MAX ALLOWED RISK */}
-          <div className="bg-stone-950/80 border border-stone-800 rounded-xl p-2.5 sm:p-3">
-            <div className="flex items-center justify-between text-stone-400 text-[10px] sm:text-xs mb-0.5">
-              <span>MAX ALLOWED</span>
-              <Lock className="w-3.5 h-3.5 text-stone-400" />
+          {/* 4. MAX LOSS CEILING */}
+          <div className="bg-stone-950/80 border border-rose-950/80 rounded-xl p-2.5 sm:p-3">
+            <div className="flex items-center justify-between text-rose-400 text-[10px] sm:text-xs mb-0.5">
+              <span>MAX LOSS CEILING</span>
+              <Lock className="w-3.5 h-3.5 text-rose-400" />
             </div>
-            <span className="text-lg sm:text-xl font-black text-stone-200 block">
-              ${maxAllowedRiskAmount.toFixed(2)}
+            <span className="text-lg sm:text-xl font-black text-rose-300 block">
+              ${maxLossLimit.toFixed(2)}
             </span>
-            <span className="text-[9px] text-stone-400 block mt-0.5">سقف {maxRiskPercent}% الأقصى</span>
+            <span className="text-[9px] text-stone-400 block mt-0.5">سقف الخسارة الصارم</span>
           </div>
 
           {/* 5. POSITION SIZE */}
@@ -203,15 +205,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
-        {/* Protection Warning if min lot exceeds risk */}
-        {isMinLotExceedingRisk && (
+        {/* Protection Warning if min lot exceeds max loss or risk */}
+        {isMinLotExceedingMaxLoss ? (
           <div className="mt-2.5 p-2.5 bg-rose-950/60 border border-rose-800/80 rounded-xl text-rose-300 text-xs font-mono flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
             <span>
-              حماية اللوت: خسارة أقل لوت مسموح ({settings?.minimumLot || 0.01}) تتجاوز المخاطرة المسموحة (${liveRiskAmount.toFixed(2)}). يتم حظر الصفقات تلقائياً.
+              حظر الصفقات: خسارة أقل لوت ({settings?.minimumLot || 0.01}) عند وقف 40 نقطة (${minLotLossAt40pts.toFixed(2)}) تتجاوز سقف الخسارة النقدي (${maxLossLimit.toFixed(2)}).
             </span>
           </div>
-        )}
+        ) : isMinLotExceedingRiskBudget ? (
+          <div className="mt-2.5 p-2.5 bg-amber-950/40 border border-amber-800/60 rounded-xl text-amber-300 text-xs font-mono flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 shrink-0 text-amber-400" />
+            <span>
+              متاح بنظام Max Loss: خسارة 0.01 لوت (${minLotLossAt40pts.toFixed(2)}) تفوق نسبة الـ {effectiveRiskPercent}% (${liveRiskAmount.toFixed(2)}) ولكنها مقبولة وضمن سقف الخسارة (${maxLossLimit.toFixed(2)}).
+            </span>
+          </div>
+        ) : null}
 
         {/* MT5 Account Details Strip if MT5 selected */}
         {settings?.capitalSource === 'MT5' && (

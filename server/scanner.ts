@@ -240,6 +240,7 @@ class LiveMarketScanner {
         minGoldSlPoints: settings.minGoldSlPoints ?? 40,
         maxGoldSlPoints: settings.maxGoldSlPoints ?? 50,
         minRr: settings.minTp1RR,
+        maxLoss: settings.maxLoss,
       };
       this.config.minConfidence = settings.minimumConfidence;
 

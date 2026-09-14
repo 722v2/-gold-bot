@@ -63,6 +63,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [manualCapital, setManualCapital] = useState<string>(settings.manualCapital?.toString() || '10');
   const [riskPerTrade, setRiskPerTrade] = useState<string>(settings.riskPerTrade?.toString() || '15');
   const [maxRiskPerTrade, setMaxRiskPerTrade] = useState<string>(settings.maxRiskPerTrade?.toString() || '15');
+  const [maxLoss, setMaxLoss] = useState<string>(settings.maxLoss !== undefined ? settings.maxLoss.toString() : '5.00');
   const [minTp1RR, setMinTp1RR] = useState<string>(settings.minTp1RR?.toString() || '1.5');
   const [targetTp2RR, setTargetTp2RR] = useState<string>(settings.targetTp2RR?.toString() || '3.0');
   const [minimumConfidence, setMinimumConfidence] = useState<string>(settings.minimumConfidence?.toString() || '75');
@@ -93,6 +94,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setManualCapital(settings.manualCapital?.toString() || '10');
     setRiskPerTrade(settings.riskPerTrade?.toString() || '15');
     setMaxRiskPerTrade(settings.maxRiskPerTrade?.toString() || '15');
+    setMaxLoss(settings.maxLoss !== undefined ? settings.maxLoss.toString() : '5.00');
     setMinTp1RR(settings.minTp1RR?.toString() || '1.5');
     setTargetTp2RR(settings.targetTp2RR?.toString() || '3.0');
     setMinimumConfidence(settings.minimumConfidence?.toString() || '75');
@@ -122,6 +124,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const riskPerStdLot = previewPriceDistance * previewContract;
   const calculatedLot = riskPerStdLot > 0 ? liveRiskAmount / riskPerStdLot : 0;
   const minimumLotLoss = previewMinLot * riskPerStdLot;
+  const parsedMaxLoss = Math.max(0.5, parseFloat(maxLoss) || 5.00);
+  const isMinLotExceedingMaxLoss = minimumLotLoss > parsedMaxLoss + 0.0001;
   const isMinLotExceedingRisk = liveRiskAmount > 0 && minimumLotLoss > liveRiskAmount;
 
   // Handle Save
@@ -132,6 +136,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     const numManualCapital = parseFloat(manualCapital);
     const numRiskPerTrade = parseFloat(riskPerTrade);
     const numMaxRisk = parseFloat(maxRiskPerTrade);
+    const numMaxLoss = parseFloat(maxLoss);
     const numMinTp1 = parseFloat(minTp1RR);
     const numTargetTp2 = parseFloat(targetTp2RR);
     const numMinConfidence = parseFloat(minimumConfidence);
@@ -145,6 +150,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
     if (isNaN(numRiskPerTrade) || numRiskPerTrade <= 0 || isNaN(numMaxRisk) || numMaxRisk <= 0) {
       setSaveStatus({ type: 'error', message: 'يرجى إدخال نسبة مخاطرة صحيحة أكبر من 0%.' });
+      setIsSaving(false);
+      return;
+    }
+
+    if (isNaN(numMaxLoss) || numMaxLoss < 0.5) {
+      setSaveStatus({ type: 'error', message: 'يرجى إدخال حد أقصى صحيح للخسارة (0.5$ على الأقل).' });
       setIsSaving(false);
       return;
     }
@@ -181,6 +192,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       manualCapital: numManualCapital,
       riskPerTrade: Math.min(numRiskPerTrade, numMaxRisk),
       maxRiskPerTrade: numMaxRisk,
+      maxLoss: Math.max(0.5, parseFloat(maxLoss) || 5.00),
       minTp1RR: numMinTp1,
       targetTp2RR: numTargetTp2,
       minimumConfidence: Math.min(100, Math.max(50, numMinConfidence || 75)),
@@ -323,7 +335,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </span>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {/* Starting Capital Input */}
               <div className="bg-stone-950/80 border border-stone-800/90 rounded-xl p-3.5 space-y-2">
                 <label className="text-xs font-bold text-stone-200 block font-mono">
@@ -441,6 +453,52 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   سقف الأمان الصارم. يمنع الـ UI والـ Backend ضبط أي مخاطرة أعلى من هذا الحد نهائياً.
                 </p>
               </div>
+
+              {/* Max Monetary Loss Limit ($) */}
+              <div className="bg-stone-950/80 border border-rose-900/60 rounded-xl p-3.5 space-y-2">
+                <label className="text-xs font-bold text-rose-200 block font-mono">
+                  سقف الخسارة النقدي (Max Loss Limit $)
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0.5"
+                    max="100"
+                    value={maxLoss}
+                    onChange={(e) => {
+                      setMaxLoss(e.target.value);
+                      setIsDirty(true);
+                    }}
+                    className="w-full bg-stone-900 border border-stone-700 rounded-lg px-3 py-2 text-stone-100 font-mono text-sm focus:outline-hidden focus:border-rose-400 pl-8"
+                  />
+                  <span className="absolute left-3 top-2.5 text-xs text-rose-400 font-mono">$</span>
+                </div>
+                {/* Presets */}
+                <div className="flex items-center gap-1.5 pt-1">
+                  <span className="text-[10px] text-stone-400 font-mono">سريع:</span>
+                  {[2, 3, 5, 10, 15].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => {
+                        setMaxLoss(preset.toString());
+                        setIsDirty(true);
+                      }}
+                      className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold transition-all ${
+                        parseFloat(maxLoss) === preset
+                          ? 'bg-rose-600 text-stone-50'
+                          : 'bg-stone-900 text-stone-300 hover:bg-stone-800 border border-stone-800'
+                      }`}
+                    >
+                      ${preset}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-stone-400">
+                  سقف الخسارة الصارم بالدولار للصفقة. تُرفض الصفقة تلقائياً إذا تجاوزت خسارة أقل لوت (0.01) هذا السقف.
+                </p>
+              </div>
             </div>
 
             {/* Live Computed Risk Amount Display */}
@@ -459,9 +517,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </span>
                 </div>
               </div>
-              <div className="text-right font-mono text-xs">
-                <span className="text-stone-400 block text-[11px]">أقصى خسارة مسموحة للصفقة:</span>
-                <span className="font-bold text-rose-400">${maxAllowedRiskAmount.toFixed(2)}</span>
+              <div className="flex items-center gap-4 text-right font-mono text-xs">
+                <div>
+                  <span className="text-stone-400 block text-[11px]">أقصى نسبة مسموحة:</span>
+                  <span className="font-bold text-amber-400">${maxAllowedRiskAmount.toFixed(2)}</span>
+                </div>
+                <div className="pl-3 border-l border-stone-800">
+                  <span className="text-stone-400 block text-[11px]">سقف الخسارة النقدي (Max Loss):</span>
+                  <span className="font-bold text-rose-400">${parsedMaxLoss.toFixed(2)}</span>
+                </div>
               </div>
             </div>
 
@@ -560,7 +624,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 className="w-full accent-amber-500"
               />
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 text-xs font-mono">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-2 text-xs font-mono">
                 <div className="bg-stone-900 p-2.5 rounded-lg border border-stone-800">
                   <span className="text-stone-400 text-[10px] block">Estimated Lot Size</span>
                   <span className="text-sm font-bold text-cyan-400 block mt-0.5">
@@ -583,32 +647,58 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
 
                 <div className="bg-stone-900 p-2.5 rounded-lg border border-stone-800">
+                  <span className="text-stone-400 text-[10px] block">Max Loss Ceiling</span>
+                  <span className="text-sm font-bold text-amber-400 block mt-0.5">
+                    ${parsedMaxLoss.toFixed(2)}
+                  </span>
+                </div>
+
+                <div className="bg-stone-900 p-2.5 rounded-lg border border-stone-800">
                   <span className="text-stone-400 text-[10px] block">Execution Verdict</span>
                   <span
                     className={`text-xs font-bold block mt-1 ${
-                      isMinLotExceedingRisk ? 'text-rose-400' : 'text-emerald-400'
+                      isMinLotExceedingMaxLoss
+                        ? 'text-rose-400'
+                        : isMinLotExceedingRisk
+                        ? 'text-amber-400'
+                        : 'text-emerald-400'
                     }`}
                   >
-                    {isMinLotExceedingRisk ? 'BLOCKED' : 'EXECUTABLE'}
+                    {isMinLotExceedingMaxLoss
+                      ? 'BLOCKED'
+                      : isMinLotExceedingRisk
+                      ? 'ALLOWED (Max Loss)'
+                      : 'EXECUTABLE'}
                   </span>
                 </div>
               </div>
 
-              {/* Warning condition requested in Requirement 3 */}
-              {isMinLotExceedingRisk && (
+              {/* Warning condition matching riskManager logic */}
+              {isMinLotExceedingMaxLoss ? (
                 <div className="p-3 bg-rose-950/60 border border-rose-800/80 rounded-lg text-rose-300 text-xs font-mono flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
                   <div>
                     <span className="font-bold block">
-                      TRADE BLOCKED: Minimum broker lot ({previewMinLot}) exceeds configured risk (${liveRiskAmount.toFixed(2)}).
+                      TRADE BLOCKED: Minimum lot loss (${minimumLotLoss.toFixed(2)}) exceeds Max Loss limit (${parsedMaxLoss.toFixed(2)}).
                     </span>
                     <span className="text-[11px] text-rose-300/80 mt-0.5 block">
-                      خسارة أقل لوت مسموح ({previewMinLot}) عند وقف {previewSlPoints} نقطة تعادل ${minimumLotLoss.toFixed(2)}،
-                      وهي أعلى من المخاطرة المسموحة (${liveRiskAmount.toFixed(2)}). النظام يرفض فتح الصفقة آلياً لمنع خرق المخاطرة.
+                      خسارة أقل لوت مسموح ({previewMinLot}) عند وقف {previewSlPoints} نقطة تعادل ${minimumLotLoss.toFixed(2)}، وهي أعلى من سقف الخسارة النقدي (${parsedMaxLoss.toFixed(2)}). النظام يرفض فتح الصفقة آلياً لمنع خرق المخاطرة.
                     </span>
                   </div>
                 </div>
-              )}
+              ) : isMinLotExceedingRisk ? (
+                <div className="p-3 bg-amber-950/40 border border-amber-800/60 rounded-lg text-amber-300 text-xs font-mono flex items-start gap-2">
+                  <ShieldCheck className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                  <div>
+                    <span className="font-bold block">
+                      ALLOWED VIA MAX LOSS: Loss at 0.01 lot (${minimumLotLoss.toFixed(2)}) is within Max Loss limit (${parsedMaxLoss.toFixed(2)}).
+                    </span>
+                    <span className="text-[11px] text-amber-300/80 mt-0.5 block">
+                      خسارة أقل لوت (${minimumLotLoss.toFixed(2)}) تفوق نسبة الـ {effectiveRiskPct}% (${liveRiskAmount.toFixed(2)}) ولكنها ضمن سقف الخسارة النقدي المحدد (${parsedMaxLoss.toFixed(2)}). تُنفذ الصفقة بأقل لوت (0.01) لحسابات التحدي الصغيرة دون رفض.
+                    </span>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
 

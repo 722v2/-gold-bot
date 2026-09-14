@@ -431,7 +431,7 @@ function buildFinalSignal(
   const targetTp1 = dynamicTp.valid ? dynamicTp.tp1 : raw.tp1;
   const targetTp2 = dynamicTp.valid ? dynamicTp.tp2 : raw.tp2;
 
-  // Evaluate risk strictly with configurable broker specs
+  // Evaluate risk strictly with configurable broker specs and intelligent executability optimization
   const riskEval = evaluateTradeRisk({
     balance,
     entry: raw.entry,
@@ -442,7 +442,9 @@ function buildFinalSignal(
     isVeryStrongSetup: raw.confidence >= 85,
     losingStreak,
     asset,
-    brokerSpecs
+    brokerSpecs,
+    direction: isBuy ? 'BUY' : 'SELL',
+    allowExecutabilityOptimization: true,
   });
 
   if (!riskEval.valid) {
@@ -480,20 +482,34 @@ function buildFinalSignal(
     };
   }
 
+  const finalEntry = riskEval.adjustedEntry ?? raw.entry;
+  const finalStopLoss = riskEval.adjustedStopLoss ?? raw.stopLoss;
+  const finalTp1 = riskEval.adjustedTp1 ?? targetTp1;
+  const finalTp2 = riskEval.adjustedTp2 ?? targetTp2;
+
+  const reasonsList = [...raw.mainReasons];
+  if (riskEval.optimizationNote) {
+    reasonsList.unshift(riskEval.optimizationNote);
+  }
+  reasonsList.push(`الهدف الأول TP1 (${finalTp1}) يستهدف ${dynamicTp.tp1TargetName || 'المستوى الهيكلي'} بنسبة عائد ${riskEval.tp1RrString} (${riskEval.tp1Points} نقطة ≥ ${minRr}R).`);
+  if (finalTp2) {
+    reasonsList.push(`الهدف الثاني TP2 (${finalTp2}) يستهدف ${dynamicTp.tp2TargetName || 'الامتداد الهيكلي'} بنسبة عائد ${riskEval.tp2RrString} (${riskEval.tp2Points} نقطة).`);
+  }
+
   return {
     id,
     timestamp: Date.now(),
     asset,
     signal: raw.decision,
     currentPrice,
-    entry: raw.entry,
-    stopLoss: raw.stopLoss,
+    entry: finalEntry,
+    stopLoss: finalStopLoss,
     slPoints: riskEval.slPoints,
-    tp1: targetTp1,
+    tp1: finalTp1,
     tp1Points: riskEval.tp1Points,
     tp1Rr: riskEval.tp1Rr,
     tp1RrString: riskEval.tp1RrString,
-    tp2: targetTp2,
+    tp2: finalTp2,
     tp2Points: riskEval.tp2Points,
     tp2Rr: riskEval.tp2Rr,
     tp2RrString: riskEval.tp2RrString,
@@ -514,11 +530,7 @@ function buildFinalSignal(
     confidence: raw.confidence,
     timeframe: raw.timeframe,
     setup: raw.setup,
-    mainReasons: [
-      ...raw.mainReasons,
-      `الهدف الأول TP1 (${targetTp1}) يستهدف ${dynamicTp.tp1TargetName || 'المستوى الهيكلي'} بنسبة عائد ${dynamicTp.tp1RrString} (${dynamicTp.tp1Points} نقطة ≥ ${minRr}R).`,
-      `الهدف الثاني TP2 (${targetTp2}) يستهدف ${dynamicTp.tp2TargetName || 'الامتداد الهيكلي'} بنسبة عائد ${dynamicTp.tp2RrString} (${dynamicTp.tp2Points} نقطة).`
-    ].slice(0, 4),
+    mainReasons: reasonsList.slice(0, 4),
     invalidation: raw.invalidation
   };
 }

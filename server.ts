@@ -253,6 +253,7 @@ async function startServer() {
           minGoldSlPoints: Number(brokerSpecs.minGoldSlPoints ?? 40),
           maxGoldSlPoints: Number(brokerSpecs.maxGoldSlPoints ?? 50),
           minRr: Number(brokerSpecs.minRr ?? 1.5),
+          maxLoss: brokerSpecs.maxLoss !== undefined ? Number(brokerSpecs.maxLoss) : undefined,
         },
       });
 
@@ -406,6 +407,7 @@ async function startServer() {
         lotStep: updatedSettings.lotStep,
         maxGoldSlPoints: updatedSettings.maxGoldSlPoints,
         minRr: updatedSettings.minTp1RR,
+        maxLoss: updatedSettings.maxLoss,
       });
       scanner.updateConfig({ minConfidence: updatedSettings.minimumConfidence });
 

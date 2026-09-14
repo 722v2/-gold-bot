@@ -15,7 +15,8 @@
         "executionMode": { "type": "string" },
         "accountMode": { "type": "string" },
         "autoTradingEnabled": { "type": "boolean" },
-        "symbol": { "type": "string" }
+        "symbol": { "type": "string" },
+        "maxLoss": { "type": "number" }
       }
     },
     "AccountState": {

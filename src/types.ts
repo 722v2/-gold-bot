@@ -104,6 +104,7 @@ export interface AppSettings {
   lotStep: number;
   minGoldSlPoints?: number;
   maxGoldSlPoints: number;
+  maxLoss?: number; // User-configured maximum monetary loss limit in USD (e.g. $5.00)
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -126,6 +127,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   lotStep: 0.01,
   minGoldSlPoints: 40,
   maxGoldSlPoints: 50,
+  maxLoss: 5.0,
 };
 
 export interface BrokerSettings {
@@ -138,6 +140,7 @@ export interface BrokerSettings {
   minGoldSlPoints?: number; // default 40 points
   maxGoldSlPoints: number; // default 50 points
   minRr: number; // default 1.5
+  maxLoss?: number;
   name?: string;
   accountNumber?: string;
   server?: string;
@@ -154,6 +157,7 @@ export const DEFAULT_BROKER_SETTINGS: BrokerSettings = {
   minGoldSlPoints: 40,
   maxGoldSlPoints: 50,
   minRr: 1.5,
+  maxLoss: 5.0,
 };
 
 export interface PositionSizingDetails {
@@ -169,6 +173,7 @@ export interface PositionSizingDetails {
   miniLotSize: number;
   microLotSize: number;
   estimatedMaxLoss: number;
+  maxLoss?: number;
   isExecutable: boolean;
   nonExecutableReason?: string;
   minimumLot: number;
