@@ -29,14 +29,14 @@ export const RiskView: React.FC<RiskViewProps> = ({
   settings,
   activeCapital,
   mt5Account,
-  currentBalance = 10,
+  currentBalance = 25,
   brokerSettings,
   onNavigateToSettings,
 }) => {
   // Safe resolved active capital
   const effectiveCapital = typeof activeCapital === 'number'
     ? activeCapital
-    : (settings?.manualCapital ?? Number(currentBalance || 10));
+    : (settings?.manualCapital ?? Number(currentBalance || 25));
 
   const riskPercent = typeof settings?.riskPerTrade === 'number' ? settings.riskPerTrade : 15.0;
   const maxRiskPercent = typeof settings?.maxRiskPerTrade === 'number' ? settings.maxRiskPerTrade : 15.0;

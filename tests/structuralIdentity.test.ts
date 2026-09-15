@@ -184,15 +184,6 @@ async function runStructuralIdentityTests() {
   const resL = checkStructuralSameSetupIdentity(null, signalS13);
   assert(resL.isDuplicate === false, 'L: Independent S13 setup is ALLOWED');
 
-  // Test M: Telegram deduplication
-  const { telegramService } = await import('../server/telegram.js');
-  const tsNow = Date.now();
-  const sigTgA: TradeSignal = { ...signalA, id: `sig_tg_A_${tsNow}` };
-  const sigTgB: TradeSignal = { ...signalB, id: `sig_tg_B_${tsNow}` };
-  const tg1 = await telegramService.sendSignalNotification(sigTgA);
-  const tg2 = await telegramService.sendSignalNotification(sigTgB);
-  assert(tg2.status === 'SUPPRESSED', 'M: Telegram service suppressed duplicate entry notification for evolving setup', tg2.reason);
-
   // Test N, O, P, Q: Legacy Signal Cleanup Audit
   const cleanupReport = performLegacySignalCleanup();
   assert(cleanupReport.realBrokerOrdersAffected === 0, 'Q: Zero real MT5 / broker orders affected (0)');
@@ -206,6 +197,8 @@ async function runStructuralIdentityTests() {
 
   if (failed > 0) {
     process.exit(1);
+  } else {
+    process.exit(0);
   }
 }
 

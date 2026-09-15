@@ -24,7 +24,6 @@ import { TradesView } from './views/TradesView';
 import { BacktestView } from './views/BacktestView';
 import { RiskView } from './views/RiskView';
 import { AnalyticsView } from './views/AnalyticsView';
-import { TelegramView } from './views/TelegramView';
 import { SystemHealthView } from './views/SystemHealthView';
 import { SettingsView } from './views/SettingsView';
 
@@ -96,7 +95,6 @@ export default function App() {
     intervalSeconds: 60,
     intervalMinutes: 1,
     minConfidence: 75,
-    telegramEnabled: false,
     lastScanTime: null,
     nextScanTime: null,
     lastScanStatus: 'جاهز - المسح المباشر التلقائي نشط كل 60 ثانية',
@@ -432,7 +430,6 @@ export default function App() {
     enabled: boolean,
     intervalMinutes: number,
     minConfidence: number,
-    telegramEnabled: boolean,
     intervalSeconds?: number
   ) => {
     try {
@@ -444,7 +441,6 @@ export default function App() {
           intervalSeconds: intervalSeconds || intervalMinutes * 60,
           intervalMinutes,
           minConfidence,
-          telegramEnabled: false,
           balance: currentBalance,
           losingStreak: stats.losingStreak,
           brokerSpecs: brokerSettings,
@@ -491,10 +487,24 @@ export default function App() {
     }
   };
 
-  // Test Telegram Notification
-  const handleTestTelegram = async () => {
-    const res = await fetch('/api/telegram/test', { method: 'POST' });
-    return await res.json();
+  // Manual Cancellation of Active/Dispatched Signal
+  const handleCancelSignal = async (signalId: string): Promise<boolean> => {
+    try {
+      const res = await fetch('/api/scanner/cancel-signal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: signalId }),
+      });
+      if (res.ok) {
+        setSignal(null);
+        await fetchScannerStatus();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.error('Cancel signal error:', e);
+      return false;
+    }
   };
 
   // Reset Demo Balance
@@ -625,6 +635,7 @@ export default function App() {
               isAnalyzing={isAnalyzing}
               onToggleScanner={handleToggleScanner}
               onManualScan={handleManualScan}
+              onCancelSignal={handleCancelSignal}
               multitimeframe={multitimeframe}
             />
           )}
@@ -669,8 +680,6 @@ export default function App() {
             <AnalyticsView stats={stats} ledger={ledger} startingBalance={startingBalance} />
           )}
 
-          {activeTab === 'telegram' && <TelegramView onTestTelegram={handleTestTelegram} />}
-
           {activeTab === 'health' && <SystemHealthView />}
 
           {activeTab === 'settings' && (
@@ -685,7 +694,6 @@ export default function App() {
               onUpdateSettings={handleUpdateSettings}
               onUpdateBrokerSettings={handleUpdateBrokerSettings}
               onResetDemoBalance={handleResetDemoBalance}
-              onTestTelegram={handleTestTelegram}
             />
           )}
         </main>

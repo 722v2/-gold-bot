@@ -35,7 +35,7 @@ export function saveBrokerSettings(settings: BrokerSettings): void {
 
 export function loadStartingBalance(): number {
   const saved = localStorage.getItem(STORAGE_KEYS.STARTING_BALANCE);
-  return saved ? parseFloat(saved) : 10.0;
+  return saved ? parseFloat(saved) : 25.0;
 }
 
 export function saveStartingBalance(val: number) {
@@ -143,12 +143,14 @@ export function calculateAccountStats(startingBalance: number, currentBalance: n
   let totalRR = 0;
   let validRRCount = 0;
   for (const t of closedTrades) {
-    const parts = t.rr.split(':');
-    if (parts.length === 2) {
-      const val = parseFloat(parts[1]);
-      if (!isNaN(val)) {
-        totalRR += val;
-        validRRCount++;
+    if (t.rr) {
+      const parts = t.rr.split(':');
+      if (parts.length === 2) {
+        const val = parseFloat(parts[1]);
+        if (!isNaN(val)) {
+          totalRR += val;
+          validRRCount++;
+        }
       }
     }
   }

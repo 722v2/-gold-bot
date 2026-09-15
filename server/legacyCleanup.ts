@@ -30,10 +30,6 @@ export function performLegacySignalCleanup(): LegacyCleanupReport {
       identifiedLegacySignals++;
       sig.lifecycleState = 'INVALIDATED';
       sig.noTradeReason = 'legacy_setup_identity_reset';
-      if (sig.telegramDispatchStatus !== 'SENT') {
-        sig.telegramDispatchStatus = 'SUPPRESSED';
-      }
-      sig.telegramDispatchReason = 'legacy_setup_identity_reset';
       storage.saveSignal(sig);
       cancelledSignals++;
       details.push(`Invalidated legacy signal: ${sig.id} (${sig.setup})`);

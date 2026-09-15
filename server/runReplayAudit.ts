@@ -68,7 +68,7 @@ async function runAuditReport() {
 
   let totalRawDetections = 0;
 
-  // Active signal state tracking for Telegram dispatch simulation
+  // Active signal state tracking for signal dispatch simulation
   let activeSignal: TradeSignal | null = null;
   let dispatchedCount = 0;
 
@@ -159,7 +159,7 @@ async function runAuditReport() {
         st.riskPassed++;
         st.finalSignals++;
 
-        // Simulate Telegram Dispatching Guard
+        // Simulate Signal Dispatching Guard
         const sig: TradeSignal = {
           id: `sig_${currTimestamp}`,
           timestamp: currTimestamp,
@@ -232,7 +232,7 @@ async function runAuditReport() {
   console.log(`3. Quality-Passed:          ${grandQualityPassed}`);
   console.log(`4. Risk-Passed:             ${grandRiskPassed}`);
   console.log(`5. Final Qualified Signals: ${grandFinalSignals}`);
-  console.log(`6. Telegram-Dispatched:     ${grandDispatched}\n`);
+  console.log(`6. Dispatched Signals:       ${grandDispatched}\n`);
 
   console.log('--- PER-PATTERN BREAKDOWN ---');
   console.log('Pattern | Raw Detections | Unique Formations | Passed (Quality/Risk) | Rejected | Dispatched Signals');

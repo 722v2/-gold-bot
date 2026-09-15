@@ -10,9 +10,9 @@ import {
   DEFAULT_APP_SETTINGS,
 } from '../src/types.js';
 import { storage } from './storage.js';
-import { telegramService } from './telegram.js';
 import { generateMultiStrategyCandidates, SetupCandidate } from './strategyEngine.js';
 import { BrokerContractSpecs, DEFAULT_BROKER_SPECS, evaluateTradeRisk } from './riskManager.js';
+import { telegramService } from './telegram.js';
 
 export interface TradeHealthMetrics {
   tradeId: string;
@@ -55,6 +55,8 @@ export class TradeManagementEngine {
     level?: number;
     timestamp: number;
   }>();
+  private tradeLastNotifiedState = new Map<string, TradeManagementState>();
+  private tradeLastNotifiedLevel = new Map<string, number>();
 
   constructor() {}
 
@@ -134,12 +136,79 @@ export class TradeManagementEngine {
   ): Promise<TradeManagementEvaluationResult> {
     const isBuy = trade.direction.toUpperCase().includes('BUY');
     const direction: 'BUY' | 'SELL' = isBuy ? 'BUY' : 'SELL';
-    const entry = Number(trade.entry);
-    const sl = Number(trade.sl);
-    const tp1 = Number(trade.tp1);
-    const tp2 = Number(trade.tp2 || trade.tp1);
+    let entry = Number(trade.entry);
+    let sl = Number(trade.sl);
+    let tp1 = Number(trade.tp1);
+    let tp2 = Number(trade.tp2 || trade.tp1);
     const lotSize = trade.lotSize || 0.01;
     const contractSize = settings.contractSizeOz || 100;
+
+    // P1-7: Attempt to resolve missing TP/SL from original signal in storage
+    if (!entry || isNaN(entry) || !sl || isNaN(sl) || !tp1 || isNaN(tp1)) {
+      const origSignal = storage.getSignal(trade.id) || (trade.signalId ? storage.getSignal(trade.signalId) : null);
+      if (origSignal) {
+        if (!entry || isNaN(entry)) entry = Number(origSignal.entry);
+        if (!sl || isNaN(sl)) sl = Number(origSignal.stopLoss);
+        if (!tp1 || isNaN(tp1)) tp1 = Number(origSignal.tp1);
+        if (!tp2 || isNaN(tp2)) tp2 = Number(origSignal.tp2 || origSignal.tp1);
+      }
+    }
+
+    // P1-7: NEVER create synthetic TP/SL levels.
+    // If still missing, mark trade as DATA_INCOMPLETE and skip Phase 4 evaluation.
+    // Log a warning. Do NOT invent prices.
+    if (!entry || isNaN(entry) || !sl || isNaN(sl) || !tp1 || isNaN(tp1) || entry <= 0 || sl <= 0 || tp1 <= 0) {
+      console.warn(`[TradeManagementEngine] Trade ${trade.id} is missing critical TP/SL/entry levels. Marked as DATA_INCOMPLETE, skipping Phase 4 evaluation.`);
+      return {
+        tradeId: trade.id,
+        state: 'DATA_INCOMPLETE',
+        action: {
+          actionType: 'HOLD',
+          tradeId: trade.id,
+          direction,
+          currentPrice,
+          entryPrice: entry || currentPrice,
+          oldSL: sl || 0,
+          oldTP1: tp1 || 0,
+          oldTP2: tp2 || 0,
+          floatingPnl: 0,
+          currentR: 0,
+          managementState: 'DATA_INCOMPLETE',
+          reason: `Skipped Phase 4 evaluation: Trade ${trade.id} lacks valid entry, SL, or TP1 price levels.`,
+          confidence: 0,
+          timestamp: Date.now(),
+          source: 'DETERMINISTIC',
+          requiresConfirmation: false,
+        },
+        health: {
+          tradeId: trade.id,
+          direction,
+          currentPrice,
+          entryPrice: entry || currentPrice,
+          slPrice: sl || 0,
+          tp1Price: tp1 || 0,
+          tp2Price: tp2 || 0,
+          lotSize: trade.lotSize || 0.01,
+          floatingPnl: 0,
+          currentR: 0,
+          distanceToSlPoints: 0,
+          distanceToTp1Points: 0,
+          distanceToTp2Points: 0,
+          tp1ProgressPct: 0,
+          tp2ProgressPct: 0,
+          regimeAlignment: 'NEUTRAL',
+          structureHealth: 'RANGING',
+          pullbackQuality: 'HEALTHY',
+          oppositePressureScore: 0,
+          reversalLevel: 0,
+          isOriginalThesisValid: false,
+          notes: ['DATA_INCOMPLETE: Trade is missing entry, SL, or TP1 levels. Phase 4 evaluation skipped.'],
+        },
+        safetyPassed: false,
+        safetyRejectionReason: 'DATA_INCOMPLETE: Trade is missing entry, SL, or TP1',
+        isDuplicateNotification: true,
+      };
+    }
 
     // 1. Calculate Core Health Metrics
     const priceDiff = isBuy ? currentPrice - entry : entry - currentPrice;
@@ -692,38 +761,44 @@ export class TradeManagementEngine {
   }
 
   /**
-   * Deduplication check to prevent Telegram message spam.
+   * Deduplication check to prevent redundant message spam.
+   * P1-9: State-transition based deduplication:
+   * - A notification should fire when the trade ENTERS a new management state.
+   * - Do NOT re-notify for the same state unless price moved significantly.
+   * - Remove the blunt 15-minute time throttle for state changes.
+   * - Track tradeLastNotifiedState.set(tradeId, newState).
+   * - If newState !== previousState -> allow notification immediately.
+   * - If newState === previousState -> suppress (dedup).
    * Returns true if notification should be SUPPRESSED.
    */
-  private checkNotificationDeduplication(tradeId: string, action: ManagementAction): boolean {
-    if (action.actionType === 'HOLD') {
-      return true; // HOLD is always suppressed from Telegram
+  public checkNotificationDeduplication(tradeId: string, action: ManagementAction): boolean {
+    if (action.actionType === 'HOLD' || action.managementState === 'DATA_INCOMPLETE') {
+      return true; // HOLD and DATA_INCOMPLETE are always suppressed
     }
 
-    const cacheKey = `${tradeId}:${action.actionType}`;
-    const cached = this.lastNotificationCache.get(cacheKey);
-
+    const previousState = this.tradeLastNotifiedState.get(tradeId);
+    const newState = action.managementState;
     const targetLevel = action.newSL || action.newTP2 || 0;
+    const previousLevel = this.tradeLastNotifiedLevel.get(tradeId) || 0;
 
-    if (cached) {
-      const timeSinceLast = Date.now() - cached.timestamp;
-      // If same level within 30 minutes, suppress
-      if (cached.level !== undefined && targetLevel > 0) {
-        const levelDiff = Math.abs(cached.level - targetLevel);
-        if (levelDiff < 0.50 && timeSinceLast < 1800000) {
-          return true; // Suppress duplicate price recommendation
-        }
-      } else if (timeSinceLast < 600000) {
-        // Non-level action (like REVERSAL_WATCH) within 10 minutes, suppress
-        return true;
+    // State transition -> fire immediately
+    if (newState !== previousState) {
+      return false;
+    }
+
+    // Same state: only re-notify if it is an update action and the level changed significantly (>= 1.0)
+    if (action.actionType === 'UPDATE_SL' || action.actionType === 'UPDATE_TP2') {
+      if (targetLevel > 0 && Math.abs(targetLevel - previousLevel) >= 1.0) {
+        return false;
       }
     }
 
-    return false;
+    // Same state with no significant level change -> suppress (dedup)
+    return true;
   }
 
   /**
-   * Applies the management decision: updates trade ledger state and sends Telegram message if appropriate.
+   * Applies the management decision: updates trade ledger state.
    */
   public async applyManagementDecision(
     evalResult: TradeManagementEvaluationResult,
@@ -773,24 +848,26 @@ export class TradeManagementEngine {
       storage.saveTrade(trade);
     }
 
-    // Send Telegram Notification if actionable and not duplicated
-    if (!isDuplicateNotification && action.actionType !== 'HOLD') {
+    // Track notification state for deduplication
+    if (!isDuplicateNotification && action.actionType !== 'HOLD' && action.managementState !== 'DATA_INCOMPLETE') {
+      this.tradeLastNotifiedState.set(trade.id, action.managementState);
+      const targetLevel = action.newSL || action.newTP2 || 0;
+      if (targetLevel > 0) {
+        this.tradeLastNotifiedLevel.set(trade.id, targetLevel);
+      }
       const cacheKey = `${trade.id}:${action.actionType}`;
       this.lastNotificationCache.set(cacheKey, {
         actionType: action.actionType,
-        level: action.newSL || action.newTP2,
+        level: targetLevel,
         timestamp: Date.now(),
       });
-
-      await this.sendTelegramManagementNotification(action, trade, evalResult.health);
-      action.telegramNotified = true;
     }
   }
 
   /**
-   * Formats and delivers clear, high-impact Telegram management instructions.
+   * Formats and delivers clear, high-impact management instructions.
    */
-  public async sendTelegramManagementNotification(
+  public async sendManagementNotification(
     action: ManagementAction,
     trade: TradeLedgerItem,
     health?: TradeHealthMetrics
@@ -1012,13 +1089,12 @@ ${bodyText}
 ⏱ <i>الوقت: ${new Date().toLocaleTimeString('ar-EG')} | نظام الإدارة المتقدمة Phase 4</i>
 `.trim();
 
-    try {
-      const res = await telegramService.sendTelegramMessage(formattedMessage);
-      return res.success;
-    } catch (err) {
-      console.error('[TradeManagementEngine] Failed to send Telegram management notification:', err);
-      return false;
-    }
+    // Dispatch notification to private Telegram chat
+    telegramService.sendManagementNotification(formattedMessage).catch((err) => {
+      console.error('[TradeManagementEngine] Telegram management alert dispatch error:', err);
+    });
+
+    return true;
   }
 
   /**
@@ -1046,7 +1122,7 @@ ${bodyText}
         steps: [
           {
             stepNumber: 1,
-            action: 'MANUAL_TELEGRAM_INSTRUCTION_ONLY',
+            action: 'MANUAL_INSTRUCTION_ONLY',
             parameters: {
               tradeId: action.tradeId,
               actionType: action.actionType,

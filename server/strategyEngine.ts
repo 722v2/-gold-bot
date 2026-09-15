@@ -194,6 +194,48 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   const minSlPoints = brokerSpecs.minGoldSlPoints ?? 35;
   const maxSlPoints = brokerSpecs.maxGoldSlPoints ?? 65;
 
+  if (!currentPrice || currentPrice <= 0 || isNaN(currentPrice)) {
+    const fallbackSignal: TradeSignal = {
+      id: `sig_notrade_${Date.now()}`,
+      timestamp: Date.now(),
+      asset,
+      signal: 'NO TRADE',
+      currentPrice: 0,
+      entry: 0,
+      stopLoss: 0,
+      slPoints: 0,
+      tp1: 0,
+      tp1Points: 0,
+      tp1Rr: 0,
+      tp1RrString: '1:0',
+      tp2: 0,
+      tp2Points: 0,
+      tp2Rr: 0,
+      tp2RrString: '1:0',
+      primaryTarget: 'TP1',
+      rr: '1:0',
+      rrRatio: 0,
+      riskPercent: 0,
+      riskAmount: 0,
+      potentialProfit: 0,
+      potentialLoss: 0,
+      recommendedLotSize: 0,
+      confidence: 0,
+      timeframe: '15M / 5M',
+      setup: 'INVALID_LIVE_PRICE',
+      mainReasons: ['سعر السوق المباشر غير متوفر أو غير صالح من Biquote MT5.'],
+      invalidation: 'N/A',
+      noTradeReason: 'سعر السوق المباشر غير متوفر أو غير صالح من Biquote MT5.',
+    };
+    return {
+      hasValidSignal: false,
+      selectedCandidate: null,
+      allCandidates: [],
+      finalSignal: fallbackSignal,
+      noTradeReason: 'سعر السوق المباشر غير متوفر أو غير صالح من Biquote MT5.',
+    };
+  }
+
   const candidates: SetupCandidate[] = [];
 
   const last5m = candles5m[candles5m.length - 1] || { open: currentPrice, high: currentPrice, low: currentPrice, close: currentPrice, volume: 1, timestamp: Date.now() };

@@ -64,8 +64,6 @@ export const SystemHealthView: React.FC = () => {
       ? 'ONLINE'
       : 'OFFLINE';
   const aiStatus = healthData?.hasGeminiKey ? 'ONLINE' : 'ONLINE';
-  const telegramStatus: 'CONNECTED' | 'NOT CONFIGURED' | 'ERROR' =
-    healthData?.telegramStatus || (healthData?.telegramConfigured ? 'CONNECTED' : 'NOT CONFIGURED');
 
   const components: ComponentHealth[] = [
     {
@@ -125,18 +123,6 @@ export const SystemHealthView: React.FC = () => {
       status: 'ONLINE',
       details: 'وضع المحاكاة التجريبي الصارم (Demo Only) لحماية رأس المال الحقيقي',
       icon: Activity,
-    },
-    {
-      name: 'Telegram Gateway',
-      subname: 'Bot Notification Service',
-      status: telegramStatus,
-      details:
-        telegramStatus === 'CONNECTED'
-          ? 'تم الاتصال بالبوت وجاهز لإرسال الإشعارات'
-          : telegramStatus === 'ERROR'
-          ? `خطأ في اتصال تلغرام: ${healthData?.telegramLastError || 'تعذر الإرسال'}`
-          : 'خدمة التنبيهات غير مهيأة (أدخل TELEGRAM_BOT_TOKEN و TELEGRAM_CHAT_ID في الإعدادات)',
-      icon: Send,
     },
     {
       name: 'Storage & Persistence',

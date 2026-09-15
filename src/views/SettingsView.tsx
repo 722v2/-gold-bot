@@ -30,7 +30,6 @@ interface SettingsViewProps {
   mt5Account?: MT5AccountInfo;
   onUpdateSettings: (patch: Partial<AppSettings>) => Promise<boolean>;
   onResetDemoBalance?: (bal: number) => void;
-  onTestTelegram?: () => Promise<any>;
   ledger?: TradeLedgerItem[];
   currentBalance?: number;
   config?: ScannerConfig;
@@ -44,13 +43,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   mt5Account,
   onUpdateSettings,
   onResetDemoBalance,
-  onTestTelegram,
   ledger = [],
   currentBalance,
   config,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<
-    'RISK' | 'CAPITAL' | 'STRATEGY' | 'BROKER' | 'TELEGRAM' | 'DATA'
+    'RISK' | 'CAPITAL' | 'STRATEGY' | 'BROKER' | 'DATA' | 'TELEGRAM'
   >('RISK');
 
   // Form local state
@@ -60,13 +58,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [realAckChecked, setRealAckChecked] = useState<boolean>(false);
 
   const [capitalSource, setCapitalSource] = useState<CapitalSource>(settings.capitalSource || 'MANUAL');
-  const [manualCapital, setManualCapital] = useState<string>(settings.manualCapital?.toString() || '10');
+  const [manualCapital, setManualCapital] = useState<string>(settings.manualCapital?.toString() || '25');
   const [riskPerTrade, setRiskPerTrade] = useState<string>(settings.riskPerTrade?.toString() || '15');
   const [maxRiskPerTrade, setMaxRiskPerTrade] = useState<string>(settings.maxRiskPerTrade?.toString() || '15');
   const [maxLoss, setMaxLoss] = useState<string>(settings.maxLoss !== undefined ? settings.maxLoss.toString() : '5.00');
   const [minTp1RR, setMinTp1RR] = useState<string>(settings.minTp1RR?.toString() || '1.5');
   const [targetTp2RR, setTargetTp2RR] = useState<string>(settings.targetTp2RR?.toString() || '3.0');
   const [minimumConfidence, setMinimumConfidence] = useState<string>(settings.minimumConfidence?.toString() || '75');
+  const [oppositeCooldownMinutes, setOppositeCooldownMinutes] = useState<string>(settings.oppositeCooldownMinutes?.toString() || '10');
 
   // Broker contract inputs
   const [contractSizeOz, setContractSizeOz] = useState<string>(settings.contractSizeOz?.toString() || '100');
@@ -82,13 +81,110 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [isDirty, setIsDirty] = useState<boolean>(false);
-  const [telegramStatus, setTelegramStatus] = useState<string | null>(null);
-  const [isTestingTg, setIsTestingTg] = useState<boolean>(false);
 
   // Total State Reset state
   const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false);
   const [isResetting, setIsResetting] = useState<boolean>(false);
   const [resetResult, setResetResult] = useState<any | null>(null);
+
+  // Telegram state
+  const [telegramStatus, setTelegramStatus] = useState<{
+    registered: boolean;
+    chatId: string | null;
+    botId: string | null;
+    loading: boolean;
+  }>({
+    registered: false,
+    chatId: null,
+    botId: null,
+    loading: true,
+  });
+  const [telegramTestStatus, setTelegramTestStatus] = useState<{
+    type: 'success' | 'error' | null;
+    message: string;
+  }>({ type: null, message: '' });
+  const [isTestingTelegram, setIsTestingTelegram] = useState<boolean>(false);
+
+  const fetchTelegramStatus = async () => {
+    try {
+      const res = await fetch('/api/telegram/status');
+      const data = await res.json();
+      if (data.success) {
+        setTelegramStatus({
+          registered: data.registered,
+          chatId: data.chatId,
+          botId: data.botId,
+          loading: false,
+        });
+      }
+    } catch (err) {
+      console.error('Error fetching telegram status:', err);
+      setTelegramStatus(prev => ({ ...prev, loading: false }));
+    }
+  };
+
+  useEffect(() => {
+    if (activeSubTab === 'TELEGRAM') {
+      fetchTelegramStatus();
+      const interval = setInterval(fetchTelegramStatus, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [activeSubTab]);
+
+  const handleTestTelegram = async () => {
+    setIsTestingTelegram(true);
+    setTelegramTestStatus({ type: null, message: '' });
+    try {
+      const res = await fetch('/api/telegram/test', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setTelegramTestStatus({
+          type: 'success',
+          message: 'تم إرسال رسالة التجربة بنجاح! تفقد تطبيق تليجرام الخاص بك.',
+        });
+      } else {
+        setTelegramTestStatus({
+          type: 'error',
+          message: `فشل الإرسال: ${data.error || 'خطأ غير معروف'}`,
+        });
+      }
+    } catch (err: any) {
+      setTelegramTestStatus({
+        type: 'error',
+        message: `حدث خطأ في الاتصال: ${err.message}`,
+      });
+    } finally {
+      setIsTestingTelegram(false);
+    }
+  };
+
+  const [isTestingMockSignal, setIsTestingMockSignal] = useState<boolean>(false);
+  const handleTestMockSignal = async () => {
+    setIsTestingMockSignal(true);
+    setTelegramTestStatus({ type: null, message: '' });
+    try {
+      const res = await fetch('/api/telegram/test-signal', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setTelegramTestStatus({
+          type: 'success',
+          message: 'تم إرسال إشارة التداول التجريبية بنجاح! تفقد تطبيق تليجرام الخاص بك لسلامة القنوات والتنسيق.',
+        });
+      } else {
+        setTelegramTestStatus({
+          type: 'error',
+          message: `فشل إرسال الإشارة التجريبية: ${data.error || 'خطأ غير معروف'}`,
+        });
+      }
+    } catch (err: any) {
+      setTelegramTestStatus({
+        type: 'error',
+        message: `حدث خطأ في الاتصال: ${err.message}`,
+      });
+    } finally {
+      setIsTestingMockSignal(false);
+    }
+  };
 
   // Sync state when props change (only if user hasn't made unsaved edits)
   useEffect(() => {
@@ -96,13 +192,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setAccountMode(settings.accountMode || 'DEMO');
     setAutoTradingEnabled(settings.autoTradingEnabled || false);
     setCapitalSource(settings.capitalSource || 'MANUAL');
-    setManualCapital(settings.manualCapital?.toString() || '10');
+    setManualCapital(settings.manualCapital?.toString() || '25');
     setRiskPerTrade(settings.riskPerTrade?.toString() || '15');
     setMaxRiskPerTrade(settings.maxRiskPerTrade?.toString() || '15');
     setMaxLoss(settings.maxLoss !== undefined ? settings.maxLoss.toString() : '5.00');
     setMinTp1RR(settings.minTp1RR?.toString() || '1.5');
     setTargetTp2RR(settings.targetTp2RR?.toString() || '3.0');
     setMinimumConfidence(settings.minimumConfidence?.toString() || '75');
+    setOppositeCooldownMinutes(settings.oppositeCooldownMinutes?.toString() || '10');
     setContractSizeOz(settings.contractSizeOz?.toString() || '100');
     setMinimumLot(settings.minimumLot?.toString() || '0.01');
     setMaximumLot(settings.maximumLot?.toString() || '100');
@@ -145,6 +242,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     const numMinTp1 = parseFloat(minTp1RR);
     const numTargetTp2 = parseFloat(targetTp2RR);
     const numMinConfidence = parseFloat(minimumConfidence);
+    const numCooldown = parseInt(oppositeCooldownMinutes) || 10;
 
     // Validation
     if (isNaN(numManualCapital) || numManualCapital < 0) {
@@ -206,6 +304,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       maximumLot: parseFloat(maximumLot) || 100,
       lotStep: parseFloat(lotStep) || 0.01,
       maxGoldSlPoints: parseFloat(maxGoldSlPoints) || 100,
+      oppositeCooldownMinutes: Math.max(0, numCooldown),
     };
 
     const success = await onUpdateSettings(patch);
@@ -234,19 +333,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
-  };
-
-  const handleTestTg = async () => {
-    if (!onTestTelegram) return;
-    setIsTestingTg(true);
-    try {
-      const res = await onTestTelegram();
-      setTelegramStatus(res?.message || 'تم إرسال الرسالة التجريبية');
-    } catch (e: any) {
-      setTelegramStatus(e.message || 'فشل الاتصال بتلغرام');
-    } finally {
-      setIsTestingTg(false);
-    }
   };
 
   const handleTotalReset = async () => {
@@ -337,7 +423,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           { id: 'CAPITAL', label: 'مصدر رأس المال (Capital Source)' },
           { id: 'STRATEGY', label: 'الاستراتيجية والتداول (Trading Rules)' },
           { id: 'BROKER', label: 'مواصفات الوسيط (Broker Specs)' },
-          { id: 'TELEGRAM', label: 'تلغرام (Telegram)' },
+          { id: 'TELEGRAM', label: 'إشعارات تليجرام (Telegram Alerts)' },
           { id: 'DATA', label: 'البيانات (Data / Export)' },
         ].map((tab) => (
           <button
@@ -1269,13 +1355,40 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 step="5"
                 value={minimumConfidence}
                 onChange={(e) => setMinimumConfidence(e.target.value)}
-                className="w-full accent-amber-500"
+                className="w-full accent-amber-500 font-sans"
               />
-              <div className="flex items-center justify-between text-[10px] text-stone-400 pt-1">
+              <div className="flex items-center justify-between text-[10px] text-stone-400 pt-1 font-sans">
                 <span>70-74%: ثقة متوسطة</span>
                 <span>75-84%: ثقة جيدة (الافتراضي)</span>
                 <span>85-94%: صفقة قوية جداً</span>
                 <span>95%+: استثنائية ونادرة</span>
+              </div>
+            </div>
+
+            {/* Opposite Direction Cooldown Input */}
+            <div className="p-3.5 bg-stone-950/70 border border-stone-800 rounded-xl space-y-2 md:col-span-2 font-mono">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-stone-200 block">
+                  فترة تهدئة وتقلبات السوق المعاكسة (Opposite-Direction Cooldown Minutes):
+                </label>
+                <span className="text-sm font-bold text-amber-400">{oppositeCooldownMinutes} دقائق</span>
+              </div>
+              <input
+                type="number"
+                min="0"
+                max="60"
+                step="1"
+                value={oppositeCooldownMinutes}
+                onChange={(e) => {
+                  setOppositeCooldownMinutes(e.target.value);
+                  setIsDirty(true);
+                }}
+                className="w-full bg-stone-900 border border-stone-700 rounded-lg px-3 py-2 text-stone-100 font-mono text-sm focus:outline-hidden focus:border-amber-400 pl-8 text-right"
+              />
+              <div className="flex items-center justify-between text-[10px] text-stone-400 pt-1">
+                <span>0 دقيقة: تعطيل فترة التهدئة</span>
+                <span>10 دقائق: الافتراضي لحماية Whipsaw</span>
+                <span>30 دقيقة: تهدئة ممتدة عند التقلبات القصوى</span>
               </div>
             </div>
           </div>
@@ -1389,40 +1502,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       )}
 
       {/* ========================================================= */}
-      {/* 5. TELEGRAM TAB                                           */}
-      {/* ========================================================= */}
-      {activeSubTab === 'TELEGRAM' && (
-        <div className="bg-stone-900/90 border border-stone-800/90 rounded-2xl p-4 sm:p-6 space-y-4 shadow-xs">
-          <h4 className="text-sm font-bold text-stone-100 border-b border-stone-800 pb-2">
-            Telegram Notifications Status
-          </h4>
-          <div className="p-4 bg-stone-950 border border-stone-800 rounded-xl text-xs space-y-2">
-            <div className="flex items-center gap-2 text-amber-400 font-bold">
-              <Lock className="w-4 h-4" />
-              <span>إشعار هام: إرسال تنبيهات التلغرام متوقف حالياً (Disabled by Default)</span>
-            </div>
-            <p className="text-stone-400 text-[11px]">
-              بناءً على تعليمات المستخدم، يتم فحص السوق وتخزين الإشارات في الـ Database والخادم دون إرسال رسائل تلغرام حتى يتم تفعيلها صراحة.
-            </p>
-          </div>
-          {onTestTelegram && (
-            <div className="pt-2 flex items-center gap-3">
-              <button
-                onClick={handleTestTg}
-                disabled={isTestingTg}
-                className="px-4 py-2 bg-stone-800 hover:bg-stone-700 text-stone-200 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer disabled:opacity-50"
-              >
-                <Send className="w-4 h-4" />
-                <span>{isTestingTg ? 'جارٍ الفحص...' : 'فحص الاتصال (Test Telegram Connection)'}</span>
-              </button>
-              {telegramStatus && <span className="text-xs text-stone-300 font-mono">{telegramStatus}</span>}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ========================================================= */}
-      {/* 6. DATA & RESET TAB                                       */}
+      {/* 5. DATA & RESET TAB                                       */}
       {/* ========================================================= */}
       {activeSubTab === 'DATA' && (
         <div className="bg-stone-900/90 border border-stone-800/90 rounded-2xl p-4 sm:p-6 space-y-4 shadow-xs">
@@ -1512,6 +1592,142 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 4.5. TELEGRAM ALERTS TAB                                  */}
+      {/* ========================================================= */}
+      {activeSubTab === 'TELEGRAM' && (
+        <div className="bg-stone-900/90 border border-stone-800/90 rounded-2xl p-4 sm:p-6 space-y-5 shadow-xs">
+          <div className="flex items-center justify-between border-b border-stone-800 pb-3">
+            <div className="flex items-center gap-2">
+              <Send className="w-5 h-5 text-amber-400" />
+              <h4 className="text-sm font-black text-stone-100 font-mono">
+                إشعارات وإرسال تليجرام المباشر (Telegram Alerts System)
+              </h4>
+            </div>
+            <button
+              onClick={fetchTelegramStatus}
+              disabled={telegramStatus.loading}
+              className="px-3 py-1.5 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-xl text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${telegramStatus.loading ? 'animate-spin' : ''}`} />
+              <span>تحديث الحالة (Refresh)</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            {/* Status Panel */}
+            <div className="lg:col-span-7 space-y-4">
+              {telegramStatus.loading ? (
+                <div className="p-10 text-center text-xs text-stone-500 font-mono bg-stone-950/20 border border-stone-800/50 rounded-2xl">
+                  <RefreshCw className="w-6 h-6 animate-spin mx-auto text-amber-400 mb-2" />
+                  جاري جلب حالة ربط تليجرام...
+                </div>
+              ) : telegramStatus.registered ? (
+                <div className="bg-emerald-950/40 border border-emerald-800/80 p-5 rounded-2xl space-y-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center">
+                      <CheckCircle2 className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h5 className="text-xs font-black text-emerald-300">خدمة تليجرام نشطة ومفعلة</h5>
+                      <p className="text-[10px] text-stone-400 mt-0.5">النظام يرسل الإشعارات بنجاح إلى حسابك الخاص</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-xs font-mono bg-stone-950/60 border border-stone-800/50 p-3 rounded-xl">
+                    <div>
+                      <span className="text-[10px] text-stone-500 block mb-0.5">مُعرّف المحادثة الخاصة (Chat ID):</span>
+                      <span className="font-bold text-stone-300">{telegramStatus.chatId}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-stone-500 block mb-0.5">روبوت الإرسال الآمن (Bot ID):</span>
+                      <span className="font-bold text-stone-300">{telegramStatus.botId || 'نشط'}</span>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-amber-950/20 border border-amber-800/50 p-5 rounded-2xl space-y-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center">
+                      <AlertTriangle className="w-5 h-5 animate-pulse text-amber-400" />
+                    </div>
+                    <div>
+                      <h5 className="text-xs font-black text-amber-300">بانتظار تفعيل المحادثة الخاصة</h5>
+                      <p className="text-[10px] text-stone-400 mt-0.5">الرجاء تفعيل الروبوت لاستلام إشعارات صفقات الذهب</p>
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-stone-950/60 border border-stone-800/40 rounded-xl space-y-2 text-xs leading-relaxed text-stone-300">
+                    <p className="font-bold text-amber-400">خطوات تفعيل الخدمة في دقيقة واحدة:</p>
+                    <ol className="list-decimal list-inside space-y-1.5 text-stone-400 text-[11px]">
+                      <li>افتح تطبيق تليجرام وابحث عن الروبوت المخصص لنظامك.</li>
+                      <li>اضغط على زر <span className="text-stone-300 font-bold">ابدأ (Start)</span> أو أرسل كلمة <span className="text-stone-300 font-bold">/start</span>.</li>
+                      <li>سيقوم هذا النظام بتسجيل معرّفك الخاص <span className="text-stone-200 font-bold">تلقائياً وفوراً (بث مباشر)</span> دون الحاجة لإعادة تشغيل الخادم.</li>
+                    </ol>
+                  </div>
+                </div>
+              )}
+
+              {/* Bot Secret Info Card */}
+              <div className="bg-stone-950/40 border border-stone-800/60 p-4 rounded-xl space-y-2.5">
+                <span className="text-[11px] font-bold text-stone-300 block">🔒 معايير الأمان والخصوصية القصوى</span>
+                <p className="text-[11px] text-stone-400 leading-relaxed">
+                  يستخدم هذا النظام توكن بوت التليجرام المخزن بشكل آمن في Secrets الخادم (<code>TELEGRAM_BOT_TOKEN</code>). يتم إرسال الإشعارات والصفقات <span className="text-stone-200 font-bold">فقط وحصرياً</span> إلى حسابك الخاص المسجل عبر أمر <code>/start</code>. لن يتم إرسال أي رسائل إلى أي قنوات أو مجموعات عامة أو معرّفات أخرى حفاظاً على سرية صفقاتك.
+                </p>
+              </div>
+            </div>
+
+            {/* Test Actions Panel */}
+            <div className="lg:col-span-5 space-y-4">
+              <div className="bg-stone-950/50 border border-stone-800/80 p-5 rounded-2xl space-y-4 flex flex-col justify-between h-full">
+                <div className="space-y-2">
+                  <span className="text-xs font-black text-stone-200 block font-mono">🧪 تجربة واختبار اتصال تليجرام</span>
+                  <p className="text-[11px] text-stone-400 leading-relaxed">
+                    بعد تفعيل البوت وإرسال أمر <code>/start</code>، يمكنك إرسال إشعار تجريبي فوري للتحقق من سلامة وجودة الربط والاتصال بالروبوت.
+                  </p>
+                </div>
+
+                <div className="space-y-3 pt-4">
+                  {telegramTestStatus.type && (
+                    <div className={`p-3 rounded-xl border text-[11px] font-mono leading-normal animate-in fade-in ${
+                      telegramTestStatus.type === 'success' ? 'bg-emerald-950/40 border-emerald-800 text-emerald-300' : 'bg-rose-950/40 border-rose-800 text-rose-300'
+                    }`}>
+                      {telegramTestStatus.message}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleTestTelegram}
+                    disabled={isTestingTelegram || !telegramStatus.registered}
+                    className="w-full py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-stone-950 font-black text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md shadow-stone-950 font-sans"
+                  >
+                    {isTestingTelegram ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Send className="w-4 h-4" />
+                    )}
+                    <span>إرسال إشعار تجريبي (Test Connection)</span>
+                  </button>
+
+                  <button
+                    onClick={handleTestMockSignal}
+                    disabled={isTestingMockSignal || !telegramStatus.registered}
+                    className="w-full py-2.5 px-4 rounded-xl bg-stone-800 hover:bg-stone-750 border border-stone-700 hover:border-amber-500/40 text-stone-200 hover:text-amber-300 disabled:opacity-40 disabled:cursor-not-allowed font-black text-xs flex items-center justify-center gap-2 transition-all cursor-pointer font-sans"
+                  >
+                    {isTestingMockSignal ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Send className="w-4 h-4" />
+                    )}
+                    <span>إرسال صفقة تجريبية (Test Signal Layout)</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

@@ -40,12 +40,12 @@ export const TradeLedger = ({
     if (outcome === 'WIN_TP1') {
       result = 'WIN';
       // TP1 profit: based on RR ratio
-      const parts = trade.rr.split(':');
+      const parts = (trade.rr || '1:1.5').split(':');
       const ratio = parts.length === 2 ? parseFloat(parts[1]) : 1.5;
       pl = Number((trade.totalRiskAmount ? trade.totalRiskAmount * ratio : trade.riskAmount * ratio).toFixed(2));
     } else if (outcome === 'WIN_TP2') {
       result = 'WIN';
-      const parts = trade.rr.split(':');
+      const parts = (trade.rr || '1:3.0').split(':');
       const ratio = parts.length === 2 ? parseFloat(parts[1]) * 1.4 : 3.0;
       pl = Number((trade.totalRiskAmount ? trade.totalRiskAmount * ratio : trade.riskAmount * 3.0).toFixed(2));
     } else if (outcome === 'LOSS_SL') {

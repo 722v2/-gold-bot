@@ -14,12 +14,12 @@ import { scanner } from './server/scanner.js';
 import { calculatePositionSizing, evaluateTradeRisk } from './server/riskManager.js';
 import { storage } from './server/storage.js';
 import { mt5Bridge } from './server/mt5Bridge.js';
-import { telegramService } from './server/telegram.js';
 import { tradeMonitor } from './server/tradeMonitor.js';
 import { tradeManagementEngine } from './server/tradeManagementEngine.js';
 import { runTradeManagementTests } from './server/tradeManagementTests.js';
 import { runAccountingTests } from './server/accountingTests.js';
 import { globalLifecycleManager, globalPoiTracker } from './server/tradeQualityEngine.js';
+import { telegramService } from './server/telegram.js';
 
 async function startServer() {
   const app = express();
@@ -65,14 +65,6 @@ async function startServer() {
       aiModel: 'NVIDIA NIM DeepSeek V4 Pro (deepseek-ai/deepseek-v4-pro-0813)',
       hasNvidiaKey: !!process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY !== 'MY_NVIDIA_API_KEY',
       hasGeminiKey: !!process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY !== 'MY_NVIDIA_API_KEY',
-      telegramRequired: false,
-      telegramConfigured: telegramService.getStatus().configured,
-      telegramStatus: telegramService.getStatus().status,
-      telegramLastError: telegramService.getStatus().lastError,
-      telegramLastSentTimestamp: telegramService.getStatus().lastSentTimestamp,
-      telegramDeliveryMethod: telegramService.getStatus().deliveryMethod,
-      telegramBotId: telegramService.getStatus().botId,
-      telegramLastDetectedChatId: telegramService.getStatus().lastDetectedChatId,
     });
   });
 
@@ -706,7 +698,6 @@ async function startServer() {
         intervalSeconds,
         intervalMinutes,
         minConfidence,
-        telegramEnabled,
         balance,
         losingStreak,
         brokerSpecs,
@@ -721,10 +712,27 @@ async function startServer() {
         ...(intervalSeconds !== undefined ? { intervalSeconds: Math.max(10, Number(intervalSeconds)) } : {}),
         ...(intervalMinutes !== undefined ? { intervalMinutes: Math.max(0.5, Number(intervalMinutes)) } : {}),
         ...(minConfidence !== undefined ? { minConfidence: Math.min(100, Math.max(50, Number(minConfidence))) } : {}),
-        ...(telegramEnabled !== undefined ? { telegramEnabled: Boolean(telegramEnabled) } : {}),
       });
 
       res.json({ success: true, config: updated });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // Manual cancellation of an ACTIVE/APPROVED/DISPATCHED signal
+  app.post('/api/scanner/cancel-signal', (req, res) => {
+    try {
+      const { id } = req.body;
+      if (!id) {
+        return res.status(400).json({ success: false, error: 'Missing opportunity ID or signal ID (id)' });
+      }
+      const success = scanner.cancelActiveSignal(id);
+      if (success) {
+        res.json({ success: true, message: 'Signal cancelled successfully' });
+      } else {
+        res.status(404).json({ success: false, error: 'Opportunity or Signal not found' });
+      }
     } catch (error: any) {
       res.status(500).json({ success: false, error: error.message });
     }
@@ -811,6 +819,16 @@ async function startServer() {
       const updatedLedger = storage.saveTrade(updatedItem);
       const dailyStats = storage.getTodayStats();
       res.json({ success: true, trade: updatedItem, trades: updatedLedger, dailyStats });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  app.delete('/api/trades', async (req, res) => {
+    try {
+      const updatedLedger = await storage.clearAllTrades();
+      const dailyStats = storage.getTodayStats();
+      res.json({ success: true, count: 0, trades: updatedLedger, dailyStats });
     } catch (error: any) {
       res.status(500).json({ success: false, error: error.message });
     }
@@ -907,31 +925,8 @@ async function startServer() {
   app.get('/api/scanner/cron-tick', handleCronTick);
   app.post('/api/scanner/cron-tick', handleCronTick);
 
-  // Telegram test notification endpoint (Safe server-side test message only - Requirement 11)
-  app.post('/api/telegram/test', async (req, res) => {
-    try {
-      const result = await telegramService.sendTestNotification();
-      res.json(result);
-    } catch (e: any) {
-      res.json({ success: false, configured: false, error: e.message || 'Telegram test failed' });
-    }
-  });
-
-  // Telegram webhook receiver for inline button callback queries (Feature: Outcome Tracking)
-  app.post('/api/telegram/webhook', async (req, res) => {
-    // Acknowledge Telegram update immediately (Telegram requires 200 OK fast)
-    res.status(200).json({ ok: true });
-    try {
-      if (req.body) {
-        await telegramService.handleUpdate(req.body);
-      }
-    } catch (err) {
-      console.error('[TELEGRAM WEBHOOK] Error processing update:', err);
-    }
-  });
-
-  // Get persisted trade outcomes (Requirement 6)
-  app.get('/api/telegram/outcomes', (req, res) => {
+  // Get persisted trade outcomes
+  app.get('/api/outcomes', (req, res) => {
     try {
       const outcomes = storage.getTradeOutcomes();
       res.json({ success: true, outcomes });
@@ -940,8 +935,36 @@ async function startServer() {
     }
   });
 
+  // Brand-new Telegram integration endpoints
+  app.get('/api/telegram/status', (req, res) => {
+    try {
+      const status = telegramService.getStatus();
+      res.json({ success: true, ...status });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || 'Failed to retrieve Telegram status' });
+    }
+  });
+
+  app.post('/api/telegram/test', async (req, res) => {
+    try {
+      const result = await telegramService.sendTestNotification();
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || 'Failed to trigger Telegram test' });
+    }
+  });
+
+  app.post('/api/telegram/test-signal', async (req, res) => {
+    try {
+      const result = await telegramService.sendMockSignalNotification();
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || 'Failed to trigger mock signal test' });
+    }
+  });
+
   // Manual or programmatic trade outcome recording endpoint
-  app.post('/api/telegram/record-outcome', (req, res) => {
+  app.post('/api/record-outcome', (req, res) => {
     try {
       const { signalId, outcome, realizedPnl, exitPrice, source, brokerDealId, brokerOrderId, closeReason } = req.body || {};
       if (!signalId || (outcome !== 'WIN' && outcome !== 'LOSS')) {
@@ -1043,6 +1066,8 @@ async function startServer() {
     scanner.start();
     // Start trade lifecycle monitor (evaluates open trades every 10s)
     tradeMonitor.start(10000);
+    // Initialize brand-new Telegram integration and polling
+    telegramService.init();
   });
 }
 

@@ -3,7 +3,6 @@ import { storage, TradeOutcomeRecord } from './storage.js';
 import { evaluateTradeRisk, BrokerContractSpecs } from './riskManager.js';
 import { generateMultiStrategyCandidates } from './strategyEngine.js';
 import { mt5Bridge } from './mt5Bridge.js';
-import { telegramService } from './telegram.js';
 import { analyzeTechnicals } from './indicators.js';
 import { Candle, TechnicalIndicators, TradeSignal, TradeLedgerItem } from '../src/types.js';
 
@@ -246,7 +245,7 @@ export async function runEndToEndStressTest(): Promise<{
       outcome: 'WIN',
       exitPrice: tp2,
       realizedPnl: 12.00, // $12 on 0.01 lot
-      source: 'TELEGRAM_CALLBACK',
+      source: 'MANUAL',
       timestamp: Date.now(),
       isoTime: new Date().toISOString(),
     };
@@ -944,7 +943,7 @@ export async function runEndToEndStressTest(): Promise<{
       outcome: 'LOSS',
       exitPrice: 4280.0,
       realizedPnl: -4.00,
-      source: 'TELEGRAM_CALLBACK',
+      source: 'MANUAL',
       timestamp: Date.now(),
       isoTime: new Date().toISOString(),
     };

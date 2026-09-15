@@ -123,7 +123,8 @@ export type CandidateLifecycleState =
   | 'FAILED'
   | 'INVALIDATED'
   | 'CLOSED'
-  | 'EXPIRED';
+  | 'EXPIRED'
+  | 'NOT_ENTERED';
 
 export interface CandidateLifecycleRecord {
   id: string;
@@ -153,7 +154,6 @@ export type NavigationTab =
   | 'backtest'
   | 'risk'
   | 'analytics'
-  | 'telegram'
   | 'health'
   | 'settings';
 
@@ -283,11 +283,12 @@ export interface AppSettings {
   maxLoss?: number; // User-configured maximum monetary loss limit in USD (e.g. $5.00)
   partialClosePercent?: number; // Configurable percentage to close at TP1 (e.g. 50%)
   enableTradeManagement?: boolean; // Enable Phase 4 continuous trade lifecycle management
+  oppositeCooldownMinutes?: number; // Configurable cooldown minutes for opposite signals after trade close
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   capitalSource: 'MANUAL',
-  manualCapital: 10.0,
+  manualCapital: 25.0,
   riskPerTrade: 15.0,
   maxRiskPerTrade: 15.0,
   minTp1RR: 1.5,
@@ -308,6 +309,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   maxLoss: 5.0,
   partialClosePercent: 50,
   enableTradeManagement: true,
+  oppositeCooldownMinutes: 10,
 };
 
 export interface BrokerSettings {
@@ -328,7 +330,7 @@ export interface BrokerSettings {
 }
 
 export const DEFAULT_BROKER_SETTINGS: BrokerSettings = {
-  accountBalance: 10,
+  accountBalance: 25,
   riskPercent: 15.0, // 15% risk rule for challenge account
   contractSizeOz: 100,
   minimumLot: 0.01,
@@ -440,8 +442,6 @@ export interface TradeSignal {
   invalidation: string; // When the trade becomes invalid
   noTradeReason?: string; // Reason if NO TRADE
   aiAnalysisText?: string;
-  telegramDispatchStatus?: 'NOT_ATTEMPTED' | 'SUPPRESSED' | 'SENT' | 'FAILED';
-  telegramDispatchReason?: string;
 }
 
 export interface Reinforcement {
@@ -472,7 +472,7 @@ export interface TradeLedgerItem {
   lotSize?: number;
   confidence: number;
   setup: string;
-  result: 'OPEN' | 'WIN' | 'LOSS' | 'CANCELLED' | 'VOID' | 'EXPIRED';
+  result: 'OPEN' | 'WIN' | 'LOSS' | 'CANCELLED' | 'VOID' | 'EXPIRED' | 'NOT_ENTERED';
   isActive?: boolean;
   pl: number; // Stored numeric P&L (realized if closed, 0 if open)
   realizedPnl?: number; // Authoritative realized P&L ($)
@@ -481,12 +481,14 @@ export interface TradeLedgerItem {
   exitTime?: string;
   closedAt?: number;
   closeReason?: string;
-  source?: 'MANUAL' | 'TELEGRAM_CALLBACK' | 'MT5' | 'SYSTEM';
+  source?: 'MANUAL' | 'MT5' | 'SYSTEM';
   brokerDealId?: string;
   brokerOrderId?: string;
   theoreticalTp1Profit?: number;
   theoreticalTp2Profit?: number;
   notes?: string;
+  signalId?: string;
+  setupId?: string;
   // Reinforcement/scale-in support
   reinforcements?: Reinforcement[];
   averageEntry?: number;
@@ -514,6 +516,7 @@ export type TradeManagementState =
   | 'EARLY_EXIT'
   | 'REVERSE_CANDIDATE'
   | 'INVALIDATED'
+  | 'DATA_INCOMPLETE'
   | 'CLOSED';
 
 export type ManagementActionType =
@@ -556,7 +559,6 @@ export interface ManagementAction {
     confidence: number;
     score?: number;
   };
-  telegramNotified?: boolean;
 }
 
 export interface AccountStats {
@@ -585,7 +587,6 @@ export interface ScannerConfig {
   intervalSeconds: number; // 60 seconds
   intervalMinutes: number;
   minConfidence: number;
-  telegramEnabled: boolean;
   lastScanTime: number | null;
   nextScanTime: number | null;
   lastScanStatus: string;
@@ -751,7 +752,7 @@ export interface TradeOpportunity {
   strategyFamily: string;
   direction: 'BUY' | 'SELL';
   timeframe: string;
-  status: 'ACTIVE' | 'DISPATCHED' | 'FAILED' | 'COMPLETED';
+  status: 'ACTIVE' | 'DISPATCHED' | 'FAILED' | 'COMPLETED' | 'NOT_ENTERED' | 'CANCELLED';
   firstObservedTime: number;
   lastUpdatedTime: number;
   entry: number;
@@ -759,10 +760,19 @@ export interface TradeOpportunity {
   tp1: number;
   tp2: number;
   confidence: number;
+  extremeLevel?: number;
+  neckline?: number;
+  patternAnchorKey?: string;
+  pivot1Time?: number;
+  pivot2Time?: number;
+  poiId?: string;
   dispatchedAt?: number;
   failedAt?: number;
   completedAt?: number;
-  telegramMessageId?: number;
+  signalId?: string;
+  telegramRetryCount?: number;
+  telegramNextRetryTime?: number;
+  telegramDeliveryInFlight?: boolean;
 }
 
 

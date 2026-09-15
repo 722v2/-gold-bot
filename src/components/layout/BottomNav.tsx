@@ -22,7 +22,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   openTradesCount = 0,
 }) => {
   const handleOpenMore = onOpenMore || onOpenMoreDrawer || (() => {});
-  const isMoreActive = ['risk', 'analytics', 'telegram', 'health', 'settings'].includes(activeTab);
+  const isMoreActive = ['risk', 'analytics', 'health', 'settings'].includes(activeTab);
 
   return (
     <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-stone-950/95 backdrop-blur-md border-t border-stone-800/90 px-1.5 py-1.5 safe-area-pb">

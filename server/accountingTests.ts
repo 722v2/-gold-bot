@@ -1,5 +1,6 @@
 import { storage, TradeOutcomeRecord } from './storage.js';
 import { sanitizeFirestoreData } from './storage.js';
+import { TradeLedgerItem, TradeSignal, TradeOpportunity } from '../src/types.js';
 
 interface TestResult {
   testNumber: number;
@@ -8,457 +9,668 @@ interface TestResult {
   details: string;
 }
 
+function createTestOpenTrade(id: string, overrides: Partial<TradeLedgerItem> = {}): TradeLedgerItem {
+  const trade: TradeLedgerItem = {
+    id,
+    tradeNumber: Date.now(),
+    date: new Date().toISOString(),
+    asset: 'XAU/USD',
+    direction: 'BUY NOW',
+    entry: 4300.0,
+    sl: 4295.0,
+    tp1: 4310.0,
+    tp2: 4315.0,
+    rr: '1:2',
+    riskPercent: 15,
+    riskAmount: 1.5,
+    lotSize: 0.01,
+    confidence: 80,
+    setup: 'Test Setup',
+    result: 'OPEN',
+    isActive: true,
+    pl: 0,
+    balanceAfterTrade: storage.getCurrentBalance(),
+    ...overrides,
+  };
+  storage.saveTrade(trade);
+  return trade;
+}
+
 export function runAccountingTests(): { allPassed: boolean; results: TestResult[] } {
   const wasTesting = process.env.IS_TESTING === 'true';
   storage.setTestingMode(true);
   try {
     const results: TestResult[] = [];
 
-    const initialStartingBalance = 100.00;
+    const initialStartingBalance = 100.0;
     storage.setStartingBalance(initialStartingBalance);
 
-  // --------------------------------------------------------------------------
-  // TEST 1: WIN outcome with explicit realized P&L (+$17.00 for Trade #2) updates balance by exactly +$17.00
-  // --------------------------------------------------------------------------
-  try {
-    const balBefore = storage.getCurrentBalance();
-    const tradeId = 'test-trade-1-win-explicit';
-    const record: TradeOutcomeRecord = {
-      signalId: tradeId,
-      tradeId,
-      direction: 'SELL NOW',
-      orderType: 'MARKET',
-      entry: 4296.49,
-      stopLoss: 4300.49,
-      tp1: 4278.29,
-      tp2: 4276.25,
-      outcome: 'WIN',
-      realizedPnl: 17.00,
-      exitPrice: 4279.49,
-      source: 'TELEGRAM_CALLBACK',
-      timestamp: Date.now(),
-      isoTime: new Date().toISOString(),
-    };
+    // --------------------------------------------------------------------------
+    // TEST 1: WIN outcome with explicit realized P&L on existing trade updates balance
+    // --------------------------------------------------------------------------
+    try {
+      const balBefore = storage.getCurrentBalance();
+      const tradeId = 'test-trade-1-win-explicit';
+      createTestOpenTrade(tradeId, { direction: 'SELL NOW', entry: 4296.49, sl: 4300.49, tp1: 4278.29 });
 
-    const res = storage.recordTradeOutcome(record);
-    const balAfter = storage.getCurrentBalance();
-    const pnlMatches = res.trade?.realizedPnl === 17.00;
-    const balanceDiff = Number((balAfter - balBefore).toFixed(2));
-    const passed = res.success && pnlMatches && balanceDiff === 17.00;
+      const record: TradeOutcomeRecord = {
+        signalId: tradeId,
+        tradeId,
+        direction: 'SELL NOW',
+        orderType: 'MARKET',
+        entry: 4296.49,
+        stopLoss: 4300.49,
+        tp1: 4278.29,
+        tp2: 4276.25,
+        outcome: 'WIN',
+        realizedPnl: 17.0,
+        exitPrice: 4279.49,
+        source: 'MANUAL',
+        timestamp: Date.now(),
+        isoTime: new Date().toISOString(),
+      };
 
-    results.push({
-      testNumber: 1,
-      name: 'WIN outcome with explicit realized P&L (+17.00 USD)',
-      passed,
-      details: `Balance before: $${balBefore.toFixed(2)}, after: $${balAfter.toFixed(2)} (diff: +$${balanceDiff.toFixed(2)}), recorded PnL: $${res.trade?.realizedPnl}`,
-    });
-  } catch (err: any) {
-    results.push({
-      testNumber: 1,
-      name: 'WIN outcome with explicit realized P&L (+17.00 USD)',
-      passed: false,
-      details: `Exception: ${err?.message}`,
-    });
-  }
+      const res = storage.recordTradeOutcome(record);
+      const balAfter = storage.getCurrentBalance();
+      const pnlMatches = res.trade?.realizedPnl === 17.0;
+      const balanceDiff = Number((balAfter - balBefore).toFixed(2));
+      const passed = res.success && pnlMatches && balanceDiff === 17.0;
 
-  // --------------------------------------------------------------------------
-  // TEST 2: WIN outcome with composite RR string does NOT fall back to 1.5R
-  // --------------------------------------------------------------------------
-  try {
-    const balBefore = storage.getCurrentBalance();
-    const tradeId = 'test-trade-2-composite-rr';
-    const mockSignal = {
-      id: tradeId,
-      symbol: 'XAU/USD',
-      signal: 'SELL NOW',
-      entry: 4296.49,
-      stopLoss: 4300.49,
-      tp1: 4278.29,
-      tp2: 4276.25,
-      tp1Points: 182,
-      tp2Points: 202.4,
-      slPoints: 40,
-      rr: 'TP1: 1:4.55 (182.0 pts) | TP2: 1:5.06 (202.4 pts)',
-      lotSize: 0.01,
-      riskAmount: 4.00,
-      timestamp: Date.now(),
-    } as any;
+      results.push({
+        testNumber: 1,
+        name: 'WIN outcome with explicit realized P&L (+17.00 USD) on existing trade',
+        passed,
+        details: `Balance before: $${balBefore.toFixed(2)}, after: $${balAfter.toFixed(2)} (diff: +$${balanceDiff.toFixed(2)}), recorded PnL: $${res.trade?.realizedPnl}`,
+      });
+    } catch (err: any) {
+      results.push({
+        testNumber: 1,
+        name: 'WIN outcome with explicit realized P&L (+17.00 USD) on existing trade',
+        passed: false,
+        details: `Exception: ${err?.message}`,
+      });
+    }
 
-    const record: TradeOutcomeRecord = {
-      signalId: tradeId,
-      tradeId,
-      direction: 'SELL NOW',
-      orderType: 'MARKET',
-      entry: 4296.49,
-      stopLoss: 4300.49,
-      tp1: 4278.29,
-      tp2: 4276.25,
-      outcome: 'WIN',
-      exitPrice: 4278.29, // Closed at TP1
-      source: 'MANUAL',
-      timestamp: Date.now(),
-      isoTime: new Date().toISOString(),
-    };
+    // --------------------------------------------------------------------------
+    // TEST 2: WIN outcome with composite RR calculates price distance, not fallback 1.5R
+    // --------------------------------------------------------------------------
+    try {
+      const balBefore = storage.getCurrentBalance();
+      const tradeId = 'test-trade-2-composite-rr';
+      createTestOpenTrade(tradeId, {
+        direction: 'SELL NOW',
+        entry: 4296.49,
+        sl: 4300.49,
+        tp1: 4278.29,
+        tp2: 4276.25,
+        lotSize: 0.01,
+      });
 
-    const res = storage.recordTradeOutcome(record, mockSignal);
-    const balAfter = storage.getCurrentBalance();
-    const pnl = res.trade?.realizedPnl ?? 0;
-    // Calculated from price distance: (4296.49 - 4278.29) * 100 * 0.01 = $18.20
-    // Old buggy calculation was riskAmount * 1.5 = $6.00 or $6.07
-    const notBuggy15R = pnl > 10.00 && pnl !== 6.00 && pnl !== 6.07;
-    const balanceDiff = Number((balAfter - balBefore).toFixed(2));
-    const passed = res.success && notBuggy15R && balanceDiff === pnl;
+      const mockSignal = {
+        id: tradeId,
+        symbol: 'XAU/USD',
+        signal: 'SELL NOW',
+        entry: 4296.49,
+        stopLoss: 4300.49,
+        tp1: 4278.29,
+        tp2: 4276.25,
+        tp1Points: 182,
+        tp2Points: 202.4,
+        slPoints: 40,
+        rr: 'TP1: 1:4.55 (182.0 pts) | TP2: 1:5.06 (202.4 pts)',
+        lotSize: 0.01,
+        riskAmount: 4.0,
+        timestamp: Date.now(),
+      } as any;
 
-    results.push({
-      testNumber: 2,
-      name: 'WIN outcome does NOT fall back to 1.5R on composite RR string',
-      passed,
-      details: `Calculated P&L: $${pnl.toFixed(2)} (expected ~$18.20 based on 182 pts * $0.10, NOT $6.00), balance diff: +$${balanceDiff.toFixed(2)}`,
-    });
-  } catch (err: any) {
-    results.push({
-      testNumber: 2,
-      name: 'WIN outcome does NOT fall back to 1.5R on composite RR string',
-      passed: false,
-      details: `Exception: ${err?.message}`,
-    });
-  }
+      const record: TradeOutcomeRecord = {
+        signalId: tradeId,
+        tradeId,
+        direction: 'SELL NOW',
+        orderType: 'MARKET',
+        entry: 4296.49,
+        stopLoss: 4300.49,
+        tp1: 4278.29,
+        tp2: 4276.25,
+        outcome: 'WIN',
+        exitPrice: 4278.29, // Closed at TP1
+        source: 'MANUAL',
+        timestamp: Date.now(),
+        isoTime: new Date().toISOString(),
+      };
 
-  // --------------------------------------------------------------------------
-  // TEST 3: LOSS outcome records exact negative P&L and updates balance correctly
-  // --------------------------------------------------------------------------
-  try {
-    const balBefore = storage.getCurrentBalance();
-    const tradeId = 'test-trade-3-loss-exact';
-    const record: TradeOutcomeRecord = {
-      signalId: tradeId,
-      tradeId,
-      direction: 'BUY NOW',
-      orderType: 'MARKET',
-      entry: 4300.00,
-      stopLoss: 4296.00,
-      tp1: 4310.00,
-      tp2: 4315.00,
-      outcome: 'LOSS',
-      realizedPnl: -4.00,
-      exitPrice: 4296.00,
-      source: 'MANUAL',
-      timestamp: Date.now(),
-      isoTime: new Date().toISOString(),
-    };
+      const res = storage.recordTradeOutcome(record, mockSignal);
+      const balAfter = storage.getCurrentBalance();
+      const pnl = res.trade?.realizedPnl ?? 0;
+      const notBuggy15R = pnl > 10.0 && pnl !== 6.0 && pnl !== 6.07;
+      const balanceDiff = Number((balAfter - balBefore).toFixed(2));
+      const passed = res.success && notBuggy15R && balanceDiff === pnl;
 
-    const res = storage.recordTradeOutcome(record);
-    const balAfter = storage.getCurrentBalance();
-    const balanceDiff = Number((balAfter - balBefore).toFixed(2));
-    const passed = res.success && res.trade?.realizedPnl === -4.00 && balanceDiff === -4.00;
+      results.push({
+        testNumber: 2,
+        name: 'WIN outcome does NOT fall back to 1.5R on composite RR string',
+        passed,
+        details: `Calculated P&L: $${pnl.toFixed(2)} (expected ~$18.20 based on 182 pts * $0.10, NOT $6.00), balance diff: +$${balanceDiff.toFixed(2)}`,
+      });
+    } catch (err: any) {
+      results.push({
+        testNumber: 2,
+        name: 'WIN outcome does NOT fall back to 1.5R on composite RR string',
+        passed: false,
+        details: `Exception: ${err?.message}`,
+      });
+    }
 
-    results.push({
-      testNumber: 3,
-      name: 'LOSS outcome records exact negative P&L (-$4.00) and reduces balance',
-      passed,
-      details: `Balance before: $${balBefore.toFixed(2)}, after: $${balAfter.toFixed(2)} (diff: -$${Math.abs(balanceDiff).toFixed(2)}), recorded PnL: $${res.trade?.realizedPnl}`,
-    });
-  } catch (err: any) {
-    results.push({
-      testNumber: 3,
-      name: 'LOSS outcome records exact negative P&L (-$4.00) and reduces balance',
-      passed: false,
-      details: `Exception: ${err?.message}`,
-    });
-  }
+    // --------------------------------------------------------------------------
+    // TEST 3: LOSS outcome records exact negative P&L and reduces balance
+    // --------------------------------------------------------------------------
+    try {
+      const balBefore = storage.getCurrentBalance();
+      const tradeId = 'test-trade-3-loss-exact';
+      createTestOpenTrade(tradeId, { direction: 'BUY NOW', entry: 4300.0, sl: 4296.0, tp1: 4310.0 });
 
-  // --------------------------------------------------------------------------
-  // TEST 4: Directional sign enforcement (WIN cannot be negative, LOSS cannot be positive)
-  // --------------------------------------------------------------------------
-  try {
-    const tradeIdWin = 'test-trade-4-win-sign-guard';
-    const recordWinWithNegative: TradeOutcomeRecord = {
-      signalId: tradeIdWin,
-      tradeId: tradeIdWin,
-      direction: 'BUY NOW',
-      orderType: 'MARKET',
-      entry: 4300.00,
-      stopLoss: 4296.00,
-      tp1: 4310.00,
-      tp2: 4315.00,
-      outcome: 'WIN',
-      realizedPnl: -12.50, // Erroneously passed as negative
-      source: 'MANUAL',
-      timestamp: Date.now(),
-      isoTime: new Date().toISOString(),
-    };
+      const record: TradeOutcomeRecord = {
+        signalId: tradeId,
+        tradeId,
+        direction: 'BUY NOW',
+        orderType: 'MARKET',
+        entry: 4300.0,
+        stopLoss: 4296.0,
+        tp1: 4310.0,
+        tp2: 4315.0,
+        outcome: 'LOSS',
+        realizedPnl: -4.0,
+        exitPrice: 4296.0,
+        source: 'MANUAL',
+        timestamp: Date.now(),
+        isoTime: new Date().toISOString(),
+      };
 
-    const resWin = storage.recordTradeOutcome(recordWinWithNegative);
-    const winFixed = (resWin.trade?.realizedPnl ?? 0) > 0;
+      const res = storage.recordTradeOutcome(record);
+      const balAfter = storage.getCurrentBalance();
+      const balanceDiff = Number((balAfter - balBefore).toFixed(2));
+      const passed = res.success && res.trade?.realizedPnl === -4.0 && balanceDiff === -4.0;
 
-    const tradeIdLoss = 'test-trade-4-loss-sign-guard';
-    const recordLossWithPositive: TradeOutcomeRecord = {
-      signalId: tradeIdLoss,
-      tradeId: tradeIdLoss,
-      direction: 'BUY NOW',
-      orderType: 'MARKET',
-      entry: 4300.00,
-      stopLoss: 4296.00,
-      tp1: 4310.00,
-      tp2: 4315.00,
-      outcome: 'LOSS',
-      realizedPnl: 8.00, // Erroneously passed as positive
-      source: 'MANUAL',
-      timestamp: Date.now(),
-      isoTime: new Date().toISOString(),
-    };
+      results.push({
+        testNumber: 3,
+        name: 'LOSS outcome records exact negative P&L (-$4.00) and reduces balance',
+        passed,
+        details: `Balance before: $${balBefore.toFixed(2)}, after: $${balAfter.toFixed(2)} (diff: -$${Math.abs(balanceDiff).toFixed(2)}), recorded PnL: $${res.trade?.realizedPnl}`,
+      });
+    } catch (err: any) {
+      results.push({
+        testNumber: 3,
+        name: 'LOSS outcome records exact negative P&L (-$4.00) and reduces balance',
+        passed: false,
+        details: `Exception: ${err?.message}`,
+      });
+    }
 
-    const resLoss = storage.recordTradeOutcome(recordLossWithPositive);
-    const lossFixed = (resLoss.trade?.realizedPnl ?? 0) < 0;
+    // --------------------------------------------------------------------------
+    // TEST 4: Directional sign enforcement (WIN cannot be negative, LOSS cannot be positive)
+    // --------------------------------------------------------------------------
+    try {
+      const tradeIdWin = 'test-trade-4-win-sign-guard';
+      createTestOpenTrade(tradeIdWin, { direction: 'BUY NOW' });
+      const recordWinWithNegative: TradeOutcomeRecord = {
+        signalId: tradeIdWin,
+        tradeId: tradeIdWin,
+        direction: 'BUY NOW',
+        orderType: 'MARKET',
+        entry: 4300.0,
+        stopLoss: 4296.0,
+        tp1: 4310.0,
+        tp2: 4315.0,
+        outcome: 'WIN',
+        realizedPnl: -12.5, // Erroneously passed as negative
+        source: 'MANUAL',
+        timestamp: Date.now(),
+        isoTime: new Date().toISOString(),
+      };
 
-    const passed = winFixed && lossFixed;
-    results.push({
-      testNumber: 4,
-      name: 'Directional sign enforcement for WIN (+) and LOSS (-)',
-      passed,
-      details: `WIN with input -12.50 normalized to: +$${resWin.trade?.realizedPnl}, LOSS with input +8.00 normalized to: $${resLoss.trade?.realizedPnl}`,
-    });
-  } catch (err: any) {
-    results.push({
-      testNumber: 4,
-      name: 'Directional sign enforcement for WIN (+) and LOSS (-)',
-      passed: false,
-      details: `Exception: ${err?.message}`,
-    });
-  }
+      const resWin = storage.recordTradeOutcome(recordWinWithNegative);
+      const winFixed = (resWin.trade?.realizedPnl ?? 0) > 0;
 
-  // --------------------------------------------------------------------------
-  // TEST 5: Idempotency / duplicate callback protection (prevents double counting)
-  // --------------------------------------------------------------------------
-  try {
-    const balBefore = storage.getCurrentBalance();
-    const tradeId = 'test-trade-5-duplicate-protection';
-    const record: TradeOutcomeRecord = {
-      signalId: tradeId,
-      tradeId,
-      direction: 'SELL NOW',
-      orderType: 'MARKET',
-      entry: 4300.00,
-      stopLoss: 4305.00,
-      tp1: 4290.00,
-      tp2: 4285.00,
-      outcome: 'WIN',
-      realizedPnl: 10.00,
-      source: 'TELEGRAM_CALLBACK',
-      timestamp: Date.now(),
-      isoTime: new Date().toISOString(),
-    };
+      const tradeIdLoss = 'test-trade-4-loss-sign-guard';
+      createTestOpenTrade(tradeIdLoss, { direction: 'BUY NOW' });
+      const recordLossWithPositive: TradeOutcomeRecord = {
+        signalId: tradeIdLoss,
+        tradeId: tradeIdLoss,
+        direction: 'BUY NOW',
+        orderType: 'MARKET',
+        entry: 4300.0,
+        stopLoss: 4296.0,
+        tp1: 4310.0,
+        tp2: 4315.0,
+        outcome: 'LOSS',
+        realizedPnl: 8.0, // Erroneously passed as positive
+        source: 'MANUAL',
+        timestamp: Date.now(),
+        isoTime: new Date().toISOString(),
+      };
 
-    // First submission
-    const res1 = storage.recordTradeOutcome(record);
-    const balAfterFirst = storage.getCurrentBalance();
+      const resLoss = storage.recordTradeOutcome(recordLossWithPositive);
+      const lossFixed = (resLoss.trade?.realizedPnl ?? 0) < 0;
 
-    // Second duplicate submission
-    const res2 = storage.recordTradeOutcome(record);
-    const balAfterSecond = storage.getCurrentBalance();
+      const passed = winFixed && lossFixed;
+      results.push({
+        testNumber: 4,
+        name: 'Directional sign enforcement for WIN (+) and LOSS (-)',
+        passed,
+        details: `WIN with input -12.50 normalized to: +$${resWin.trade?.realizedPnl}, LOSS with input +8.00 normalized to: $${resLoss.trade?.realizedPnl}`,
+      });
+    } catch (err: any) {
+      results.push({
+        testNumber: 4,
+        name: 'Directional sign enforcement for WIN (+) and LOSS (-)',
+        passed: false,
+        details: `Exception: ${err?.message}`,
+      });
+    }
 
-    const firstPassed = res1.success && balAfterFirst === balBefore + 10.00;
-    const secondBlocked = res2.isDuplicate === true && balAfterSecond === balAfterFirst;
-    const passed = firstPassed && secondBlocked;
+    // --------------------------------------------------------------------------
+    // TEST 5: Idempotency / duplicate callback protection (prevents double counting)
+    // --------------------------------------------------------------------------
+    try {
+      const balBefore = storage.getCurrentBalance();
+      const tradeId = 'test-trade-5-duplicate-protection';
+      createTestOpenTrade(tradeId, { direction: 'SELL NOW' });
 
-    results.push({
-      testNumber: 5,
-      name: 'Idempotency and duplicate submission protection',
-      passed,
-      details: `First submission success: ${res1.success} (bal: $${balAfterFirst.toFixed(2)}), second submission isDuplicate: ${res2.isDuplicate} (bal unchanged: $${balAfterSecond.toFixed(2)})`,
-    });
-  } catch (err: any) {
-    results.push({
-      testNumber: 5,
-      name: 'Idempotency and duplicate submission protection',
-      passed: false,
-      details: `Exception: ${err?.message}`,
-    });
-  }
+      const record: TradeOutcomeRecord = {
+        signalId: tradeId,
+        tradeId,
+        direction: 'SELL NOW',
+        orderType: 'MARKET',
+        entry: 4300.0,
+        stopLoss: 4305.0,
+        tp1: 4290.0,
+        tp2: 4285.0,
+        outcome: 'WIN',
+        realizedPnl: 10.0,
+        source: 'MANUAL',
+        timestamp: Date.now(),
+        isoTime: new Date().toISOString(),
+      };
 
-  // --------------------------------------------------------------------------
-  // TEST 6: Gold contract calculation: 100 multiplier with 0.01 lot
-  // --------------------------------------------------------------------------
-  try {
-    const entry = 4296.49;
-    const tp1 = 4278.29; // Sell trade, 18.20 gold points
-    const lotSize = 0.01;
-    const expectedPnl = Number((Math.abs(entry - tp1) * 100 * lotSize).toFixed(2)); // 18.20 * 100 * 0.01 = 18.20
+      // First submission
+      const res1 = storage.recordTradeOutcome(record);
+      const balAfterFirst = storage.getCurrentBalance();
 
-    const tradeId = 'test-trade-6-gold-formula';
-    const record: TradeOutcomeRecord = {
-      signalId: tradeId,
-      tradeId,
-      direction: 'SELL NOW',
-      orderType: 'MARKET',
-      entry,
-      stopLoss: 4300.49,
-      tp1,
-      tp2: 4276.25,
-      outcome: 'WIN',
-      exitPrice: tp1,
-      source: 'MANUAL',
-      timestamp: Date.now(),
-      isoTime: new Date().toISOString(),
-    };
+      // Second duplicate submission
+      const res2 = storage.recordTradeOutcome(record);
+      const balAfterSecond = storage.getCurrentBalance();
 
-    const res = storage.recordTradeOutcome(record);
-    const pnl = res.trade?.realizedPnl;
-    const passed = res.success && pnl === expectedPnl && pnl === 18.20;
+      const firstPassed = res1.success && balAfterFirst === balBefore + 10.0;
+      const secondBlocked = res2.isDuplicate === true && balAfterSecond === balAfterFirst;
+      const passed = firstPassed && secondBlocked;
 
-    results.push({
-      testNumber: 6,
-      name: 'Gold contract size calculation (|ΔPrice| * 100 * LotSize)',
-      passed,
-      details: `18.20 points * 100 oz * 0.01 lot = $${expectedPnl.toFixed(2)}, recorded: $${pnl}`,
-    });
-  } catch (err: any) {
-    results.push({
-      testNumber: 6,
-      name: 'Gold contract size calculation (|ΔPrice| * 100 * LotSize)',
-      passed: false,
-      details: `Exception: ${err?.message}`,
-    });
-  }
+      results.push({
+        testNumber: 5,
+        name: 'Idempotency and duplicate submission protection',
+        passed,
+        details: `First submission success: ${res1.success} (bal: $${balAfterFirst.toFixed(2)}), second submission isDuplicate: ${res2.isDuplicate} (bal unchanged: $${balAfterSecond.toFixed(2)})`,
+      });
+    } catch (err: any) {
+      results.push({
+        testNumber: 5,
+        name: 'Idempotency and duplicate submission protection',
+        passed: false,
+        details: `Exception: ${err?.message}`,
+      });
+    }
 
-  // --------------------------------------------------------------------------
-  // TEST 7: Future MT5 reconciliation (reconcileMt5Trade) with brokerDealId
-  // --------------------------------------------------------------------------
-  try {
-    const balBefore = storage.getCurrentBalance();
-    const tradeId = 'test-trade-7-mt5-reconciliation';
-    const brokerDealId = 'MT5_DEAL_987654321';
-    const brokerOrderId = 'MT5_ORDER_123456';
+    // --------------------------------------------------------------------------
+    // TEST 6: Gold contract calculation: 100 multiplier with 0.01 lot
+    // --------------------------------------------------------------------------
+    try {
+      const entry = 4296.49;
+      const tp1 = 4278.29; // Sell trade, 18.20 gold points
+      const lotSize = 0.01;
+      const expectedPnl = Number((Math.abs(entry - tp1) * 100 * lotSize).toFixed(2)); // 18.20 * 100 * 0.01 = 18.20
 
-    const res = storage.reconcileMt5Trade({
-      signalOrTradeId: tradeId,
-      brokerDealId,
-      brokerOrderId,
-      entryPrice: 4290.00,
-      exitPrice: 4275.00,
-      lotSize: 0.02,
-      realizedPnl: 30.00,
-      closedAt: Date.now(),
-      closeReason: 'MT5_TP_HIT',
-      direction: 'SELL NOW',
-    });
+      const tradeId = 'test-trade-6-gold-formula';
+      createTestOpenTrade(tradeId, { direction: 'SELL NOW', entry, sl: 4300.49, tp1, lotSize });
 
-    const balAfter = storage.getCurrentBalance();
-    const balanceDiff = Number((balAfter - balBefore).toFixed(2));
-    const passed =
-      res.success &&
-      res.trade?.source === 'MT5' &&
-      res.trade?.brokerDealId === brokerDealId &&
-      res.trade?.brokerOrderId === brokerOrderId &&
-      res.trade?.realizedPnl === 30.00 &&
-      balanceDiff === 30.00;
+      const record: TradeOutcomeRecord = {
+        signalId: tradeId,
+        tradeId,
+        direction: 'SELL NOW',
+        orderType: 'MARKET',
+        entry,
+        stopLoss: 4300.49,
+        tp1,
+        tp2: 4276.25,
+        outcome: 'WIN',
+        exitPrice: tp1,
+        source: 'MANUAL',
+        timestamp: Date.now(),
+        isoTime: new Date().toISOString(),
+      };
 
-    results.push({
-      testNumber: 7,
-      name: 'Future MT5 trade reconciliation (reconcileMt5Trade)',
-      passed,
-      details: `Source: ${res.trade?.source}, brokerDealId: ${res.trade?.brokerDealId}, realizedPnl: $${res.trade?.realizedPnl}, balance diff: +$${balanceDiff.toFixed(2)}`,
-    });
-  } catch (err: any) {
-    results.push({
-      testNumber: 7,
-      name: 'Future MT5 trade reconciliation (reconcileMt5Trade)',
-      passed: false,
-      details: `Exception: ${err?.message}`,
-    });
-  }
+      const res = storage.recordTradeOutcome(record);
+      const pnl = res.trade?.realizedPnl;
+      const passed = res.success && pnl === expectedPnl && pnl === 18.2;
 
-  // --------------------------------------------------------------------------
-  // TEST 8: Source tagging distinction: MANUAL vs TELEGRAM_CALLBACK vs MT5
-  // --------------------------------------------------------------------------
-  try {
-    const tradeManual = 'test-trade-8-src-manual';
-    const resManual = storage.recordTradeOutcome({
-      signalId: tradeManual,
-      tradeId: tradeManual,
-      direction: 'BUY NOW',
-      orderType: 'MARKET',
-      entry: 4300,
-      stopLoss: 4295,
-      tp1: 4310,
-      tp2: 4315,
-      outcome: 'WIN',
-      realizedPnl: 5.0,
-      source: 'MANUAL',
-      timestamp: Date.now(),
-      isoTime: new Date().toISOString(),
-    });
+      results.push({
+        testNumber: 6,
+        name: 'Gold contract size calculation (|ΔPrice| * 100 * LotSize)',
+        passed,
+        details: `18.20 points * 100 oz * 0.01 lot = $${expectedPnl.toFixed(2)}, recorded: $${pnl}`,
+      });
+    } catch (err: any) {
+      results.push({
+        testNumber: 6,
+        name: 'Gold contract size calculation (|ΔPrice| * 100 * LotSize)',
+        passed: false,
+        details: `Exception: ${err?.message}`,
+      });
+    }
 
-    const tradeTelegram = 'test-trade-8-src-telegram';
-    const resTelegram = storage.recordTradeOutcome({
-      signalId: tradeTelegram,
-      tradeId: tradeTelegram,
-      direction: 'BUY NOW',
-      orderType: 'MARKET',
-      entry: 4300,
-      stopLoss: 4295,
-      tp1: 4310,
-      tp2: 4315,
-      outcome: 'WIN',
-      realizedPnl: 5.0,
-      source: 'TELEGRAM_CALLBACK',
-      timestamp: Date.now(),
-      isoTime: new Date().toISOString(),
-    });
+    // --------------------------------------------------------------------------
+    // TEST 7: Future MT5 reconciliation (reconcileMt5Trade) with brokerDealId
+    // --------------------------------------------------------------------------
+    try {
+      const balBefore = storage.getCurrentBalance();
+      const tradeId = 'test-trade-7-mt5-reconciliation';
+      const brokerDealId = 'MT5_DEAL_987654321';
+      const brokerOrderId = 'MT5_ORDER_123456';
+      createTestOpenTrade(tradeId, { direction: 'SELL NOW', entry: 4290.0, sl: 4300.0, tp1: 4275.0, lotSize: 0.02 });
 
-    const passed =
-      resManual.trade?.source === 'MANUAL' &&
-      resTelegram.trade?.source === 'TELEGRAM_CALLBACK';
+      const res = storage.reconcileMt5Trade({
+        signalOrTradeId: tradeId,
+        brokerDealId,
+        brokerOrderId,
+        entryPrice: 4290.0,
+        exitPrice: 4275.0,
+        lotSize: 0.02,
+        realizedPnl: 30.0,
+        closedAt: Date.now(),
+        closeReason: 'MT5_TP_HIT',
+        direction: 'SELL NOW',
+      });
 
-    results.push({
-      testNumber: 8,
-      name: 'Multi-source attribution tags (MANUAL, TELEGRAM_CALLBACK, MT5)',
-      passed,
-      details: `Manual source: ${resManual.trade?.source}, Telegram source: ${resTelegram.trade?.source}`,
-    });
-  } catch (err: any) {
-    results.push({
-      testNumber: 8,
-      name: 'Multi-source attribution tags (MANUAL, TELEGRAM_CALLBACK, MT5)',
-      passed: false,
-      details: `Exception: ${err?.message}`,
-    });
-  }
+      const balAfter = storage.getCurrentBalance();
+      const balanceDiff = Number((balAfter - balBefore).toFixed(2));
+      const passed =
+        res.success &&
+        res.trade?.source === 'MT5' &&
+        res.trade?.brokerDealId === brokerDealId &&
+        res.trade?.brokerOrderId === brokerOrderId &&
+        res.trade?.realizedPnl === 30.0 &&
+        balanceDiff === 30.0;
 
-  // --------------------------------------------------------------------------
-  // TEST 9: Firestore data sanitization (removes undefined fields)
-  // --------------------------------------------------------------------------
-  try {
-    const dirtyData = {
-      id: 'trade-clean-test',
-      realizedPnl: 15.50,
-      undefinedField: undefined,
-      nullField: null,
-      nested: {
-        valid: 'ok',
-        badUndefined: undefined,
-      },
-    };
+      results.push({
+        testNumber: 7,
+        name: 'Future MT5 trade reconciliation (reconcileMt5Trade)',
+        passed,
+        details: `Source: ${res.trade?.source}, brokerDealId: ${res.trade?.brokerDealId}, realizedPnl: $${res.trade?.realizedPnl}, balance diff: +$${balanceDiff.toFixed(2)}`,
+      });
+    } catch (err: any) {
+      results.push({
+        testNumber: 7,
+        name: 'Future MT5 trade reconciliation (reconcileMt5Trade)',
+        passed: false,
+        details: `Exception: ${err?.message}`,
+      });
+    }
 
-    const cleaned: any = sanitizeFirestoreData(dirtyData);
-    const hasNoUndefined = !('undefinedField' in cleaned) && !('badUndefined' in cleaned.nested);
-    const keepsNullAndValues = cleaned.nullField === null && cleaned.realizedPnl === 15.50;
-    const passed = hasNoUndefined && keepsNullAndValues;
+    // --------------------------------------------------------------------------
+    // TEST 8: Source tagging distinction: MANUAL vs SYSTEM vs MT5
+    // --------------------------------------------------------------------------
+    try {
+      const tradeManual = 'test-trade-8-src-manual';
+      createTestOpenTrade(tradeManual);
+      const resManual = storage.recordTradeOutcome({
+        signalId: tradeManual,
+        tradeId: tradeManual,
+        direction: 'BUY NOW',
+        orderType: 'MARKET',
+        entry: 4300,
+        stopLoss: 4295,
+        tp1: 4310,
+        tp2: 4315,
+        outcome: 'WIN',
+        realizedPnl: 5.0,
+        source: 'MANUAL',
+        timestamp: Date.now(),
+        isoTime: new Date().toISOString(),
+      });
 
-    results.push({
-      testNumber: 9,
-      name: 'Firestore data sanitization against undefined fields',
-      passed,
-      details: `Removed undefinedField: ${!('undefinedField' in cleaned)}, nested undefined: ${!('badUndefined' in cleaned.nested)}, preserved null & values: ${keepsNullAndValues}`,
-    });
-  } catch (err: any) {
-    results.push({
-      testNumber: 9,
-      name: 'Firestore data sanitization against undefined fields',
-      passed: false,
-      details: `Exception: ${err?.message}`,
-    });
-  }
+      const tradeSystem = 'test-trade-8-src-system';
+      createTestOpenTrade(tradeSystem);
+      const resSystem = storage.recordTradeOutcome({
+        signalId: tradeSystem,
+        tradeId: tradeSystem,
+        direction: 'BUY NOW',
+        orderType: 'MARKET',
+        entry: 4300,
+        stopLoss: 4295,
+        tp1: 4310,
+        tp2: 4315,
+        outcome: 'WIN',
+        realizedPnl: 5.0,
+        source: 'SYSTEM',
+        timestamp: Date.now(),
+        isoTime: new Date().toISOString(),
+      });
+
+      const passed = resManual.trade?.source === 'MANUAL' && resSystem.trade?.source === 'SYSTEM';
+
+      results.push({
+        testNumber: 8,
+        name: 'Multi-source attribution tags (MANUAL, SYSTEM, MT5)',
+        passed,
+        details: `Manual source: ${resManual.trade?.source}, System source: ${resSystem.trade?.source}`,
+      });
+    } catch (err: any) {
+      results.push({
+        testNumber: 8,
+        name: 'Multi-source attribution tags (MANUAL, SYSTEM, MT5)',
+        passed: false,
+        details: `Exception: ${err?.message}`,
+      });
+    }
+
+    // --------------------------------------------------------------------------
+    // TEST 9: Firestore data sanitization (removes undefined fields)
+    // --------------------------------------------------------------------------
+    try {
+      const dirtyData = {
+        id: 'trade-clean-test',
+        realizedPnl: 15.5,
+        undefinedField: undefined,
+        nullField: null,
+        nested: {
+          valid: 'ok',
+          badUndefined: undefined,
+        },
+      };
+
+      const cleaned: any = sanitizeFirestoreData(dirtyData);
+      const hasNoUndefined = !('undefinedField' in cleaned) && !('badUndefined' in cleaned.nested);
+      const keepsNullAndValues = cleaned.nullField === null && cleaned.realizedPnl === 15.5;
+      const passed = hasNoUndefined && keepsNullAndValues;
+
+      results.push({
+        testNumber: 9,
+        name: 'Firestore data sanitization against undefined fields',
+        passed,
+        details: `Removed undefinedField: ${!('undefinedField' in cleaned)}, nested undefined: ${!('badUndefined' in cleaned.nested)}, preserved null & values: ${keepsNullAndValues}`,
+      });
+    } catch (err: any) {
+      results.push({
+        testNumber: 9,
+        name: 'Firestore data sanitization against undefined fields',
+        passed: false,
+        details: `Exception: ${err?.message}`,
+      });
+    }
+
+    // --------------------------------------------------------------------------
+    // TEST 10: Non-existent trade ID in recordTradeOutcome returns TRADE_NOT_FOUND (No phantom trade created)
+    // --------------------------------------------------------------------------
+    try {
+      const nonExistentTradeId = 'phantom-trade-' + Date.now();
+      const tradesCountBefore = storage.getTrades().length;
+      const balBefore = storage.getCurrentBalance();
+
+      const res = storage.recordTradeOutcome({
+        signalId: nonExistentTradeId,
+        tradeId: nonExistentTradeId,
+        direction: 'BUY NOW',
+        orderType: 'MARKET',
+        entry: 4300,
+        stopLoss: 4295,
+        tp1: 4310,
+        tp2: 4315,
+        outcome: 'WIN',
+        realizedPnl: 50.0,
+        source: 'MANUAL',
+        timestamp: Date.now(),
+        isoTime: new Date().toISOString(),
+      });
+
+      const tradesCountAfter = storage.getTrades().length;
+      const balAfter = storage.getCurrentBalance();
+
+      const passed =
+        res.success === false &&
+        res.message === 'TRADE_NOT_FOUND' &&
+        tradesCountAfter === tradesCountBefore &&
+        balAfter === balBefore;
+
+      results.push({
+        testNumber: 10,
+        name: 'Non-existent trade ID in recordTradeOutcome returns TRADE_NOT_FOUND without creating phantom trade',
+        passed,
+        details: `Success: ${res.success}, message: ${res.message}, tradesCount delta: ${tradesCountAfter - tradesCountBefore}, balance delta: ${balAfter - balBefore}`,
+      });
+    } catch (err: any) {
+      results.push({
+        testNumber: 10,
+        name: 'Non-existent trade ID in recordTradeOutcome returns TRADE_NOT_FOUND without creating phantom trade',
+        passed: false,
+        details: `Exception: ${err?.message}`,
+      });
+    }
+
+    // --------------------------------------------------------------------------
+    // TEST 11: markSignalOrOpportunityNotEntered() updates state to NOT_ENTERED without creating a trade
+    // --------------------------------------------------------------------------
+    try {
+      const signalId = 'test-sig-not-entered-' + Date.now();
+      const mockSignal: TradeSignal = {
+        id: signalId,
+        asset: 'XAU/USD',
+        signal: 'BUY NOW',
+        currentPrice: 4310.0,
+        timeframe: '5M',
+        entry: 4310.0,
+        stopLoss: 4305.0,
+        slPoints: 50,
+        tp1: 4320.0,
+        tp1Points: 100,
+        tp2: 4325.0,
+        tp2Points: 150,
+        confidence: 85,
+        timestamp: Date.now(),
+        setup: 'Test setup',
+        mainReasons: ['Test reason 1', 'Test reason 2'],
+        invalidation: 'Break below 4305.0',
+        rr: '1:2',
+        rrRatio: 2.0,
+        potentialProfit: 3.0,
+        potentialLoss: 1.5,
+        riskPercent: 15,
+        riskAmount: 1.5,
+        recommendedLotSize: 0.01,
+        lifecycleState: 'READY',
+      };
+      storage.saveSignal(mockSignal);
+
+      const tradesBefore = storage.getTrades().length;
+      const balBefore = storage.getCurrentBalance();
+
+      const res = storage.markSignalOrOpportunityNotEntered(signalId);
+      const tradesAfter = storage.getTrades().length;
+      const balAfter = storage.getCurrentBalance();
+
+      const updatedSig = storage.getSignal(signalId);
+      const passed =
+        res.success === true &&
+        updatedSig?.lifecycleState === 'NOT_ENTERED' &&
+        tradesAfter === tradesBefore &&
+        balAfter === balBefore;
+
+      results.push({
+        testNumber: 11,
+        name: 'markSignalOrOpportunityNotEntered updates signal lifecycleState to NOT_ENTERED without creating trade',
+        passed,
+        details: `Signal state: ${updatedSig?.lifecycleState}, trade ledger unchanged: ${tradesAfter === tradesBefore}, balance unchanged: ${balAfter === balBefore}`,
+      });
+    } catch (err: any) {
+      results.push({
+        testNumber: 11,
+        name: 'markSignalOrOpportunityNotEntered updates signal lifecycleState to NOT_ENTERED without creating trade',
+        passed: false,
+        details: `Exception: ${err?.message}`,
+      });
+    }
+
+    // --------------------------------------------------------------------------
+    // TEST 12: Duplicate NOT_ENTERED check and outcome retrieval
+    // --------------------------------------------------------------------------
+    try {
+      const sigId = 'test-sig-not-entered-dup-' + Date.now();
+      storage.markSignalOrOpportunityNotEntered(sigId);
+
+      const outcome = storage.getTradeOutcome(sigId);
+      const isNotEntered = (outcome?.outcome as any) === 'NOT_ENTERED';
+      const zeroPnl = outcome?.realizedPnl === 0 && outcome?.pl === 0;
+      const passed = isNotEntered && zeroPnl;
+
+      results.push({
+        testNumber: 12,
+        name: 'NOT_ENTERED outcome is properly recorded with 0 PnL and queryable via getTradeOutcome',
+        passed,
+        details: `Recorded outcome: ${outcome?.outcome}, P&L: $${outcome?.realizedPnl}`,
+      });
+    } catch (err: any) {
+      results.push({
+        testNumber: 12,
+        name: 'NOT_ENTERED outcome is properly recorded with 0 PnL and queryable via getTradeOutcome',
+        passed: false,
+        details: `Exception: ${err?.message}`,
+      });
+    }
+
+    // --------------------------------------------------------------------------
+    // TEST 13: clearAllTrades clears memory and resets balance without resurrecting trades
+    // --------------------------------------------------------------------------
+    try {
+      createTestOpenTrade('clear-trade-1');
+      createTestOpenTrade('clear-trade-2');
+
+      const tradesBeforeClear = storage.getTrades().length;
+      storage.clearAllTrades();
+      const tradesAfterClear = storage.getTrades().length;
+
+      const passed = tradesBeforeClear > 0 && tradesAfterClear === 0;
+
+      results.push({
+        testNumber: 13,
+        name: 'clearAllTrades flushes ledger to exactly 0 trades',
+        passed,
+        details: `Trades before: ${tradesBeforeClear}, after: ${tradesAfterClear}`,
+      });
+    } catch (err: any) {
+      results.push({
+        testNumber: 13,
+        name: 'clearAllTrades flushes ledger to exactly 0 trades',
+        passed: false,
+        details: `Exception: ${err?.message}`,
+      });
+    }
 
     const allPassed = results.every((r) => r.passed);
     return { allPassed, results };

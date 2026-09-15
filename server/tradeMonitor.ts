@@ -2,6 +2,7 @@ import { storage } from './storage.js';
 import { fetchLiveQuote } from './marketData.js';
 import { TradeLedgerItem } from '../src/types.js';
 import { globalLifecycleManager } from './tradeQualityEngine.js';
+import { telegramService } from './telegram.js';
 
 export interface TradeMonitorStatus {
   isRunning: boolean;
@@ -60,6 +61,12 @@ export class TradeLifecycleMonitor {
    */
   public async evaluatePrice(currentPrice: number): Promise<void> {
     if (!currentPrice || isNaN(currentPrice) || currentPrice <= 0) return;
+
+    // Trigger Telegram updates for active signals (even if ledger has no open trades yet)
+    telegramService.updateActiveSignals(currentPrice).catch((err) => {
+      console.error('[TradeLifecycleMonitor] Telegram active signals update error:', err);
+    });
+
     if (this.isProcessing) return;
 
     this.isProcessing = true;
@@ -105,45 +112,38 @@ export class TradeLifecycleMonitor {
         const isSell = trade.direction.toUpperCase().includes('SELL');
 
         const sl = Number(trade.sl);
-        const tp1 = Number(trade.tp1);
         const tp2 = trade.tp2 ? Number(trade.tp2) : undefined;
         const entry = Number(trade.entry);
         const lotSize = trade.lotSize || 0.01;
         const contractSize = 100; // Standard Gold 100 oz per lot
 
-        let exitTrigger: 'TP2' | 'TP1' | 'SL' | null = null;
+        let exitTrigger: 'TP2' | 'SL' | null = null;
         let exitPrice = currentPrice;
 
         if (isBuy) {
-          // BUY: SL is below entry, TP is above entry
+          // BUY: SL is below entry, TP2 is above entry
           if (sl > 0 && currentPrice <= sl) {
             exitTrigger = 'SL';
             exitPrice = sl;
           } else if (tp2 && tp2 > 0 && currentPrice >= tp2) {
             exitTrigger = 'TP2';
             exitPrice = tp2;
-          } else if (tp1 > 0 && currentPrice >= tp1) {
-            exitTrigger = 'TP1';
-            exitPrice = tp1;
           }
         } else if (isSell) {
-          // SELL: SL is above entry, TP is below entry
+          // SELL: SL is above entry, TP2 is below entry
           if (sl > 0 && currentPrice >= sl) {
             exitTrigger = 'SL';
             exitPrice = sl;
           } else if (tp2 && tp2 > 0 && currentPrice <= tp2) {
             exitTrigger = 'TP2';
             exitPrice = tp2;
-          } else if (tp1 > 0 && currentPrice <= tp1) {
-            exitTrigger = 'TP1';
-            exitPrice = tp1;
           }
         }
 
         if (exitTrigger) {
           this.inFlightTradeIds.add(trade.id);
           try {
-            const isWin = exitTrigger === 'TP1' || exitTrigger === 'TP2';
+            const isWin = exitTrigger === 'TP2';
             const priceDiff = isBuy ? (exitPrice - entry) : (entry - exitPrice);
             let realizedPl = Number((priceDiff * contractSize * lotSize).toFixed(2));
 
@@ -164,6 +164,8 @@ export class TradeLifecycleMonitor {
             storage.closeTrade(trade.id, resultType, realizedPl, exitPrice, noteSuffix);
             if (resultType === 'LOSS') {
               globalLifecycleManager.markSetupFailed(trade, 'Trade hit Stop Loss in TradeLifecycleMonitor');
+            } else if (resultType === 'WIN') {
+              globalLifecycleManager.markSetupCompleted(trade, 'Trade reached TP2 target in TradeLifecycleMonitor');
             }
             this.totalClosedByMonitor += 1;
           } catch (err) {
@@ -184,8 +186,9 @@ export class TradeLifecycleMonitor {
     try {
       const trades = storage.getTrades(300);
       const hasOpenTrades = trades.some((t) => t.result === 'OPEN' && t.isActive !== false);
-      if (!hasOpenTrades) {
-        return; // No open trades, skip fetching quote
+      const hasTelegramSignals = telegramService.hasActiveSignals();
+      if (!hasOpenTrades && !hasTelegramSignals) {
+        return; // No open trades and no active Telegram signals, skip fetching quote
       }
 
       const quote = await fetchLiveQuote('XAU/USD');

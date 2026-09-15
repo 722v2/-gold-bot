@@ -54,12 +54,6 @@ export const MobileMoreDrawer: React.FC<MobileMoreDrawerProps> = ({
       icon: BarChart3,
     },
     {
-      id: 'telegram',
-      label: 'إشعارات تلغرام (Telegram Bot)',
-      description: 'إرسال الصفقات والأهداف لحسابك (اختياري)',
-      icon: Send,
-    },
-    {
       id: 'health',
       label: 'فحص حالة النظام (System Health)',
       description: 'حالة الخادم، الذكاء الاصطناعي، خلاصة Biquote، والتخزين الدائم',

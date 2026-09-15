@@ -32,7 +32,6 @@ const TAB_TITLES: Record<NavigationTab, { title: string; subtitle: string }> = {
   backtest: { title: 'الاختبار التاريخي', subtitle: 'اختبار دقيق على بيانات XAU/USD الحقيقية' },
   risk: { title: 'إدارة المخاطر', subtitle: 'حماية رأس المال بنسبة 15% وقواعد XAU/USD' },
   analytics: { title: 'إحصائيات الأداء', subtitle: 'منحنى نمو الرصيد ونسبة النجاح ومعدل العائد' },
-  telegram: { title: 'مركز تلغرام', subtitle: 'إرسال الصفقات والتنبيهات المباشرة' },
   health: { title: 'سلامة النظام', subtitle: 'حالة الخادم والذكاء الاصطناعي' },
   settings: { title: 'الإعدادات', subtitle: 'تخصيص الرصيد، أحجام العقود، والمؤشرات' },
 };

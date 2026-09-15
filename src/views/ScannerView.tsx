@@ -27,10 +27,10 @@ interface ScannerViewProps {
     enabled: boolean,
     intervalMinutes: number,
     minConfidence: number,
-    telegramEnabled: boolean,
     intervalSeconds?: number
   ) => void;
   onManualScan: () => void;
+  onCancelSignal: (id: string) => Promise<boolean>;
   multitimeframe?: {
     marketState: 'TREND' | 'RANGE' | 'CONSOLIDATION';
     h1Trend: string;
@@ -45,11 +45,38 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
   isAnalyzing,
   onToggleScanner,
   onManualScan,
+  onCancelSignal,
   multitimeframe,
 }) => {
   const [secondsRemaining, setSecondsRemaining] = useState<number>(60);
   const [scanHistory, setScanHistory] = useState<any[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(false);
+  const [isCancelling, setIsCancelling] = useState<boolean>(false);
+  const [cancelSuccess, setCancelSuccess] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+
+  const handleCancelClick = async () => {
+    if (!config.lastSignal?.id || isCancelling) return;
+    setIsCancelling(true);
+    setCancelSuccess(null);
+    setCancelError(null);
+    try {
+      const ok = await onCancelSignal(config.lastSignal.id);
+      if (ok) {
+        setCancelSuccess('تم إلغاء الإشارة بنجاح ومنع تكرارها!');
+        setTimeout(() => setCancelSuccess(null), 5000);
+      } else {
+        setCancelError('فشل إلغاء الإشارة، يرجى المحاولة لاحقاً.');
+        setTimeout(() => setCancelError(null), 5000);
+      }
+    } catch (e: any) {
+      console.error(e);
+      setCancelError(e.message || 'حدث خطأ غير متوقع أثناء إلغاء الإشارة.');
+      setTimeout(() => setCancelError(null), 5000);
+    } finally {
+      setIsCancelling(false);
+    }
+  };
 
   // Countdown timer for next scan
   useEffect(() => {
@@ -144,7 +171,6 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
                 !config.enabled,
                 config.intervalMinutes || 1,
                 config.minConfidence || 75,
-                config.telegramEnabled,
                 60
               )
             }
@@ -374,7 +400,7 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
             </div>
           </div>
         ) : (
-          <div className="bg-emerald-950/30 border border-emerald-500/40 rounded-xl p-3.5 flex items-center justify-between">
+          <div className="bg-emerald-950/30 border border-emerald-500/40 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <CheckCircle2 className="w-5 h-5 text-emerald-400" />
               <div>
@@ -386,9 +412,34 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
                 </p>
               </div>
             </div>
-            <span className="text-xs font-mono font-bold text-amber-400">
-              ثقة: {lastSignal?.confidence}%
-            </span>
+            <div className="flex items-center gap-3 font-mono">
+              <span className="text-xs font-bold text-amber-400">
+                ثقة: {lastSignal?.confidence}%
+              </span>
+              <button
+                onClick={handleCancelClick}
+                disabled={isCancelling}
+                className="bg-rose-950/80 hover:bg-rose-900 disabled:opacity-50 border border-rose-800 text-rose-200 text-xs font-bold px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 active:scale-95"
+              >
+                <XCircle className="w-4 h-4 text-rose-400" />
+                <span>{isCancelling ? 'جاري الإلغاء...' : 'إلغاء الإشارة (Cancel)'}</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {(cancelSuccess || cancelError) && (
+          <div className="mt-3">
+            {cancelSuccess && (
+              <div className="bg-emerald-950/40 border border-emerald-500/50 text-emerald-300 px-4 py-2.5 rounded-xl text-xs font-bold font-mono text-center animate-in fade-in duration-200">
+                {cancelSuccess}
+              </div>
+            )}
+            {cancelError && (
+              <div className="bg-rose-950/40 border border-rose-500/50 text-rose-300 px-4 py-2.5 rounded-xl text-xs font-bold font-mono text-center animate-in fade-in duration-200">
+                {cancelError}
+              </div>
+            )}
           </div>
         )}
       </div>

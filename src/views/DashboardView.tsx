@@ -104,7 +104,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Resolved Capital & Risk Calculations
   const effectiveCapital = typeof activeCapital === 'number'
     ? activeCapital
-    : (settings?.manualCapital ?? Number(currentBalance || 10));
+    : (settings?.manualCapital ?? Number(currentBalance || 25));
 
   const riskPercent = typeof settings?.riskPerTrade === 'number' ? settings.riskPerTrade : 15.0;
   const maxRiskPercent = typeof settings?.maxRiskPerTrade === 'number' ? settings.maxRiskPerTrade : 15.0;

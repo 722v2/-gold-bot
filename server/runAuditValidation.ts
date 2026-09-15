@@ -2,7 +2,6 @@ import { runAccountingTests } from './accountingTests.js';
 import { runTradeManagementTests } from './tradeManagementTests.js';
 import { runEndToEndStressTest } from './stressTestRunner.js';
 import { storage } from './storage.js';
-import { isTelegramUserAuthorized } from './telegram.js';
 import { tradeManagementEngine } from './tradeManagementEngine.js';
 import { scanner } from './scanner.js';
 import { checkStructuralSameSetupIdentity } from './tradeQualityEngine.js';
@@ -74,22 +73,9 @@ async function executeFullAuditValidation() {
 
 
   // --------------------------------------------------------------------------
-  // SECTION 2: TELEGRAM NOTIFICATIONS & AUTHORIZATION
+  // SECTION 2: OUTCOME RECORDING & IDEMPOTENCY
   // --------------------------------------------------------------------------
-  console.log('\n--- SECTION 2: TELEGRAM NOTIFICATIONS & AUTHORIZATION ---');
-  const customEnv = {
-    TELEGRAM_AUTHORIZED_USER_IDS: '1189889156, 9988776655',
-    TELEGRAM_CHAT_ID: '-1003985073744',
-  };
-
-  const authUser1 = isTelegramUserAuthorized('1189889156', customEnv);
-  recordAssertion(authUser1 === true, 'Telegram authorized user 1189889156 allowed');
-
-  const authUser2 = isTelegramUserAuthorized('9988776655', customEnv);
-  recordAssertion(authUser2 === true, 'Telegram authorized user 9988776655 allowed');
-
-  const unauthUser = isTelegramUserAuthorized('999000111', customEnv);
-  recordAssertion(unauthUser === false, 'Telegram unauthorized user 999000111 rejected');
+  console.log('\n--- SECTION 2: OUTCOME RECORDING & IDEMPOTENCY ---');
 
   // Verify Idempotency on outcomes
   const outcomeTradeId = 'audit_out_idempotency_1';
@@ -104,7 +90,7 @@ async function executeFullAuditValidation() {
     tp2: 4295.00,
     outcome: 'WIN',
     realizedPnl: 10.00,
-    source: 'TELEGRAM_CALLBACK',
+    source: 'MANUAL',
     timestamp: Date.now(),
     isoTime: new Date().toISOString(),
   });
@@ -119,13 +105,13 @@ async function executeFullAuditValidation() {
     tp2: 4295.00,
     outcome: 'WIN',
     realizedPnl: 10.00,
-    source: 'TELEGRAM_CALLBACK',
+    source: 'MANUAL',
     timestamp: Date.now(),
     isoTime: new Date().toISOString(),
   });
 
-  recordAssertion(outcome1.success && !outcome1.isDuplicate, 'Initial Telegram P&L outcome recorded successfully');
-  recordAssertion(outcome2.isDuplicate === true, 'Duplicate Telegram P&L outcome callback blocked cleanly without double credit');
+  recordAssertion(outcome1.success && !outcome1.isDuplicate, 'Initial P&L outcome recorded successfully');
+  recordAssertion(outcome2.isDuplicate === true, 'Duplicate P&L outcome callback blocked cleanly without double credit');
 
 
   // --------------------------------------------------------------------------

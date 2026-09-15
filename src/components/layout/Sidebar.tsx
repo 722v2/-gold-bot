@@ -97,12 +97,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: BarChart3,
     },
     {
-      id: 'telegram',
-      label: 'تنبيهات تلغرام',
-      sublabel: 'Telegram Bot',
-      icon: Send,
-    },
-    {
       id: 'health',
       label: 'حالة النظام',
       sublabel: 'System Health',

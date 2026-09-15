@@ -27,6 +27,7 @@ import {
   DuplicateDetails,
   TradeOpportunity,
 } from '../src/types.js';
+import { telegramService } from './telegram.js';
 
 /**
  * Recursively strips undefined values from objects/arrays before passing to Firestore setDoc(),
@@ -80,8 +81,6 @@ export interface ScanRecord {
   noTradeReason?: string;
   duplicateReason?: string;
   duplicateDetails?: DuplicateDetails;
-  telegramDispatchStatus?: 'NOT_ATTEMPTED' | 'SUPPRESSED' | 'SENT' | 'FAILED';
-  telegramDispatchReason?: string;
 }
 
 export interface DailyTradeStats {
@@ -105,7 +104,7 @@ export interface TradeOutcomeRecord {
   stopLoss: number;
   tp1: number;
   tp2: number;
-  outcome: 'WIN' | 'LOSS';
+  outcome: 'WIN' | 'LOSS' | 'NOT_ENTERED';
   timestamp: number;
   isoTime: string;
   chatId?: string | number;
@@ -113,11 +112,12 @@ export interface TradeOutcomeRecord {
   pl?: number;
   realizedPnl?: number; // Authoritative realized P&L ($)
   exitPrice?: number;
-  source?: 'MANUAL' | 'TELEGRAM_CALLBACK' | 'MT5' | 'SYSTEM';
+  source?: 'MANUAL' | 'MT5' | 'SYSTEM';
   brokerDealId?: string;
   brokerOrderId?: string;
   closedAt?: number;
   closeReason?: string;
+  notes?: string;
 }
 
 export interface DashboardStatsResult {
@@ -151,7 +151,6 @@ const OUTCOMES_FILE = path.join(DATA_DIR, 'trade_outcomes.json');
 const BACKTEST_FILE = path.join(DATA_DIR, 'backtest_results.json');
 const ACCOUNT_FILE = path.join(DATA_DIR, 'account_state.json');
 const TERMINAL_SETUPS_FILE = path.join(DATA_DIR, 'terminal_setups.json');
-const TELEGRAM_DISPATCHES_FILE = path.join(DATA_DIR, 'telegram_dispatches.json');
 const OPPORTUNITIES_FILE = path.join(DATA_DIR, 'opportunities.json');
 
 const MAX_SCANS_TO_KEEP = 500;
@@ -177,7 +176,6 @@ class PersistentStorage {
   private inMemoryPois: PoiRecord[] = [];
   private inMemoryLifecycles: CandidateLifecycleRecord[] = [];
   private inMemoryTerminalSetups: Set<string> = new Set();
-  private inMemoryTelegramDispatches: Set<string> = new Set();
   private inMemoryOpportunities: Map<string, TradeOpportunity> = new Map();
 
   constructor() {
@@ -323,21 +321,8 @@ class PersistentStorage {
         this.inMemoryTrades = tradesSnap.docs.map(d => d.data() as TradeLedgerItem);
         console.log(`[Storage] Loaded ${this.inMemoryTrades.length} trades from Firestore.`);
       } else {
-        // Seed from data/trade_ledger.json
-        if (fs.existsSync(TRADES_FILE)) {
-          try {
-            const raw = fs.readFileSync(TRADES_FILE, 'utf8');
-            const list: TradeLedgerItem[] = JSON.parse(raw || '[]');
-            for (const t of list) {
-              if (!t.id) continue;
-              await setDoc(doc(this.firestoreDb, 'trade_ledger', t.id), sanitizeFirestoreData(t));
-            }
-            this.inMemoryTrades = list;
-            console.log(`[Storage] Seeded ${list.length} trades to Firestore.`);
-          } catch (e) {
-            console.error('[Storage] Error seeding trades:', e);
-          }
-        }
+        this.inMemoryTrades = [];
+        console.log('[Storage] Firestore trade_ledger is empty (0 trades loaded). Production trade history is authoritative.');
       }
 
       // Safeguard: Ensure legacy test trade is permanently VOID and inactive
@@ -480,10 +465,6 @@ class PersistentStorage {
         const arr = JSON.parse(fs.readFileSync(TERMINAL_SETUPS_FILE, 'utf-8') || '[]');
         this.inMemoryTerminalSetups = new Set(arr);
       }
-      if (fs.existsSync(TELEGRAM_DISPATCHES_FILE)) {
-        const arr = JSON.parse(fs.readFileSync(TELEGRAM_DISPATCHES_FILE, 'utf-8') || '[]');
-        this.inMemoryTelegramDispatches = new Set(arr);
-      }
       if (fs.existsSync(OPPORTUNITIES_FILE)) {
         const arr = JSON.parse(fs.readFileSync(OPPORTUNITIES_FILE, 'utf-8') || '[]');
         this.inMemoryOpportunities = new Map(arr.map((o: any) => [o.id, o]));
@@ -512,7 +493,6 @@ class PersistentStorage {
         'utf-8'
       );
       fs.writeFileSync(TERMINAL_SETUPS_FILE, JSON.stringify(Array.from(this.inMemoryTerminalSetups), null, 2), 'utf-8');
-      fs.writeFileSync(TELEGRAM_DISPATCHES_FILE, JSON.stringify(Array.from(this.inMemoryTelegramDispatches), null, 2), 'utf-8');
       fs.writeFileSync(OPPORTUNITIES_FILE, JSON.stringify(Array.from(this.inMemoryOpportunities.values()), null, 2), 'utf-8');
     } catch (e) {
       // Non-fatal local mirror sync
@@ -607,6 +587,90 @@ class PersistentStorage {
     return this.getSignalById(id);
   }
 
+  public async getSignalFromStorage(id: string): Promise<TradeSignal | undefined> {
+    // 1. Check in-memory first
+    const memorySignal = this.getSignalById(id);
+    if (memorySignal) return memorySignal;
+
+    // 2. Try Firestore if available
+    if (this.firestoreDb) {
+      try {
+        const signalDocRef = doc(this.firestoreDb, 'signals', id);
+        const signalSnap = await getDoc(signalDocRef);
+        if (signalSnap.exists()) {
+          const signalData = signalSnap.data() as TradeSignal;
+          // Add to in-memory to speed up subsequent requests
+          if (!this.inMemorySignals.some(s => s.id === signalData.id)) {
+            this.inMemorySignals.unshift(signalData);
+          }
+          return signalData;
+        }
+      } catch (err) {
+        console.error(`[Storage] Error fetching signal ${id} from Firestore:`, err);
+      }
+    }
+
+    // 3. Try reading local saved_signals.json backup if available
+    try {
+      if (fs.existsSync(SIGNALS_FILE)) {
+        const raw = fs.readFileSync(SIGNALS_FILE, 'utf-8');
+        const list: TradeSignal[] = JSON.parse(raw || '[]');
+        const fileSignal = list.find(s => s.id === id);
+        if (fileSignal) {
+          if (!this.inMemorySignals.some(s => s.id === fileSignal.id)) {
+            this.inMemorySignals.unshift(fileSignal);
+          }
+          return fileSignal;
+        }
+      }
+    } catch (err) {
+      console.error(`[Storage] Error reading saved_signals.json for signal ${id}:`, err);
+    }
+
+    // 4. Try loading the corresponding opportunity if signal is not found
+    const opp = this.getOpportunity(id) || this.getOpportunities().find(o => o.signalId === id);
+    if (opp) {
+      const dir = opp.direction === 'BUY' ? 'BUY NOW' : 'SELL NOW';
+      const rebuiltSignal: TradeSignal = {
+        id: opp.signalId || opp.id,
+        timestamp: opp.firstObservedTime,
+        asset: 'XAU/USD',
+        signal: dir,
+        currentPrice: opp.entry,
+        entry: opp.entry,
+        stopLoss: opp.stopLoss,
+        slPoints: Math.round(Math.abs(opp.entry - opp.stopLoss) / 0.1),
+        tp1: opp.tp1,
+        tp1Points: Math.round(Math.abs(opp.tp1 - opp.entry) / 0.1),
+        tp1Rr: 1.5,
+        tp1RrString: '1:1.50',
+        tp2: opp.tp2,
+        tp2Points: Math.round(Math.abs(opp.tp2 - opp.entry) / 0.1),
+        tp2Rr: 3.0,
+        tp2RrString: '1:3.00',
+        primaryTarget: 'TP1',
+        rr: '1:1.50',
+        rrRatio: 1.5,
+        riskPercent: 15,
+        riskAmount: 0,
+        potentialProfit: 0,
+        potentialLoss: 0,
+        recommendedLotSize: 0.01,
+        confidence: opp.confidence,
+        timeframe: opp.timeframe,
+        setup: opp.setupName,
+        mainReasons: ['Rebuilt from opportunity snapshot'],
+        invalidation: `Close candle below ${opp.stopLoss}`,
+      };
+      if (!this.inMemorySignals.some(s => s.id === rebuiltSignal.id)) {
+        this.inMemorySignals.unshift(rebuiltSignal);
+      }
+      return rebuiltSignal;
+    }
+
+    return undefined;
+  }
+
   public saveTrade(trade: TradeLedgerItem): TradeLedgerItem[] {
     try {
       const isResultOpen = trade.result === 'OPEN';
@@ -673,7 +737,20 @@ class PersistentStorage {
   } {
     try {
       const existing = this.getTradeOutcome(record.signalId) || (record.tradeId ? this.getTradeOutcome(record.tradeId) : undefined);
-      const existingTrade = this.inMemoryTrades.find((t) => t.id === record.signalId || t.id === record.tradeId);
+      const existingTrade = this.inMemoryTrades.find(
+        (t) => t.id === record.signalId || t.id === record.tradeId || (record.signalId && t.signalId === record.signalId)
+      );
+
+      // Requirement: If referenced trade does not exist, DO NOT create a new trade. Return TRADE_NOT_FOUND.
+      if (!existingTrade) {
+        console.warn(`[Storage] recordTradeOutcome rejected: referenced trade "${record.tradeId || record.signalId}" not found in trade ledger.`);
+        return {
+          success: false,
+          isDuplicate: false,
+          outcome: record,
+          message: 'TRADE_NOT_FOUND',
+        };
+      }
 
       // 1. Authoritative Realized P&L Calculation (Never calculate from riskAmount * RR)
       let finalRealizedPnl: number;
@@ -683,10 +760,10 @@ class PersistentStorage {
         finalRealizedPnl = Number(record.pl.toFixed(2));
       } else if (record.exitPrice !== undefined && typeof record.exitPrice === 'number' && !isNaN(record.exitPrice)) {
         // Price-action based P&L for Gold: 1 lot = 100 oz. Contract multiplier = 100
-        const isBuy = String(record.direction || signalData?.signal || existingTrade?.direction || '').toUpperCase().includes('BUY');
-        const entryPrice = Number(record.entry || existingTrade?.entry || signalData?.entry || record.exitPrice);
+        const isBuy = String(record.direction || signalData?.signal || existingTrade.direction || '').toUpperCase().includes('BUY');
+        const entryPrice = Number(record.entry || existingTrade.entry || signalData?.entry || record.exitPrice);
         const priceDiff = isBuy ? (record.exitPrice - entryPrice) : (entryPrice - record.exitPrice);
-        const lotSize = existingTrade?.lotSize || signalData?.recommendedLotSize || (signalData as any)?.lotSize || 0.01;
+        const lotSize = existingTrade.lotSize || signalData?.recommendedLotSize || (signalData as any)?.lotSize || 0.01;
         finalRealizedPnl = Number((priceDiff * 100 * lotSize).toFixed(2));
       } else {
         finalRealizedPnl = 0;
@@ -717,7 +794,7 @@ class PersistentStorage {
         }
       }
 
-      if (existingTrade && (existingTrade.result === 'WIN' || existingTrade.result === 'LOSS')) {
+      if (existingTrade.result === 'WIN' || existingTrade.result === 'LOSS') {
         const existingTradePnl = typeof existingTrade.realizedPnl === 'number' ? existingTrade.realizedPnl : (existingTrade.pl || 0);
         if (existingTrade.result === record.outcome && existingTradePnl === finalRealizedPnl && source !== 'MT5') {
           return {
@@ -742,95 +819,40 @@ class PersistentStorage {
       }
 
       const isWin = record.outcome === 'WIN';
-      const lotSize = existingTrade?.lotSize || signalData?.recommendedLotSize || (signalData as any)?.lotSize || 0.01;
-      const entryPrice = Number(record.entry || existingTrade?.entry || signalData?.entry || 0);
-      const tp1Price = Number(record.tp1 || existingTrade?.tp1 || signalData?.tp1 || 0);
-      const tp2Price = Number(record.tp2 || existingTrade?.tp2 || signalData?.tp2 || 0);
-      const slPrice = Number(record.stopLoss || existingTrade?.sl || signalData?.stopLoss || 0);
+      const lotSize = existingTrade.lotSize || signalData?.recommendedLotSize || (signalData as any)?.lotSize || 0.01;
+      const entryPrice = Number(record.entry || existingTrade.entry || signalData?.entry || 0);
+      const tp1Price = Number(record.tp1 || existingTrade.tp1 || signalData?.tp1 || 0);
+      const tp2Price = Number(record.tp2 || existingTrade.tp2 || signalData?.tp2 || 0);
+      const slPrice = Number(record.stopLoss || existingTrade.sl || signalData?.stopLoss || 0);
 
       const theoreticalTp1Profit = Number((Math.abs(entryPrice - tp1Price) * 100 * lotSize).toFixed(2));
       const theoreticalTp2Profit = Number((Math.abs(entryPrice - tp2Price) * 100 * lotSize).toFixed(2));
 
-      const riskAmount = Number(
-        (existingTrade?.riskAmount || signalData?.riskAmount || (this.inMemorySettings.manualCapital * (this.inMemorySettings.riskPerTrade / 100))).toFixed(2)
-      );
+      const previousPnl = typeof existingTrade.realizedPnl === 'number'
+        ? existingTrade.realizedPnl
+        : (existingTrade.result === 'WIN' || existingTrade.result === 'LOSS' ? (existingTrade.pl || 0) : 0);
 
-      let updatedTrade: TradeLedgerItem;
+      const delta = Number((finalRealizedPnl - previousPnl).toFixed(2));
 
-      if (existingTrade) {
-        const previousPnl = typeof existingTrade.realizedPnl === 'number'
-          ? existingTrade.realizedPnl
-          : (existingTrade.result === 'WIN' || existingTrade.result === 'LOSS' ? (existingTrade.pl || 0) : 0);
+      existingTrade.result = record.outcome;
+      existingTrade.pl = finalRealizedPnl;
+      existingTrade.realizedPnl = finalRealizedPnl;
+      existingTrade.source = source;
+      if (record.brokerDealId) existingTrade.brokerDealId = record.brokerDealId;
+      if (record.brokerOrderId) existingTrade.brokerOrderId = record.brokerOrderId;
+      if (record.closedAt) existingTrade.closedAt = record.closedAt;
+      if (record.closeReason) existingTrade.closeReason = record.closeReason;
+      existingTrade.theoreticalTp1Profit = theoreticalTp1Profit;
+      existingTrade.theoreticalTp2Profit = theoreticalTp2Profit;
+      existingTrade.exitPrice = record.exitPrice !== undefined ? record.exitPrice : (isWin ? (existingTrade.tp1 || record.tp1) : (existingTrade.sl || record.stopLoss));
+      existingTrade.exitTime = new Date(record.timestamp || Date.now()).toISOString();
+      existingTrade.notes = `${existingTrade.notes ? existingTrade.notes + ' | ' : ''}النتيجة: ${isWin ? '🟢 رابحة' : '🔴 خاسرة'} [P&L: ${finalRealizedPnl >= 0 ? '+' : ''}$${finalRealizedPnl.toFixed(2)}] (${source})`;
+      existingTrade.isActive = false;
 
-        const delta = Number((finalRealizedPnl - previousPnl).toFixed(2));
+      this.inMemoryCurrentBalance = Number((this.inMemoryCurrentBalance + delta).toFixed(2));
+      existingTrade.balanceAfterTrade = this.inMemoryCurrentBalance;
 
-        existingTrade.result = record.outcome;
-        existingTrade.pl = finalRealizedPnl;
-        existingTrade.realizedPnl = finalRealizedPnl;
-        existingTrade.source = source;
-        if (record.brokerDealId) existingTrade.brokerDealId = record.brokerDealId;
-        if (record.brokerOrderId) existingTrade.brokerOrderId = record.brokerOrderId;
-        if (record.closedAt) existingTrade.closedAt = record.closedAt;
-        if (record.closeReason) existingTrade.closeReason = record.closeReason;
-        existingTrade.theoreticalTp1Profit = theoreticalTp1Profit;
-        existingTrade.theoreticalTp2Profit = theoreticalTp2Profit;
-        existingTrade.exitPrice = record.exitPrice !== undefined ? record.exitPrice : (isWin ? (existingTrade.tp1 || record.tp1) : (existingTrade.sl || record.stopLoss));
-        existingTrade.exitTime = new Date(record.timestamp || Date.now()).toISOString();
-        existingTrade.notes = `${existingTrade.notes ? existingTrade.notes + ' | ' : ''}النتيجة: ${isWin ? '🟢 رابحة' : '🔴 خاسرة'} [P&L: ${finalRealizedPnl >= 0 ? '+' : ''}$${finalRealizedPnl.toFixed(2)}] (${source})`;
-        existingTrade.isActive = false;
-
-        this.inMemoryCurrentBalance = Number((this.inMemoryCurrentBalance + delta).toFixed(2));
-        existingTrade.balanceAfterTrade = this.inMemoryCurrentBalance;
-
-        updatedTrade = existingTrade;
-      } else {
-        this.inMemoryCurrentBalance = Number((this.inMemoryCurrentBalance + finalRealizedPnl).toFixed(2));
-
-        const newTrade: TradeLedgerItem = {
-          id: record.signalId,
-          tradeNumber: (this.inMemoryTrades[0]?.tradeNumber || 0) + 1,
-          date: new Date(record.timestamp).toLocaleDateString('ar-EG', {
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-          }),
-          isoTime: new Date(record.timestamp).toISOString(),
-          asset: (signalData?.asset as any) || 'XAU/USD',
-          direction: (signalData?.signal as any) || (record.direction as any) || 'BUY NOW',
-          entry: record.entry,
-          sl: record.stopLoss,
-          slPoints: signalData?.slPoints || Math.round(Math.abs(record.entry - record.stopLoss) / 0.1),
-          tp1: record.tp1,
-          tp1Points: signalData?.tp1Points || Math.round(Math.abs(record.entry - record.tp1) / 0.1),
-          tp2: record.tp2,
-          tp2Points: signalData?.tp2Points || Math.round(Math.abs(record.entry - record.tp2) / 0.1),
-          rr: signalData?.rr || '1:1.5',
-          riskPercent: signalData?.riskPercent || this.inMemorySettings.riskPerTrade,
-          riskAmount: riskAmount,
-          lotSize: lotSize,
-          confidence: signalData?.confidence || 80,
-          setup: signalData?.setup || 'SMC Liquidity Engine',
-          result: record.outcome,
-          pl: finalRealizedPnl,
-          realizedPnl: finalRealizedPnl,
-          balanceAfterTrade: this.inMemoryCurrentBalance,
-          exitPrice: record.exitPrice !== undefined ? record.exitPrice : (isWin ? record.tp1 : record.stopLoss),
-          exitTime: new Date(record.timestamp).toISOString(),
-          closedAt: record.closedAt || record.timestamp,
-          closeReason: record.closeReason,
-          source: source,
-          brokerDealId: record.brokerDealId,
-          brokerOrderId: record.brokerOrderId,
-          theoreticalTp1Profit,
-          theoreticalTp2Profit,
-          isActive: false,
-          notes: `سجلت (${source}: ${isWin ? '🟢 رابحة' : '🔴 خاسرة'}) [P&L: ${finalRealizedPnl >= 0 ? '+' : ''}$${finalRealizedPnl.toFixed(2)}]`,
-        };
-
-        this.inMemoryTrades.unshift(newTrade);
-        updatedTrade = newTrade;
-      }
+      const updatedTrade = existingTrade;
 
       // Firestore persistence
       if (this.firestoreDb && this.shouldPersist()) {
@@ -850,6 +872,12 @@ class PersistentStorage {
       }
 
       this.syncJsonBackups();
+
+      // Dispatch completed trade outcome notification
+      telegramService.sendOutcomeNotification(record, updatedTrade).catch((err) => {
+        console.error('[Storage] Telegram outcome alert dispatch error:', err);
+      });
+
       return {
         success: true,
         isDuplicate: false,
@@ -1057,31 +1085,11 @@ class PersistentStorage {
     try {
       this.inMemorySettings = { ...this.inMemorySettings, ...patch };
 
-      // When manualCapital is changed by the user, update starting balance and recalculate currentBalance
+      // Ensure manualCapital in settings is numeric if provided
       if (patch.manualCapital !== undefined) {
         const newCap = Number(patch.manualCapital);
-        if (!isNaN(newCap) && newCap > 0) {
-          this.inMemoryStartingBalance = Number(newCap.toFixed(2));
-          this.inMemorySettings.manualCapital = this.inMemoryStartingBalance;
-
-          const closedTrades = this.inMemoryTrades.filter((t) => t.result === 'WIN' || t.result === 'LOSS');
-          const totalPl = Number(closedTrades.reduce((acc, t) => acc + (t.pl || 0), 0).toFixed(2));
-
-          if (closedTrades.length === 0) {
-            this.inMemoryCurrentBalance = this.inMemoryStartingBalance;
-          } else {
-            this.inMemoryCurrentBalance = Number((this.inMemoryStartingBalance + totalPl).toFixed(2));
-          }
-
-          if (this.firestoreDb && this.shouldPersist()) {
-            setDoc(doc(this.firestoreDb, 'account_state', 'main'), sanitizeFirestoreData({
-              currentBalance: this.inMemoryCurrentBalance,
-              startingBalance: this.inMemoryStartingBalance,
-              updatedAt: Date.now(),
-            })).catch((err) => {
-              console.error('[Storage] Firestore saveSettings account update error:', err);
-            });
-          }
+        if (!isNaN(newCap) && newCap >= 0) {
+          this.inMemorySettings.manualCapital = Number(newCap.toFixed(2));
         }
       }
 
@@ -1137,27 +1145,6 @@ class PersistentStorage {
     return this.inMemoryTerminalSetups.has(key);
   }
 
-  public getTelegramDispatches(): string[] {
-    return Array.from(this.inMemoryTelegramDispatches);
-  }
-
-  public saveTelegramDispatch(key: string): void {
-    if (!key) return;
-    this.inMemoryTelegramDispatches.add(key);
-    if (this.firestoreDb && this.shouldPersist()) {
-      setDoc(doc(this.firestoreDb, 'telegram_dispatches', key.replace(/\//g, '_')), {
-        key,
-        dispatchedAt: Date.now(),
-      }).catch((err) => console.error('[Storage] Firestore saveTelegramDispatch error:', err));
-    }
-    this.syncJsonBackups();
-  }
-
-  public isTelegramDispatched(key: string): boolean {
-    if (!key) return false;
-    return this.inMemoryTelegramDispatches.has(key);
-  }
-
   public getScannerStatus() {
     return {
       lastScanTimestamp: this.lastScannerTimestamp,
@@ -1208,6 +1195,23 @@ class PersistentStorage {
 
         if (isRealizedTrade) {
           this.inMemoryCurrentBalance = newBalance;
+
+          const outcomeRecord = {
+            signalId: trade.signalId || trade.id,
+            tradeId: trade.id,
+            outcome: result as 'WIN' | 'LOSS',
+            realizedPnl: finalPl,
+            entry: trade.entry,
+            exitPrice: finalExitPrice,
+            closeReason: notes || trade.closeReason || 'تصفية يدوية أو نظام الوقف/الهدف',
+            timestamp: Date.now(),
+            source: 'SYSTEM',
+          };
+
+          // Dispatch outcome notification to Telegram
+          telegramService.sendOutcomeNotification(outcomeRecord, this.inMemoryTrades[idx]).catch((err) => {
+            console.error('[Storage] Telegram outcome alert dispatch error from closeTrade:', err);
+          });
         }
 
         if (this.firestoreDb && this.shouldPersist()) {
@@ -1376,6 +1380,105 @@ class PersistentStorage {
     return Array.from(this.inMemoryOpportunities.values());
   }
 
+  public markSignalOrOpportunityNotEntered(signalOrOppId: string): {
+    success: boolean;
+    signal?: TradeSignal;
+    opportunity?: TradeOpportunity;
+  } {
+    let updatedSignal: TradeSignal | undefined;
+    let updatedOpp: TradeOpportunity | undefined;
+
+    // 1. Update Signal in memory and storage
+    const sigIdx = this.inMemorySignals.findIndex((s) => s.id === signalOrOppId || s.setupId === signalOrOppId);
+    if (sigIdx >= 0) {
+      this.inMemorySignals[sigIdx].lifecycleState = 'NOT_ENTERED';
+      updatedSignal = this.inMemorySignals[sigIdx];
+      if (this.firestoreDb && this.shouldPersist()) {
+        setDoc(doc(this.firestoreDb, 'signals', updatedSignal.id), sanitizeFirestoreData(updatedSignal)).catch((e) => {
+          console.error('[Storage] Firestore update signal NOT_ENTERED error:', e);
+        });
+      }
+    }
+
+    // 2. Update Opportunity in memory and storage
+    const opp = this.inMemoryOpportunities.get(signalOrOppId) || (updatedSignal?.setupId ? this.inMemoryOpportunities.get(updatedSignal.setupId) : null);
+    if (opp) {
+      opp.status = 'NOT_ENTERED';
+      opp.lastUpdatedTime = Date.now();
+      this.inMemoryOpportunities.set(opp.id, opp);
+      updatedOpp = opp;
+      if (this.firestoreDb && this.shouldPersist()) {
+        setDoc(doc(this.firestoreDb, 'opportunities', opp.id.replace(/\//g, '_')), sanitizeFirestoreData(opp)).catch((e) => {
+          console.error('[Storage] Firestore update opportunity NOT_ENTERED error:', e);
+        });
+      }
+    }
+
+    // 3. Update candidate lifecycle if found
+    const lcIdx = this.inMemoryLifecycles.findIndex((l) => l.id === signalOrOppId || l.poiId === signalOrOppId);
+    if (lcIdx >= 0) {
+      this.inMemoryLifecycles[lcIdx].state = 'NOT_ENTERED';
+      this.inMemoryLifecycles[lcIdx].lastUpdatedTime = Date.now();
+      if (this.firestoreDb && this.shouldPersist()) {
+        setDoc(doc(this.firestoreDb, 'candidate_lifecycles', this.inMemoryLifecycles[lcIdx].id), sanitizeFirestoreData(this.inMemoryLifecycles[lcIdx])).catch(() => {});
+      }
+    }
+
+    // 4. Also store outcome record as NOT_ENTERED so that duplicate queries know it was marked NOT_ENTERED
+    const outcomeRecord: TradeOutcomeRecord = {
+      signalId: signalOrOppId,
+      tradeId: signalOrOppId,
+      direction: updatedSignal?.signal || 'BUY NOW',
+      orderType: 'NOT_ENTERED',
+      entry: updatedSignal?.entry || 0,
+      stopLoss: updatedSignal?.stopLoss || 0,
+      tp1: updatedSignal?.tp1 || 0,
+      tp2: updatedSignal?.tp2 || 0,
+      outcome: 'NOT_ENTERED' as any,
+      timestamp: Date.now(),
+      isoTime: new Date().toISOString(),
+      source: 'MANUAL',
+      realizedPnl: 0,
+      pl: 0,
+      notes: 'لم تُنفذ / لم يتم الدخول (NOT ENTERED)',
+    };
+
+    const outIdx = this.inMemoryOutcomes.findIndex((o) => o.signalId === signalOrOppId || o.tradeId === signalOrOppId);
+    if (outIdx >= 0) {
+      this.inMemoryOutcomes[outIdx] = outcomeRecord;
+    } else {
+      this.inMemoryOutcomes.unshift(outcomeRecord);
+    }
+    if (this.firestoreDb && this.shouldPersist()) {
+      setDoc(doc(this.firestoreDb, 'trade_outcomes', signalOrOppId), sanitizeFirestoreData(outcomeRecord)).catch(() => {});
+    }
+
+    this.syncJsonBackups();
+    return { success: true, signal: updatedSignal, opportunity: updatedOpp };
+  }
+
+  public async clearAllTrades(): Promise<TradeLedgerItem[]> {
+    this.inMemoryTrades = [];
+    this.inMemoryCurrentBalance = this.inMemoryStartingBalance;
+    if (this.firestoreDb && this.shouldPersist()) {
+      try {
+        const ledgerSnap = await getDocs(collection(this.firestoreDb, 'trade_ledger'));
+        for (const docRef of ledgerSnap.docs) {
+          await deleteDoc(docRef.ref).catch(() => {});
+        }
+        await setDoc(doc(this.firestoreDb, 'account_state', 'main'), sanitizeFirestoreData({
+          currentBalance: this.inMemoryCurrentBalance,
+          startingBalance: this.inMemoryStartingBalance,
+          updatedAt: Date.now(),
+        })).catch(() => {});
+      } catch (e) {
+        console.error('[Storage] Error clearing all trades in Firestore:', e);
+      }
+    }
+    this.syncJsonBackups();
+    return [];
+  }
+
   public clearOpportunities(): void {
     this.inMemoryOpportunities.clear();
     this.syncJsonBackups();
@@ -1389,7 +1492,6 @@ class PersistentStorage {
         openTradesCount: this.inMemoryTrades.filter(t => t.result === 'OPEN').length,
         opportunitiesCount: this.inMemoryOpportunities.size,
         terminalSetupsCount: this.inMemoryTerminalSetups.size,
-        telegramDispatchesCount: this.inMemoryTelegramDispatches.size,
         currentBalance: this.inMemoryCurrentBalance,
         startingBalance: this.inMemoryStartingBalance,
       };
@@ -1400,9 +1502,8 @@ class PersistentStorage {
       // 2. Reset opportunities
       this.inMemoryOpportunities.clear();
 
-      // 3. Reset terminal setups and Telegram dispatches
+      // 3. Reset terminal setups
       this.inMemoryTerminalSetups.clear();
-      this.inMemoryTelegramDispatches.clear();
 
       // 4. Reset lifecycles
       this.inMemoryLifecycles = [];
@@ -1441,11 +1542,6 @@ class PersistentStorage {
             await deleteDoc(docRef.ref).catch(() => {});
           }
 
-          const dispatchesSnap = await getDocs(collection(this.firestoreDb, 'telegram_dispatches'));
-          for (const docRef of dispatchesSnap.docs) {
-            await deleteDoc(docRef.ref).catch(() => {});
-          }
-
           const ledgerSnap = await getDocs(collection(this.firestoreDb, 'trade_ledger'));
           for (const docRef of ledgerSnap.docs) {
             const data = docRef.data();
@@ -1471,7 +1567,6 @@ class PersistentStorage {
         openTradesCount: this.inMemoryTrades.filter(t => t.result === 'OPEN').length,
         opportunitiesCount: this.inMemoryOpportunities.size,
         terminalSetupsCount: this.inMemoryTerminalSetups.size,
-        telegramDispatchesCount: this.inMemoryTelegramDispatches.size,
         currentBalance: this.inMemoryCurrentBalance,
         startingBalance: this.inMemoryStartingBalance,
       };

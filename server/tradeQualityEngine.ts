@@ -1126,6 +1126,44 @@ export class CandidateLifecycleManager {
     }
   }
 
+  public markSetupCompleted(keyOrSignal: string | any, reason = 'Target Hit / Setup Completed'): void {
+    let key = typeof keyOrSignal === 'string' ? keyOrSignal : '';
+    let setupName = 'Setup';
+    let direction: 'BUY' | 'SELL' = 'SELL';
+    let entry = 0;
+    let patternMetadata: any = undefined;
+    let poiId: string | undefined = undefined;
+
+    if (typeof keyOrSignal === 'object' && keyOrSignal !== null) {
+      setupName = keyOrSignal.setup || keyOrSignal.setupName || 'Setup';
+      direction = keyOrSignal.signal?.includes('BUY') || keyOrSignal.direction?.includes('BUY') ? 'BUY' : 'SELL';
+      entry = keyOrSignal.entry || keyOrSignal.entryProposed || 0;
+      patternMetadata = keyOrSignal.patternMetadata;
+      poiId = keyOrSignal.poiId;
+      key = this.generateCandidateKey(setupName, direction, entry, patternMetadata, poiId);
+    }
+
+    if (!key) return;
+
+    this.terminalFailedKeys.add(key);
+    storage.saveTerminalSetup(key);
+    const anchorKey = patternMetadata?.patternAnchorKey || (keyOrSignal as any)?.structuralAnchorKey;
+    if (anchorKey) {
+      this.terminalFailedKeys.add(`cand_${anchorKey}`);
+      this.terminalFailedKeys.add(anchorKey);
+      storage.saveTerminalSetup(`cand_${anchorKey}`);
+      storage.saveTerminalSetup(anchorKey);
+    }
+    const now = Date.now();
+    const existing = this.lifecycles.get(key);
+    if (existing) {
+      existing.state = 'COMPLETED';
+      existing.rejectionReason = reason;
+      existing.lastUpdatedTime = now;
+      this.lifecycles.set(key, existing);
+    }
+  }
+
   public isSetupTerminal(keyOrSignal: string | any): boolean {
     let key = typeof keyOrSignal === 'string' ? keyOrSignal : '';
     if (typeof keyOrSignal === 'object' && keyOrSignal !== null) {
@@ -1211,6 +1249,11 @@ export function generateOpportunityId(signal: TradeSignal): string {
   if (meta?.pivot1Time) {
     return `opp_s10_${(signal.signal || '').toUpperCase().includes('BUY') ? 'BUY' : 'SELL'}_${meta.pivot1Time}`;
   }
+  if (meta?.extremeLevel !== undefined && meta?.neckline !== undefined) {
+    const dir = (signal.signal || '').toUpperCase().includes('BUY') ? 'BUY' : 'SELL';
+    const fam = signal.strategyFamily || inferStrategyFamily(signal.setup);
+    return `opp_${fam}_${dir}_${meta.extremeLevel.toFixed(1)}_${meta.neckline.toFixed(1)}`;
+  }
   if (signal.poiId) {
     return `opp_poi_${signal.poiId}`;
   }
@@ -1283,35 +1326,164 @@ export function checkStructuralSameSetupIdentity(
   details?: DuplicateDetails;
   reason?: string;
 } {
-  // 1. COMPREHENSIVE STRUCTURAL-PROXIMITY SCAN: Prevent signal over-frequency / signal spam
-  const recentSignals = storage.getSignals(40);
-  const candIsBuy = candidateSignal.signal.toUpperCase().includes('BUY');
+  const candIsBuy = (candidateSignal.signal || (candidateSignal as any).direction || '').toUpperCase().includes('BUY');
   const candStrategyFamily = candidateSignal.strategyFamily || inferStrategyFamily(candidateSignal.setup);
-  
+  const metaCand = (candidateSignal as any).patternMetadata;
+
+  // A. HARD TERMINAL CHECK: Setup flagged as failed in lifecycle manager
+  if (globalLifecycleManager.isSetupTerminal(candidateSignal)) {
+    const details: DuplicateDetails = {
+      duplicateReason: 'DUPLICATE_ACTIVE_REENTRY',
+      activeSignalId: 'TERMINAL_BLOCK',
+      candidateSignalId: candidateSignal.id,
+      activeStrategyFamily: candStrategyFamily,
+      candidateStrategyFamily: candStrategyFamily,
+      samePoi: true,
+      sameStructuralOrigin: true,
+      sameTargetObjective: true,
+      sameLifecycle: true,
+      entryDistance: 0,
+    };
+    return {
+      isDuplicate: true,
+      isReentry: true,
+      status: 'DUPLICATE_ACTIVE_REENTRY',
+      details,
+      reason: `حظر إعادة الدخول الصارم: هذه التشكيلة الهيكلية (${candidateSignal.setup}) تم ضرب وقف خسارتها سابقاً ومُعلمة كـ FAILED. يُمحو إعادة الدخول منها نهائياً بغض النظر عن تغير السعر أو الثقة.`,
+    };
+  }
+
+  // B. PERSISTENT OPPORTUNITY CHECK: Check stored opportunities in storage
+  const storedOpps = storage.getOpportunities();
+  const candOppId = generateOpportunityId(candidateSignal);
+
+  for (const opp of storedOpps) {
+    if (!opp) continue;
+    const oppIsBuy = opp.direction === 'BUY';
+    const oppStrategyFamily = opp.strategyFamily || inferStrategyFamily(opp.setupName);
+
+    // Check failed re-entry block
+    if (opp.status === 'FAILED') {
+      const isOppSameFam = oppStrategyFamily === candStrategyFamily;
+      const isOppSameDir = oppIsBuy === candIsBuy;
+      const isOppSameAnchor = (opp.id === candOppId) ||
+        (opp.patternAnchorKey && metaCand?.patternAnchorKey && opp.patternAnchorKey === metaCand.patternAnchorKey) ||
+        (opp.pivot1Time && metaCand?.pivot1Time && opp.pivot1Time === metaCand.pivot1Time) ||
+        (opp.poiId && candidateSignal.poiId && opp.poiId === candidateSignal.poiId);
+
+      if (isOppSameFam && isOppSameDir && isOppSameAnchor) {
+        const details: DuplicateDetails = {
+          duplicateReason: 'DUPLICATE_ACTIVE_REENTRY',
+          activeSignalId: opp.id,
+          candidateSignalId: candidateSignal.id,
+          activeStrategyFamily: opp.strategyFamily,
+          candidateStrategyFamily: candStrategyFamily,
+          samePoi: true,
+          sameStructuralOrigin: true,
+          sameTargetObjective: true,
+          sameLifecycle: true,
+          entryDistance: 0,
+        };
+        return {
+          isDuplicate: true,
+          isReentry: true,
+          status: 'DUPLICATE_ACTIVE_REENTRY',
+          details,
+          reason: `حظر إعادة الدخول الصارم: فرصة التداول المخزنة (${candidateSignal.setup}) تندرج تحت معرّف فرصة تداول مكررة تم فشلها مسبقاً (FAILED). تم حظر إعادة الدخول لمنع تكرار الخسارة.`,
+        };
+      }
+    } else if (opp.status === 'ACTIVE' || opp.status === 'DISPATCHED') {
+      // Must be same direction and same strategy family
+      if (oppIsBuy !== candIsBuy) continue;
+      if (oppStrategyFamily !== candStrategyFamily && opp.setupName !== candidateSignal.setup) continue;
+
+      let sameStructure = false;
+      if (opp.id === candOppId) {
+        sameStructure = true;
+      } else if (opp.patternAnchorKey && metaCand?.patternAnchorKey && opp.patternAnchorKey === metaCand.patternAnchorKey) {
+        sameStructure = true;
+      } else if (opp.pivot1Time && metaCand?.pivot1Time && opp.pivot1Time === metaCand.pivot1Time) {
+        sameStructure = true;
+      } else if (
+        opp.extremeLevel !== undefined &&
+        metaCand?.extremeLevel !== undefined &&
+        Math.abs(opp.extremeLevel - metaCand.extremeLevel) <= 3.0 &&
+        Math.abs((opp.neckline || 0) - (metaCand.neckline || 0)) <= 3.0
+      ) {
+        sameStructure = true;
+      } else if (candStrategyFamily === 'DOUBLE_TOP_BOTTOM') {
+        const entryDiff = Math.abs(opp.entry - candidateSignal.entry);
+        const slDiff = Math.abs(opp.stopLoss - candidateSignal.stopLoss);
+        if (entryDiff <= 5.0 || slDiff <= 4.0) {
+          sameStructure = true;
+        }
+      } else if (opp.poiId && candidateSignal.poiId && opp.poiId === candidateSignal.poiId) {
+        sameStructure = true;
+      } else if (
+        Math.abs(opp.entry - candidateSignal.entry) <= 6.0 &&
+        Math.abs(opp.stopLoss - candidateSignal.stopLoss) <= 5.0 &&
+        Math.abs(Date.now() - opp.lastUpdatedTime) < 45 * 60 * 1000
+      ) {
+        sameStructure = true;
+      }
+
+      if (sameStructure) {
+        const details: DuplicateDetails = {
+          duplicateReason: 'DUPLICATE_ACTIVE',
+          activeSignalId: opp.id,
+          candidateSignalId: candidateSignal.id,
+          activeStrategyFamily: opp.strategyFamily,
+          candidateStrategyFamily: candStrategyFamily,
+          samePoi: true,
+          sameStructuralOrigin: true,
+          sameTargetObjective: true,
+          sameLifecycle: false,
+          entryDistance: Number(Math.abs(opp.entry - candidateSignal.entry).toFixed(2)),
+        };
+        return {
+          isDuplicate: true,
+          isReentry: false,
+          status: 'DUPLICATE_ACTIVE',
+          details,
+          reason: `تم رصد نفس الفرصة الهيكلية الجارية والمخزنة (${opp.setupName}). تم حظر التكرار على السعر المتطور ($${candidateSignal.entry}) لمنع السخام وضوضاء الإشارات المتكررة.`,
+        };
+      }
+    }
+  }
+
+  // C. COMPREHENSIVE STRUCTURAL-PROXIMITY SCAN ACROSS RECENT SIGNALS
+  const recentSignals = storage.getSignals(40);
   for (const prev of recentSignals) {
-    if (!prev || prev.signal === 'NO TRADE' || prev.id === candidateSignal.id) {
+    if (!prev || !prev.signal || prev.signal === 'NO TRADE' || prev.id === candidateSignal.id) {
       continue;
     }
-    
-    // Must be in the same direction and same strategy family
-    const prevIsBuy = prev.signal.toUpperCase().includes('BUY');
+
+    const prevIsBuy = (prev.signal || (prev as any).direction || '').toUpperCase().includes('BUY');
     if (prevIsBuy !== candIsBuy) continue;
-    
+
     const prevStrategyFamily = prev.strategyFamily || inferStrategyFamily(prev.setup);
-    if (prevStrategyFamily !== candStrategyFamily) continue;
-    
-    // Check if the previous signal was dispatched/active recently (within 45 minutes)
+    if (prevStrategyFamily !== candStrategyFamily && prev.setup !== candidateSignal.setup) continue;
+
     const timeElapsedMs = Math.abs(Date.now() - prev.timestamp);
     if (timeElapsedMs < 45 * 60 * 1000) {
       const entryDistance = Math.abs(prev.entry - candidateSignal.entry);
       const slDistance = Math.abs(prev.stopLoss - candidateSignal.stopLoss);
-      
+      const metaPrev = (prev as any).patternMetadata;
+
       let isSameLocalStructure = false;
       let reasonMessage = '';
-      
+
       // S10 (Double Top/Bottom)
       if (candStrategyFamily === 'DOUBLE_TOP_BOTTOM') {
-        if (entryDistance <= 5.0 || slDistance <= 4.0) {
+        if (
+          (metaPrev?.patternAnchorKey && metaCand?.patternAnchorKey && metaPrev.patternAnchorKey === metaCand.patternAnchorKey) ||
+          (metaPrev?.pivot1Time && metaCand?.pivot1Time && metaPrev.pivot1Time === metaCand.pivot1Time) ||
+          (metaPrev?.extremeLevel !== undefined && metaCand?.extremeLevel !== undefined &&
+            Math.abs(metaPrev.extremeLevel - metaCand.extremeLevel) <= 3.0 &&
+            Math.abs((metaPrev.neckline || 0) - (metaCand.neckline || 0)) <= 3.0) ||
+          entryDistance <= 5.0 ||
+          slDistance <= 4.0
+        ) {
           isSameLocalStructure = true;
           reasonMessage = `تكرار في التشكيل الهيكلي القريب (S10 Double Top/Bottom): تم إصدار إشارة مشابهة مؤخراً بفارق سعر دخول $${entryDistance.toFixed(2)} ووقف خسارة $${slDistance.toFixed(2)} قبل ${Math.round(timeElapsedMs / 60000)} دقيقة. تم منع التكرار لضمان دقة الإشارات وحظر الإسبام.`;
         }
@@ -1337,7 +1509,7 @@ export function checkStructuralSameSetupIdentity(
           reasonMessage = `تكرار قريب في بنية السعر المحلية (بفارق دخول $${entryDistance.toFixed(2)}): تم إصدار إشارة في نفس المنطقة الجغرافية للسعر قبل ${Math.round(timeElapsedMs / 60000)} دقيقة. تم منع التكرار لضمان جودة الاختيار.`;
         }
       }
-      
+
       if (isSameLocalStructure) {
         const dupDetails: DuplicateDetails = {
           duplicateReason: 'DUPLICATE_ACTIVE',
@@ -1362,97 +1534,26 @@ export function checkStructuralSameSetupIdentity(
     }
   }
 
-  // A. HARD TERMINAL CHECK: Setup flagged as failed in lifecycle manager
-  if (globalLifecycleManager.isSetupTerminal(candidateSignal)) {
-    const details: DuplicateDetails = {
-      duplicateReason: 'DUPLICATE_ACTIVE_REENTRY',
-      activeSignalId: 'TERMINAL_BLOCK',
-      candidateSignalId: candidateSignal.id,
-      activeStrategyFamily: (candidateSignal.strategyFamily as string) || inferStrategyFamily(candidateSignal.setup),
-      candidateStrategyFamily: (candidateSignal.strategyFamily as string) || inferStrategyFamily(candidateSignal.setup),
-      samePoi: true,
-      sameStructuralOrigin: true,
-      sameTargetObjective: true,
-      sameLifecycle: true,
-      entryDistance: 0,
-    };
-    return {
-      isDuplicate: true,
-      isReentry: true,
-      status: 'DUPLICATE_ACTIVE_REENTRY',
-      details,
-      reason: `حظر إعادة الدخول الصارم: هذه التشكيلة الهيكلية (${candidateSignal.setup}) تم ضرب وقف خسارتها سابقاً ومُعلمة كـ FAILED. يُمحو إعادة الدخول منها نهائياً بغض النظر عن تغير السعر أو الثقة.`,
-    };
-  }
-
-  // B. PERSISTENT OPPORTUNITY CHECK: Check if opportunity is FAILED or already ACTIVE/DISPATCHED
-  const oppId = generateOpportunityId(candidateSignal);
-  const opp = storage.getOpportunity(oppId);
-  if (opp) {
-    if (opp.status === 'FAILED') {
-      const details: DuplicateDetails = {
-        duplicateReason: 'DUPLICATE_ACTIVE_REENTRY',
-        activeSignalId: oppId,
-        candidateSignalId: candidateSignal.id,
-        activeStrategyFamily: opp.strategyFamily,
-        candidateStrategyFamily: candidateSignal.strategyFamily || 'UNKNOWN',
-        samePoi: true,
-        sameStructuralOrigin: true,
-        sameTargetObjective: true,
-        sameLifecycle: true,
-        entryDistance: 0,
-      };
-      return {
-        isDuplicate: true,
-        isReentry: true,
-        status: 'DUPLICATE_ACTIVE_REENTRY',
-        details,
-        reason: `حظر إعادة الدخول الصارم: فرصة التداول المخزنة (${candidateSignal.setup}) تندرج تحت معرّف فرصة تداول مكررة تم فشلها مسبقاً (FAILED). تم حظر إعادة الدخول لمنع تكرار الخسارة.`,
-      };
-    } else if (opp.status === 'DISPATCHED' || opp.status === 'ACTIVE') {
-      const details: DuplicateDetails = {
-        duplicateReason: 'DUPLICATE_ACTIVE',
-        activeSignalId: oppId,
-        candidateSignalId: candidateSignal.id,
-        activeStrategyFamily: opp.strategyFamily,
-        candidateStrategyFamily: candidateSignal.strategyFamily || 'UNKNOWN',
-        samePoi: true,
-        sameStructuralOrigin: true,
-        sameTargetObjective: true,
-        sameLifecycle: false,
-        entryDistance: Math.abs(opp.entry - candidateSignal.entry),
-      };
-      return {
-        isDuplicate: true,
-        isReentry: false,
-        status: 'DUPLICATE_ACTIVE',
-        details,
-        reason: `تم رصد نفس الفرصة الهيكلية الجارية والمخزنة (${opp.setupName}). تم حظر التكرار على السعر المتطور ($${candidateSignal.entry}) لمنع السخام وضوضاء الإشارات المتكررة.`,
-      };
-    }
-  }
-
-  // C. MEMORY BACKUP CHECK (if storage opportunity was not found)
+  // D. ACTIVE SIGNAL IN-MEMORY CHECK
   let currentActive = activeSignal;
   if (!currentActive) {
     const recent = storage.getSignals(10);
     const foundActive = recent.find(
-      (s) => s && s.signal !== 'NO TRADE' && s.telegramDispatchStatus !== 'SUPPRESSED'
+      (s) => s && s.signal && s.signal !== 'NO TRADE' && (s.signal || (s as any).direction || '').toUpperCase().includes(candIsBuy ? 'BUY' : 'SELL')
     );
     if (foundActive) {
       currentActive = foundActive;
     }
   }
 
-  if (!currentActive || currentActive.signal === 'NO TRADE' || candidateSignal.signal === 'NO TRADE') {
+  if (!currentActive || !currentActive.signal || currentActive.signal === 'NO TRADE' || !candidateSignal.signal || candidateSignal.signal === 'NO TRADE') {
     return { isDuplicate: false, isReentry: false, status: 'QUALIFIED_SIGNAL' };
   }
 
   activeSignal = currentActive;
 
   // Check if both signals are in the SAME direction
-  const activeIsBuy = activeSignal.signal.toUpperCase().includes('BUY');
-  candIsBuy; // already declared at top level of function
+  const activeIsBuy = (activeSignal.signal || (activeSignal as any).direction || '').toUpperCase().includes('BUY');
   if (activeIsBuy !== candIsBuy) {
     return { isDuplicate: false, isReentry: false, status: 'QUALIFIED_SIGNAL' };
   }
@@ -1468,7 +1569,6 @@ export function checkStructuralSameSetupIdentity(
   const isS10Cand = candidateStrategyFamily === 'DOUBLE_TOP_BOTTOM' || candSetup.includes('double top') || candSetup.includes('double bottom') || candSetup.includes('m-formation') || candSetup.includes('w-formation');
 
   const metaActive = (activeSignal as any).patternMetadata;
-  const metaCand = (candidateSignal as any).patternMetadata;
 
   let sameS10Structure = false;
   if (isS10Active && isS10Cand) {
@@ -1608,6 +1708,37 @@ export function resolveFinalSignalConflict(
         reason: `SUPPRESSED_BY_BETTER_OPPORTUNITY: تم إلغاء هذه الإشارة لصالح الإشارة الأفضل الجودة والأعلى رتبة (${best.setupName || best.setup}) في نفس معرّف فرصة التداول (${oppId}).`,
       });
     }
+  }
+
+  // 2.5 ARBITRATE AGAINST ACTIVE IN-FLIGHT TRADE (if present)
+  if (activeTrade && (activeTrade.signal || activeTrade.direction) && activeTrade.signal !== 'NO TRADE') {
+    const activeIsBuy = (activeTrade.signal || activeTrade.direction || '').toUpperCase().includes('BUY');
+    const activeScore = rankCandidate(activeTrade, htfRegime);
+    const nonOpposedReps: any[] = [];
+
+    for (const cand of clusterRepresentatives) {
+      const candIsBuy = (cand.direction || cand.signal || '').toUpperCase().includes('BUY');
+      if (candIsBuy !== activeIsBuy) {
+        // Candidate opposes active trade
+        const candScore = rankCandidate(cand, htfRegime);
+        if (candScore <= activeScore + 5.0) {
+          clusterSuppressed.push({
+            candidate: cand,
+            reason: `OPPOSING_ACTIVE_BLOCKED: صفقة ${activeIsBuy ? 'BUY' : 'SELL'} جارية حالياً (${activeTrade.setup || 'Active Trade'}). تم حظر إشارة ${cand.signal || cand.direction} (${cand.setup || cand.setupName}) المعارضة لمنع التضارب حتى اكتمال الصفقة الجارية.`,
+          });
+          continue;
+        }
+      }
+      nonOpposedReps.push(cand);
+    }
+
+    if (nonOpposedReps.length === 0) {
+      return { winningCandidate: null, suppressedCandidates: clusterSuppressed };
+    }
+
+    // Replace cluster representatives with filtered list
+    clusterRepresentatives.length = 0;
+    clusterRepresentatives.push(...nonOpposedReps);
   }
 
   if (clusterRepresentatives.length === 1) {

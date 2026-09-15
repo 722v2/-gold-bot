@@ -34,8 +34,8 @@ interface CacheEntry<T> {
   cachedAt: number;
 }
 
-const priceCache: Record<string, CacheEntry<BiquoteQuote>> = {};
-const candleCache: Record<string, CacheEntry<Candle[]>> = {};
+export const priceCache: Record<string, CacheEntry<BiquoteQuote>> = {};
+export const candleCache: Record<string, CacheEntry<Candle[]>> = {};
 
 const QUOTE_CACHE_TTL_MS = 3_000; // 3 seconds cache for live quotes
 const CANDLE_CACHE_TTL_MS = 8_000; // 8 seconds cache for multi-timeframe candles
@@ -68,6 +68,34 @@ function normalizeInterval(tf: string): '1m' | '5m' | '15m' | '1h' {
 }
 
 /**
+ * Helper utility to perform fetch with retries and timeout
+ */
+async function fetchWithRetry(url: string, options: RequestInit & { timeout?: number }, retries = 3, delay = 1000): Promise<Response> {
+  const timeout = options.timeout ?? 10000;
+  for (let i = 0; i < retries; i++) {
+    try {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), timeout);
+      const fetchOpts = { ...options, signal: controller.signal };
+      // Delete timeout property so standard fetch doesn't receive custom config options
+      delete (fetchOpts as any).timeout;
+      const res = await fetch(url, fetchOpts);
+      clearTimeout(id);
+      return res;
+    } catch (err: any) {
+      const isLast = i === retries - 1;
+      const isTimeout = err.name === 'AbortError' || err.message?.includes('aborted') || err.message?.includes('timeout');
+      console.warn(`[fetchWithRetry] Attempt ${i + 1} failed for ${url}. Error: ${err.message || err}. Timeout: ${isTimeout}. ${isLast ? 'Out of retries.' : 'Retrying...'}`);
+      if (isLast) {
+        throw err;
+      }
+      await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i)));
+    }
+  }
+  throw new Error(`fetchWithRetry failed for ${url}`);
+}
+
+/**
  * Fetch live quote from Biquote (symbol: XAUUSD)
  * Endpoint: https://biquote.io/api/XAUUSD
  * No API key, No signup, No subscription required
@@ -84,16 +112,17 @@ export async function fetchLiveQuote(asset: AssetType = 'XAU/USD'): Promise<Biqu
   const url = `https://biquote.io/api/${symbol}`;
   let res: Response;
   try {
-    res = await fetch(url, {
-      signal: AbortSignal.timeout(8000),
+    res = await fetchWithRetry(url, {
       headers: {
         'User-Agent': 'BiquoteGoldScanner/1.0',
         'Accept': 'application/json',
       },
-    });
+      timeout: 12000,
+    }, 3, 1000);
   } catch (netErr: any) {
     console.error(`[Biquote Live Quote Error] Network fetch failed for ${url}:`, netErr.message || netErr);
-    throw new Error(`Biquote network request failed: ${netErr.message || 'Fetch error'}`);
+    // Never fall back to stale cached quote or synthetic prices for live trade signals
+    throw new Error(`Biquote live quote unavailable or timed out: ${netErr.message || 'Fetch error'}`);
   }
 
   if (!res.ok) {
@@ -131,34 +160,34 @@ export async function fetchLiveQuote(asset: AssetType = 'XAU/USD'): Promise<Biqu
   const rawAsk = parseNum(data.ask ?? data.askPrice ?? data.sell);
   const rawPrice = parseNum(data.price ?? data.last ?? data.close ?? data.mid);
 
-  let mid = parseNum(data.mid);
-  if (!mid || mid <= 0) {
-    if (rawBid > 0 && rawAsk > 0) {
-      mid = (rawBid + rawAsk) / 2;
-    } else {
-      mid = rawPrice > 0 ? rawPrice : rawBid || rawAsk || 0;
-    }
+  // STRICT VALIDATION: Real, positive bid and ask are mandatory from Biquote MT5 feed
+  // No synthetic bid/ask/spread allowed
+  if (rawBid <= 0 || rawAsk <= 0 || rawBid > rawAsk) {
+    console.error(`[Biquote Live Quote Error] Missing or invalid bid/ask from Biquote for ${symbol}: Bid=${rawBid}, Ask=${rawAsk}`);
+    throw new Error(`Missing or invalid bid/ask in Biquote live quote (Bid: ${rawBid}, Ask: ${rawAsk})`);
   }
 
-  if (mid <= 0) {
+  const spread = Number((rawAsk - rawBid).toFixed(3));
+  const mid = parseNum(data.mid) > 0 ? parseNum(data.mid) : Number(((rawBid + rawAsk) / 2).toFixed(3));
+  const last = rawPrice > 0 ? rawPrice : mid;
+
+  if (mid <= 0 || last <= 0) {
     console.error(`[Biquote Live Quote Error] Unable to extract positive price for ${symbol} from Biquote. HTTP ${res.status}, Payload keys: [${Object.keys(data).join(', ')}], Payload:`, data);
     throw new Error(`Invalid or non-positive price extracted from Biquote response (${res.status})`);
   }
 
-  const bid = rawBid > 0 ? rawBid : Number((mid - 0.1).toFixed(3));
-  const ask = rawAsk > 0 ? rawAsk : Number((mid + 0.1).toFixed(3));
-  const last = rawPrice > 0 ? rawPrice : mid;
-  const spread = parseNum(data.spread) || (ask > 0 && bid > 0 ? Number((ask - bid).toFixed(3)) : 0.2);
-  const high = parseNum(data.high) || mid;
-  const low = parseNum(data.low) || mid;
+  const bid = Number(rawBid.toFixed(3));
+  const ask = Number(rawAsk.toFixed(3));
+  const high = parseNum(data.high) || Math.max(ask, mid);
+  const low = parseNum(data.low) || Math.min(bid, mid);
 
   const quote: BiquoteQuote = {
     symbol: data.symbol || symbol,
-    bid: Number(bid.toFixed(3)),
-    ask: Number(ask.toFixed(3)),
+    bid,
+    ask,
     mid: Number(mid.toFixed(3)),
     last: Number(last.toFixed(3)),
-    spread: Number(spread.toFixed(3)),
+    spread,
     high: Number(high.toFixed(3)),
     low: Number(low.toFixed(3)),
     direction: data.direction || 'FLAT',
@@ -213,13 +242,23 @@ export async function fetchCandles(
   }
 
   const url = `https://biquote.io/api/${symbol}/ohlc?interval=${interval}&limit=${clampedLimit}`;
-  const res = await fetch(url, {
-    signal: AbortSignal.timeout(10000),
-    headers: {
-      'User-Agent': 'BiquoteGoldScanner/1.0',
-      'Accept': 'application/json',
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetchWithRetry(url, {
+      headers: {
+        'User-Agent': 'BiquoteGoldScanner/1.0',
+        'Accept': 'application/json',
+      },
+      timeout: 15000,
+    }, 3, 1000);
+  } catch (netErr: any) {
+    console.error(`[Biquote Candles Error] Network fetch failed for ${url}:`, netErr.message || netErr);
+    if (cached) {
+      console.warn(`[Biquote Candles] Falling back to stale cached candles for key ${cacheKey} due to network error`);
+      return cached.data;
+    }
+    throw new Error(`Biquote OHLC fetch failed: ${netErr.message || 'Fetch error'}`);
+  }
 
   if (!res.ok) {
     throw new Error(`Biquote OHLC error (${res.status}) for ${symbol} [${interval}]: ${res.statusText}`);

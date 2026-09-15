@@ -810,7 +810,7 @@ export async function runTradeManagementTests(): Promise<{ allPassed: boolean; r
     const passed = eval1.isDuplicateNotification === false && eval2.isDuplicateNotification === true;
     results.push({
       testNumber: 11,
-      name: 'Management action deduplication suppresses redundant Telegram notifications',
+      name: 'Management action deduplication suppresses redundant notifications',
       passed,
       details: `First eval duplicate: ${eval1.isDuplicateNotification}, Second eval duplicate: ${eval2.isDuplicateNotification}`,
     });
@@ -943,7 +943,7 @@ export async function runTradeManagementTests(): Promise<{ allPassed: boolean; r
   }
 
   // --------------------------------------------------------------------------
-  // TEST 14: HOLD produces no Telegram notifications or spam
+  // TEST 14: HOLD produces no notifications or spam
   // --------------------------------------------------------------------------
   try {
     const trade: TradeLedgerItem = {
@@ -984,12 +984,12 @@ export async function runTradeManagementTests(): Promise<{ allPassed: boolean; r
       requiresConfirmation: false,
     };
 
-    const sent = await tradeManagementEngine.sendTelegramManagementNotification(holdAction, trade);
+    const sent = await tradeManagementEngine.sendManagementNotification(holdAction, trade);
     const passed = sent === false; // HOLD must immediately return false and send nothing
 
     results.push({
       testNumber: 14,
-      name: 'HOLD state produces zero Telegram spam / notifications',
+      name: 'HOLD state produces zero spam / notifications',
       passed,
       details: `HOLD notification sent: ${sent} (expected false)`,
     });
@@ -1014,7 +1014,7 @@ export async function runTradeManagementTests(): Promise<{ allPassed: boolean; r
       outcome: 'WIN' as const,
       realizedPnl: 17.0, // Authoritative realized dollar P&L
       exitPrice: 4279.49,
-      source: 'TELEGRAM_CALLBACK' as const,
+      source: 'MANUAL' as const,
       timestamp: Date.now(),
       isoTime: new Date().toISOString(),
     };
@@ -1112,7 +1112,7 @@ export async function runTradeManagementTests(): Promise<{ allPassed: boolean; r
 
     results.push({
       testNumber: 17,
-      name: 'Auto Trading remains strictly disabled by default (Manual telegram mode)',
+      name: 'Auto Trading remains strictly disabled by default (Manual execution mode)',
       passed,
       details: `autoTradingEnabled: ${settings.autoTradingEnabled}, Adapter executable: ${plan.executable}`,
     });
