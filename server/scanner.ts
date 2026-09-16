@@ -509,42 +509,8 @@ class LiveMarketScanner {
 
       this.config.scanCount += 1;
 
-      // Volatility Protection: Opposite-direction cooldown after a trade closes
-      const trades = storage.getTrades(300);
-      const closedTrades = trades
-        .filter((t) => (t.result === 'WIN' || t.result === 'LOSS') && (t.closedAt || t.exitTime))
-        .map((t) => ({
-          direction: t.direction.toUpperCase().includes('BUY') ? 'BUY' : 'SELL',
-          closedAt: t.closedAt || (t.exitTime ? Date.parse(t.exitTime) : 0),
-        }))
-        .filter((t) => t.closedAt > 0)
-        .sort((a, b) => b.closedAt - a.closedAt);
-
-      const lastClosedTrade = closedTrades[0];
-      const cooldownMinutes = settings.oppositeCooldownMinutes ?? 10;
-      const cooldownMs = cooldownMinutes * 60 * 1000;
-      
-      let isCooldownBlocked = false;
-      let cooldownBlockReason = '';
-
-      if (lastClosedTrade && signal.signal !== 'NO TRADE') {
-        const timeSinceClose = Date.now() - lastClosedTrade.closedAt;
-        const candidateDirection: 'BUY' | 'SELL' = signal.signal.toUpperCase().includes('BUY') ? 'BUY' : 'SELL';
-        
-        if (candidateDirection !== lastClosedTrade.direction && timeSinceClose < cooldownMs) {
-          isCooldownBlocked = true;
-          const remainingSeconds = Math.max(0, Math.ceil((cooldownMs - timeSinceClose) / 1000));
-          const remainingMinutes = Math.floor(remainingSeconds / 60);
-          const remainingSecs = remainingSeconds % 60;
-          cooldownBlockReason = `تأثير تقلبات السوق (Whipsaw Cooldown): تم إغلاق صفقة ${lastClosedTrade.direction} مؤخراً. يرجى الانتظار ${remainingMinutes}د و ${remainingSecs}ث لتهدئة السوق قبل فتح صفقة معاكسة (${candidateDirection}).`;
-          
-          console.log(`[LiveMarketScanner] Cooldown blocked: opposite signal ${signal.signal} within ${cooldownMinutes} minutes of last closed trade.`);
-        }
-      }
-
       // Check if candidate signal opposes an active in-flight trade
       const isOpposingActiveTrade =
-        !isCooldownBlocked &&
         activeTradeDirection !== null &&
         signal.signal !== 'NO TRADE' &&
         ((activeTradeDirection === 'BUY' && signal.signal.toUpperCase().includes('SELL')) ||
@@ -552,13 +518,11 @@ class LiveMarketScanner {
 
       // Check structural same-setup identity against active in-flight trade
       const structuralIdentity = checkStructuralSameSetupIdentity(this.activeSignal, signal);
-      const isSameSetupActive = !isCooldownBlocked && structuralIdentity.isDuplicate;
+      const isSameSetupActive = structuralIdentity.isDuplicate;
 
       // Status text for storage
       let scanResultStatus = 'NO TRADE';
-      if (isCooldownBlocked) {
-        scanResultStatus = 'COOLDOWN_BLOCKED';
-      } else if (signal.signal !== 'NO TRADE') {
+      if (signal.signal !== 'NO TRADE') {
         if (isOpposingActiveTrade) {
           scanResultStatus = 'OPPOSING_ACTIVE_BLOCKED';
         } else if (isSameSetupActive) {
@@ -566,12 +530,6 @@ class LiveMarketScanner {
         } else {
           scanResultStatus = 'QUALIFIED_SIGNAL';
         }
-      }
-
-      if (isCooldownBlocked) {
-        signal.signal = 'NO TRADE';
-        signal.setup = 'COOLDOWN_BLOCKED';
-        signal.noTradeReason = cooldownBlockReason;
       }
 
       const scanId = `scan_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
@@ -1071,9 +1029,7 @@ class LiveMarketScanner {
         this.config.duplicatePrevented = false;
         this.config.lastDecision = 'NO TRADE';
         this.config.lastSignal = signal;
-        this.config.lastScanStatus = isCooldownBlocked
-          ? `فترة التبريد المعاكسة نشطة | تم حظر إشارة معاكسة لحماية الحساب من التقلبات`
-          : `آخر فحص: ${new Date().toLocaleTimeString()} - القرار: NO TRADE (حماية رأس المال - عدم اكتمال الشروط الصارمة)`;
+        this.config.lastScanStatus = `آخر فحص: ${new Date().toLocaleTimeString()} - القرار: NO TRADE (حماية رأس المال - عدم اكتمال الشروط الصارمة)`;
 
         // Resolve dynamic rejection reason based on actual scan analysis
         let dynamicRejectionReason = signal.noTradeReason;
