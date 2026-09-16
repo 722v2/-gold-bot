@@ -865,7 +865,7 @@ export const TradesView: React.FC<TradesViewProps> = ({
                     />
                   </div>
                   <p className="text-[10px] text-stone-400">
-                    سيتم حفظ هذه الصفقة مباشرة إلى قاعدة بيانات Firestore وتحديث رصيد الحساب بالربح أو الخسارة المحددة.
+                    سيتم حفظ هذه الصفقة مباشرة إلى قاعدة بيانات Supabase وتحديث رصيد الحساب بالربح أو الخسارة المحددة.
                   </p>
                 </div>
               )}

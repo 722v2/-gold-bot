@@ -1,5 +1,5 @@
-[
-  {
+{
+  "sig_1789555630810_ro2w0": {
     "id": "sig_1789555630810_ro2w0",
     "setupName": "Bare Resistance Rejection",
     "strategyFamily": "UNKNOWN",
@@ -18,7 +18,7 @@
     "telegramRetryCount": 5,
     "telegramNextRetryTime": 1789558264275
   },
-  {
+  "opp_double_top_reversal__m_formation__SELL_4350": {
     "id": "opp_double_top_reversal__m_formation__SELL_4350",
     "setupName": "Double Top Reversal (M-Formation)",
     "strategyFamily": "UNKNOWN",
@@ -34,10 +34,10 @@
     "confidence": 82,
     "signalId": "sig_1789558265087_jib9t",
     "telegramDeliveryInFlight": false,
-    "telegramRetryCount": 3,
-    "telegramNextRetryTime": 1789558686079
+    "telegramRetryCount": 4,
+    "telegramNextRetryTime": 1789559577766
   },
-  {
+  "opp_bare_resistance_rejection_SELL_4350": {
     "id": "opp_bare_resistance_rejection_SELL_4350",
     "setupName": "Bare Resistance Rejection",
     "strategyFamily": "UNKNOWN",
@@ -56,4 +56,4 @@
     "telegramRetryCount": 2,
     "telegramNextRetryTime": 1789558865208
   }
-]
+}

@@ -1,0 +1,53 @@
+name: One-Time Supabase Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "MIGRATE" to confirm migration execution'
+        required: true
+        default: 'MIGRATE'
+
+jobs:
+  migrate:
+    name: Execute Data Migration to Supabase PostgreSQL
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Verify Schema and Historical Data Files
+        run: |
+          echo "Verifying prerequisite schema and data files..."
+          if [ ! -f "supabase/schema.sql" ]; then
+            echo "::error::supabase/schema.sql not found!"
+            exit 1
+          fi
+          if [ ! -f "data/account_state.json" ]; then
+            echo "::error::data/account_state.json not found!"
+            exit 1
+          fi
+          echo "Schema and data files verified successfully."
+
+      - name: Setup Node.js Runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run Supabase Data Migration Script
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "MIGRATE" ]; then
+            echo "Migration cancelled. Input 'MIGRATE' was not provided."
+            exit 1
+          fi
+          echo "Executing migrateToSupabase.ts with idempotent upserts..."
+          npx tsx scripts/migrateToSupabase.ts
+          echo "Migration script completed."

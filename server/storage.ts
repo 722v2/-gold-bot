@@ -1,123 +1,103 @@
-import fs from 'fs';
-import path from 'path';
-import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
-import {
-  getFirestore,
-  Firestore,
-  setLogLevel,
-  doc,
-  getDoc,
-  setDoc,
-  getDocs,
-  collection,
-  query,
-  orderBy,
-  limit as firestoreLimit,
-  deleteDoc,
-  writeBatch
-} from 'firebase/firestore';
+import * as fs from 'fs';
+import * as path from 'path';
+import { supabase, isSupabaseConfigured } from './supabase.js';
+import { telegramService } from './telegram.js';
+
 import {
   AppSettings,
   DEFAULT_APP_SETTINGS,
-  SignalDecision,
-  TradeLedgerItem,
   TradeSignal,
+  TradeLedgerItem,
   PoiRecord,
   CandidateLifecycleRecord,
-  DuplicateDetails,
   TradeOpportunity,
 } from '../src/types.js';
-import { telegramService } from './telegram.js';
 
-/**
- * Recursively strips undefined values from objects/arrays before passing to Firestore setDoc(),
- * preventing "Unsupported field value: undefined" errors.
- */
-export function sanitizeFirestoreData<T>(data: T): T {
-  if (data === null || data === undefined) {
-    return data;
-  }
-  if (Array.isArray(data)) {
-    return data
-      .filter((item) => item !== undefined)
-      .map((item) => sanitizeFirestoreData(item)) as unknown as T;
-  }
-  if (typeof data === 'object' && !(data instanceof Date)) {
-    const cleaned: Record<string, any> = {};
-    for (const [key, value] of Object.entries(data)) {
-      if (value !== undefined) {
-        cleaned[key] = sanitizeFirestoreData(value);
-      }
-    }
-    return cleaned as T;
-  }
-  return data;
-}
+export type {
+  AppSettings,
+  TradeSignal,
+  TradeLedgerItem,
+  PoiRecord,
+  CandidateLifecycleRecord,
+  TradeOpportunity,
+};
 
 export interface ScanRecord {
   id: string;
   timestamp: number;
-  isoTime: string;
-  currentPrice: number;
-  signal: SignalDecision;
-  entry: number;
-  stopLoss: number;
-  slPoints: number;
-  tp1: number;
-  tp1Points: number;
-  tp1Rr: string;
-  tp2: number;
-  tp2Points: number;
-  tp2Rr: string;
-  rr: string;
+  time?: string;
+  isoTime?: string;
+  asset?: string;
+  price?: number;
+  currentPrice?: number;
+  bias?: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  signal: 'BUY NOW' | 'SELL NOW' | 'BUY LIMIT' | 'SELL LIMIT' | 'NO TRADE' | string;
   confidence: number;
-  riskPercent: number;
-  riskAmount: number;
-  lotSize: number;
-  setup: string;
-  reasons: string[];
-  status: string; // e.g., 'NO TRADE', 'QUALIFIED', 'DUPLICATE_ACTIVE'
-  invalidation?: string;
+  sl?: number;
+  stopLoss?: number;
+  slPoints?: number;
+  tp1?: number;
+  tp1Points?: number;
+  tp1Rr?: any;
+  tp2?: number;
+  tp2Points?: number;
+  tp2Rr?: any;
+  rr?: string;
+  riskPercent?: number;
+  riskAmount?: number;
+  lotSize?: number;
+  setup?: string;
+  setupName?: string;
+  orderType?: 'MARKET' | 'LIMIT';
+  status: 'PENDING' | 'EXECUTED' | 'EXPIRED' | 'CANCELLED' | 'SUCCESS' | 'NO TRADE' | 'FAILED' | string;
+  reason?: string;
+  strategy?: string;
+  timeframe?: string;
+  atr?: number;
+  reasons?: string[];
+  rawAnalysis?: string;
+  entry?: number;
+  setupId?: string;
   noTradeReason?: string;
-  duplicateReason?: string;
-  duplicateDetails?: DuplicateDetails;
+  invalidation?: string;
+  [key: string]: any;
+}
+
+export interface TradeOutcomeRecord {
+  signalId: string;
+  tradeId?: string;
+  direction?: string;
+  orderType?: string;
+  entry?: number;
+  stopLoss?: number;
+  tp1?: number;
+  tp2?: number;
+  outcome: 'WIN' | 'LOSS';
+  timestamp: number;
+  isoTime?: string;
+  chatId?: string;
+  userId?: string;
+  pl?: number;
+  realizedPnl?: number;
+  exitPrice?: number;
+  source?: string;
+  brokerDealId?: string;
+  brokerOrderId?: string;
+  closedAt?: number;
+  closeReason?: string;
+  notes?: string;
 }
 
 export interface DailyTradeStats {
-  date: string; // YYYY-MM-DD
+  date: string;
   tradesCount: number;
   wins: number;
   losses: number;
   winRate: number;
   totalPl: number;
   totalRiskPercentUsed: number;
-  maxDailyTradesReached: boolean; // >= 3
-  maxDailyRiskReached: boolean; // >= 30%
-}
-
-export interface TradeOutcomeRecord {
-  signalId: string;
-  tradeId: string;
-  direction: string;
-  orderType: string;
-  entry: number;
-  stopLoss: number;
-  tp1: number;
-  tp2: number;
-  outcome: 'WIN' | 'LOSS' | 'NOT_ENTERED';
-  timestamp: number;
-  isoTime: string;
-  chatId?: string | number;
-  userId?: string | number;
-  pl?: number;
-  realizedPnl?: number; // Authoritative realized P&L ($)
-  exitPrice?: number;
-  source?: 'MANUAL' | 'MT5' | 'SYSTEM';
-  brokerDealId?: string;
-  brokerOrderId?: string;
-  closedAt?: number;
-  closeReason?: string;
-  notes?: string;
+  maxDailyTradesReached: boolean;
+  maxDailyRiskReached: boolean;
 }
 
 export interface DashboardStatsResult {
@@ -136,11 +116,13 @@ export interface DashboardStatsResult {
   currentRiskPercent: number;
   recentSignals: TradeSignal[];
   recentScans: ScanRecord[];
-  lastScanTime: number | null;
+  lastScanTime: number;
   lastScanStatus: string;
-  scannerHealth: 'HEALTHY' | 'DEGRADED' | 'STANDBY';
+  scannerHealth: string;
   todayStats: DailyTradeStats;
 }
+
+
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 const SCANS_FILE = path.join(DATA_DIR, 'scan_history.json');
@@ -148,556 +130,650 @@ const SIGNALS_FILE = path.join(DATA_DIR, 'saved_signals.json');
 const TRADES_FILE = path.join(DATA_DIR, 'trade_ledger.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'app_settings.json');
 const OUTCOMES_FILE = path.join(DATA_DIR, 'trade_outcomes.json');
-const BACKTEST_FILE = path.join(DATA_DIR, 'backtest_results.json');
 const ACCOUNT_FILE = path.join(DATA_DIR, 'account_state.json');
-const TERMINAL_SETUPS_FILE = path.join(DATA_DIR, 'terminal_setups.json');
-const OPPORTUNITIES_FILE = path.join(DATA_DIR, 'opportunities.json');
+const TERMINAL_FILE = path.join(DATA_DIR, 'terminal_setups.json');
+const OPPS_FILE = path.join(DATA_DIR, 'opportunities.json');
 const TELEGRAM_CHAT_FILE = path.join(DATA_DIR, 'telegram_private_chat.json');
+const BACKTEST_FILE = path.join(DATA_DIR, 'backtest_history.json');
 
-const MAX_SCANS_TO_KEEP = 500;
-const MAX_SIGNALS_TO_KEEP = 200;
+const MAX_SCANS_TO_KEEP = 100;
+const MAX_SIGNALS_TO_KEEP = 50;
 const MAX_TRADES_TO_KEEP = 300;
 
-class PersistentStorage {
-  private firestoreDb: Firestore | null = null;
-  private isReady = false;
-  private initPromise: Promise<void>;
-  private isTestMode = false;
-
+export class PersistentStorage {
   private inMemoryScans: ScanRecord[] = [];
   private inMemorySignals: TradeSignal[] = [];
   private inMemoryTrades: TradeLedgerItem[] = [];
   private inMemoryOutcomes: TradeOutcomeRecord[] = [];
-  private inMemorySettings: AppSettings = { ...DEFAULT_APP_SETTINGS };
-  private inMemoryStartingBalance = 25.0;
-  private inMemoryCurrentBalance = 25.0;
-  private lastScannerStatus = 'جاهز - المسح التلقائي نشط';
-  private lastScannerTimestamp: number | null = null;
-
   private inMemoryPois: PoiRecord[] = [];
   private inMemoryLifecycles: CandidateLifecycleRecord[] = [];
-  private inMemoryTerminalSetups: Set<string> = new Set();
   private inMemoryOpportunities: Map<string, TradeOpportunity> = new Map();
+  private inMemoryTerminalSetups: Set<string> = new Set();
   private inMemoryTelegramChatId: string | null = null;
 
+  // CRITICAL REQUIREMENT 4: Starting balance $25.00, preserved current balance $91.00
+  private inMemoryStartingBalance = 25.0;
+  private inMemoryCurrentBalance = 91.0;
+
+  private inMemorySettings: AppSettings = {
+    ...DEFAULT_APP_SETTINGS,
+  };
+
+
+  private lastScannerTimestamp = 0;
+  private lastScannerStatus = 'IDLE';
+  private isReady = false;
+  private isTesting = false;
+  private readyPromise: Promise<void>;
+
   constructor() {
-    this.isTestMode = process.env.IS_TESTING === 'true';
-    this.initPromise = this.init();
+    this.ensureDataDirectory();
+    this.readyPromise = this.init();
   }
 
-  public setTestingMode(val: boolean): void {
-    this.isTestMode = val;
+  public setTestingMode(val: boolean) {
+    this.isTesting = val;
     if (val) {
-      console.log('[Storage] ENTERED TEST MODE. All writes are in-memory only and isolated from Firestore / JSON files.');
+      this.inMemoryOutcomes = this.inMemoryOutcomes.filter(
+        (o) => !String(o.signalId || o.tradeId).startsWith('test-trade-') && !String(o.signalId || o.tradeId).startsWith('phantom-trade-')
+      );
+      this.inMemoryTrades = this.inMemoryTrades.filter(
+        (t) => !String(t.id).startsWith('test-trade-') && !String(t.id).startsWith('phantom-trade-')
+      );
     }
   }
 
   private shouldPersist(): boolean {
-    return !this.isTestMode && process.env.IS_TESTING !== 'true';
+    return !this.isTesting;
   }
 
   public async waitUntilReady(): Promise<void> {
-    await this.initPromise;
+    await this.readyPromise;
+  }
+
+  private ensureDataDirectory(): void {
+    try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+    } catch (e) {
+      console.error('[Storage] Error ensuring data directory exists:', e);
+    }
   }
 
   private async init(): Promise<void> {
-    try {
-      // 1. Initialize Firestore client from FIREBASE_CONFIG env or firebase-applet-config.json
-      let config: any = null;
-      if (process.env.FIREBASE_CONFIG) {
-        try {
-          config = JSON.parse(process.env.FIREBASE_CONFIG);
-        } catch (e) {
-          console.error('[Storage] Error parsing FIREBASE_CONFIG environment variable:', e);
-        }
-      }
-      if (!config) {
-        const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-        if (fs.existsSync(configPath)) {
-          const configRaw = fs.readFileSync(configPath, 'utf8');
-          config = JSON.parse(configRaw);
-        }
-      }
+    console.log('[Storage] Initializing PersistentStorage persistence layer (Supabase PostgreSQL)...');
 
-      if (config) {
-        let app: FirebaseApp;
-        if (getApps().length === 0) {
-          app = initializeApp(config);
-        } else {
-          app = getApps()[0];
-        }
+    // 1. First immediately load local JSON backups so in-memory is fully populated
+    this.initLocalBackups();
 
-        const databaseId = process.env.FIREBASE_DATABASE_ID || config.firestoreDatabaseId;
-        this.firestoreDb = getFirestore(app, databaseId);
-        setLogLevel('error');
-        console.log(`[Storage] Connected to Google Firestore database: ${databaseId}`);
-      } else {
-        console.warn('[Storage] Neither FIREBASE_CONFIG env nor firebase-applet-config.json found, proceeding with local fallback.');
+    // 2. If Supabase is available, sync and load from Supabase PostgreSQL
+    if (isSupabaseConfigured() && supabase && this.shouldPersist()) {
+      try {
+        await this.initSupabaseData();
+      } catch (err: any) {
+        console.warn('[Storage] Supabase initialization warning (resilient local cache will be used):', err?.message || err);
       }
-
-      if (this.firestoreDb) {
-        // 2. Load or seed data from/to Firestore
-        await this.initFirestoreData();
-      } else {
-        this.loadLocalJsonFallback();
-      }
-
-      this.isReady = true;
-      console.log('[Storage] Durable Firestore storage initialized successfully.');
-    } catch (err) {
-      console.error('[Storage] Error initializing Firestore storage, falling back to local JSON cache:', err);
-      this.loadLocalJsonFallback();
-      this.isReady = true;
+    } else {
+      console.log('[Storage] Supabase credentials not provided in environment. Running with verified local JSON persistence.');
     }
+
+    this.isReady = true;
+    console.log('[Storage] Initialization complete. Current balance: $' + this.inMemoryCurrentBalance);
   }
 
-  /**
-   * Initializes state from Firestore, or seeds existing JSON files if Firestore is empty.
-   */
-  private async initFirestoreData(): Promise<void> {
-    if (!this.firestoreDb) return;
-
+  private initLocalBackups(): void {
     try {
-      // A. Settings: check if 'main' doc exists
-      const settingsRef = doc(this.firestoreDb, 'app_settings', 'main');
-      const settingsSnap = await getDoc(settingsRef);
-
-      if (settingsSnap.exists()) {
-        const data = settingsSnap.data() as Partial<AppSettings>;
-        this.inMemorySettings = { ...DEFAULT_APP_SETTINGS, ...data };
-        console.log('[Storage] Loaded app_settings from Firestore.');
-      } else {
-        // Seed from data/app_settings.json if present, otherwise DEFAULT
-        let initialSettings = { ...DEFAULT_APP_SETTINGS };
-        if (fs.existsSync(SETTINGS_FILE)) {
-          try {
-            const raw = fs.readFileSync(SETTINGS_FILE, 'utf8');
-            initialSettings = { ...initialSettings, ...JSON.parse(raw || '{}') };
-          } catch (e) {
-            console.error('[Storage] Error reading initial settings file:', e);
-          }
-        }
-        this.inMemorySettings = initialSettings;
-        await setDoc(settingsRef, sanitizeFirestoreData({ ...this.inMemorySettings, updatedAt: Date.now() }));
-        console.log('[Storage] Seeded app_settings to Firestore.');
-      }
-
-      // B. Account State: check if 'main' doc exists
-      const accountRef = doc(this.firestoreDb, 'account_state', 'main');
-      const accountSnap = await getDoc(accountRef);
-
-      if (accountSnap.exists()) {
-        const data = accountSnap.data() as { currentBalance?: number; startingBalance?: number };
-        this.inMemoryCurrentBalance = Number(data.currentBalance ?? 25.0);
-        this.inMemoryStartingBalance = Number(data.startingBalance ?? 25.0);
-        console.log(`[Storage] Loaded account_state from Firestore: starting=$${this.inMemoryStartingBalance}, current=$${this.inMemoryCurrentBalance}`);
-      } else {
-        // Seed from data/account_state.json if present, otherwise default to manualCapital or $25.0
-        let starting = this.inMemorySettings.manualCapital || 25.0;
-        let current = starting;
-        if (fs.existsSync(ACCOUNT_FILE)) {
-          try {
-            const raw = fs.readFileSync(ACCOUNT_FILE, 'utf8');
-            const parsed = JSON.parse(raw || '{}');
-            if (typeof parsed.startingBalance === 'number') starting = parsed.startingBalance;
-            if (typeof parsed.currentBalance === 'number') current = parsed.currentBalance;
-          } catch (e) {
-            console.error('[Storage] Error reading initial account file:', e);
-          }
-        }
-        this.inMemoryStartingBalance = starting;
-        this.inMemoryCurrentBalance = current;
-        await setDoc(accountRef, sanitizeFirestoreData({
-          startingBalance: this.inMemoryStartingBalance,
-          currentBalance: this.inMemoryCurrentBalance,
-          updatedAt: Date.now()
-        }));
-        console.log(`[Storage] Seeded account_state to Firestore: starting=$${starting}, current=$${current}`);
-      }
-
-      // C. Trade Ledger
-      const tradesCol = collection(this.firestoreDb, 'trade_ledger');
-      let loadedTrades: TradeLedgerItem[] = [];
-      try {
-        const tradesSnap = await getDocs(tradesCol);
-        if (!tradesSnap.empty) {
-          loadedTrades = tradesSnap.docs.map(d => d.data() as TradeLedgerItem);
-          console.log(`[Storage] Loaded ${loadedTrades.length} trades from Firestore trade_ledger.`);
-        }
-      } catch (err) {
-        console.warn('[Storage] Error querying trade_ledger collection directly:', err);
-      }
-
-      // Check if local backup has trades to merge or seed
-      if (fs.existsSync(TRADES_FILE)) {
-        try {
-          const raw = fs.readFileSync(TRADES_FILE, 'utf-8');
-          const localTrades: TradeLedgerItem[] = JSON.parse(raw || '[]');
-          if (Array.isArray(localTrades) && localTrades.length > 0) {
-            for (const lt of localTrades) {
-              if (lt && lt.id && !loadedTrades.some(t => t.id === lt.id)) {
-                loadedTrades.push(lt);
-                // Seed missing trade to Firestore
-                if (this.firestoreDb && this.shouldPersist()) {
-                  setDoc(doc(this.firestoreDb, 'trade_ledger', lt.id), sanitizeFirestoreData(lt)).catch(() => {});
-                }
-              }
-            }
-          }
-        } catch (e) {
-          console.warn('[Storage] Error reading local TRADES_FILE:', e);
-        }
-      }
-
-      // Ensure every loaded trade has valid tradeNumber, dates, and active status
-      let highestNum = 0;
-      for (const t of loadedTrades) {
-        if (t.tradeNumber && t.tradeNumber > highestNum) {
-          highestNum = t.tradeNumber;
-        }
-      }
-      for (const t of loadedTrades) {
-        if (!t.tradeNumber) {
-          highestNum++;
-          t.tradeNumber = highestNum;
-        }
-        if (t.isActive === undefined) {
-          t.isActive = t.result === 'OPEN';
-        }
-      }
-
-      // Sort trades descending by tradeNumber or closedAt or timestamp/isoTime
-      loadedTrades.sort((a, b) => {
-        const numDiff = (b.tradeNumber || 0) - (a.tradeNumber || 0);
-        if (numDiff !== 0) return numDiff;
-        const timeA = a.closedAt || (a.isoTime ? new Date(a.isoTime).getTime() : 0);
-        const timeB = b.closedAt || (b.isoTime ? new Date(b.isoTime).getTime() : 0);
-        return timeB - timeA;
-      });
-
-      this.inMemoryTrades = loadedTrades;
-      console.log(`[Storage] Ready with ${this.inMemoryTrades.length} trades in trade_ledger.`);
-
-      // Safeguard: Ensure legacy test trade is permanently VOID and inactive
-      const legacyIdx = this.inMemoryTrades.findIndex(t => t.id === 'trade_1788789672022');
-      if (legacyIdx >= 0) {
-        const legacy = this.inMemoryTrades[legacyIdx];
-        if (legacy.result !== 'VOID' || legacy.isActive) {
-          legacy.result = 'VOID';
-          legacy.pl = 0;
-          legacy.isActive = false;
-          legacy.notes = 'Executed via MT5 Bridge [Mode: DEMO] - Status: SIMULATED_DEMO (Voided legacy test record)';
-          await setDoc(doc(this.firestoreDb, 'trade_ledger', legacy.id), sanitizeFirestoreData(legacy));
-          console.log('[Storage] Enforced VOID status on legacy trade_1788789672022 in Firestore.');
-        }
-      }
-
-      // D. Trade Outcomes
-      const outcomesCol = collection(this.firestoreDb, 'trade_outcomes');
-      const outcomesSnap = await getDocs(query(outcomesCol, orderBy('timestamp', 'desc'), firestoreLimit(200)));
-      if (!outcomesSnap.empty) {
-        this.inMemoryOutcomes = outcomesSnap.docs.map(d => d.data() as TradeOutcomeRecord);
-        console.log(`[Storage] Loaded ${this.inMemoryOutcomes.length} outcomes from Firestore.`);
-      } else if (fs.existsSync(OUTCOMES_FILE)) {
-        try {
-          const raw = fs.readFileSync(OUTCOMES_FILE, 'utf8');
-          const list: TradeOutcomeRecord[] = JSON.parse(raw || '[]');
-          for (const o of list) {
-            if (!o.signalId) continue;
-            await setDoc(doc(this.firestoreDb, 'trade_outcomes', o.signalId), sanitizeFirestoreData(o));
-          }
-          this.inMemoryOutcomes = list;
-        } catch (e) {
-          console.error('[Storage] Error seeding outcomes:', e);
-        }
-      }
-
-      // E. Signals
-      const signalsCol = collection(this.firestoreDb, 'signals');
-      const signalsSnap = await getDocs(query(signalsCol, orderBy('timestamp', 'desc'), firestoreLimit(MAX_SIGNALS_TO_KEEP)));
-      if (!signalsSnap.empty) {
-        this.inMemorySignals = signalsSnap.docs.map(d => d.data() as TradeSignal);
-        console.log(`[Storage] Loaded ${this.inMemorySignals.length} signals from Firestore.`);
-      } else if (fs.existsSync(SIGNALS_FILE)) {
-        try {
-          const raw = fs.readFileSync(SIGNALS_FILE, 'utf8');
-          const list: TradeSignal[] = JSON.parse(raw || '[]');
-          for (const s of list) {
-            if (!s.id) continue;
-            await setDoc(doc(this.firestoreDb, 'signals', s.id), sanitizeFirestoreData(s));
-          }
-          this.inMemorySignals = list;
-        } catch (e) {
-          console.error('[Storage] Error seeding signals:', e);
-        }
-      }
-
-      // F. Scans
-      const scansCol = collection(this.firestoreDb, 'scans');
-      const scansSnap = await getDocs(query(scansCol, orderBy('timestamp', 'desc'), firestoreLimit(MAX_SCANS_TO_KEEP)));
-      if (!scansSnap.empty) {
-        this.inMemoryScans = scansSnap.docs.map(d => d.data() as ScanRecord);
-        if (this.inMemoryScans.length > 0) {
-          this.lastScannerTimestamp = this.inMemoryScans[0].timestamp;
-          this.lastScannerStatus = this.inMemoryScans[0].status || 'جاهز - المسح التلقائي نشط';
-        }
-        console.log(`[Storage] Loaded ${this.inMemoryScans.length} scans from Firestore.`);
-      } else if (fs.existsSync(SCANS_FILE)) {
-        try {
-          const raw = fs.readFileSync(SCANS_FILE, 'utf8');
-          const list: ScanRecord[] = JSON.parse(raw || '[]');
-          for (const s of list) {
-            if (!s.id) continue;
-            await setDoc(doc(this.firestoreDb, 'scans', s.id), sanitizeFirestoreData(s));
-          }
-          this.inMemoryScans = list;
-          if (list.length > 0) {
-            this.lastScannerTimestamp = list[0].timestamp;
-            this.lastScannerStatus = list[0].status;
-          }
-        } catch (e) {
-          console.error('[Storage] Error seeding scans:', e);
-        }
-      }
-
-      // G. Opportunities
-      try {
-        const oppCol = collection(this.firestoreDb, 'opportunities');
-        const oppSnap = await getDocs(query(oppCol, orderBy('lastUpdatedTime', 'desc'), firestoreLimit(200)));
-        if (!oppSnap.empty) {
-          oppSnap.docs.forEach(d => {
-            const o = d.data() as TradeOpportunity;
-            if (o.id) this.inMemoryOpportunities.set(o.id, o);
-          });
-          console.log(`[Storage] Loaded ${this.inMemoryOpportunities.size} opportunities from Firestore.`);
-        } else if (fs.existsSync(OPPORTUNITIES_FILE)) {
-          const raw = fs.readFileSync(OPPORTUNITIES_FILE, 'utf8');
-          const list: TradeOpportunity[] = JSON.parse(raw || '[]');
-          for (const o of list) {
-            if (!o.id) continue;
-            await setDoc(doc(this.firestoreDb, 'opportunities', o.id.replace(/\//g, '_')), sanitizeFirestoreData(o));
-            this.inMemoryOpportunities.set(o.id, o);
-          }
-          console.log(`[Storage] Seeded ${this.inMemoryOpportunities.size} opportunities to Firestore.`);
-        }
-      } catch (e) {
-        console.error('[Storage] Error seeding or loading opportunities in Firestore:', e);
-      }
-
-      // H. Telegram Registered Chat ID
-      try {
-        const telegramRef = doc(this.firestoreDb, 'telegram_config', 'main');
-        const telegramSnap = await getDoc(telegramRef);
-        if (telegramSnap.exists()) {
-          const data = telegramSnap.data() as { chatId?: string | number };
-          if (data && data.chatId) {
-            this.inMemoryTelegramChatId = String(data.chatId);
-            console.log(`[Storage] Loaded registered Telegram chat ID from Firestore: ${this.inMemoryTelegramChatId}`);
-            this.writeLocalTelegramChatFallback(this.inMemoryTelegramChatId);
-          }
-        } else if (fs.existsSync(TELEGRAM_CHAT_FILE)) {
-          try {
-            const raw = fs.readFileSync(TELEGRAM_CHAT_FILE, 'utf8');
-            const parsed = JSON.parse(raw || '{}');
-            if (parsed && parsed.chatId) {
-              this.inMemoryTelegramChatId = String(parsed.chatId);
-              await setDoc(telegramRef, sanitizeFirestoreData({
-                chatId: this.inMemoryTelegramChatId,
-                registeredAt: parsed.registeredAt || new Date().toISOString(),
-                updatedAt: Date.now(),
-              }));
-              console.log(`[Storage] Seeded existing Telegram chat ID ${this.inMemoryTelegramChatId} to Firestore.`);
-            }
-          } catch (e) {
-            console.error('[Storage] Error reading local telegram chat file for seeding:', e);
-          }
-        }
-      } catch (e) {
-        console.error('[Storage] Error syncing Telegram config from Firestore:', e);
-      }
-
-      // Sync local JSON files as secondary local mirrors
-      this.syncJsonBackups();
-    } catch (err) {
-      console.error('[Storage] Error syncing Firestore data on startup, falling back to local JSON cache:', err);
-      this.loadLocalJsonFallback();
-    }
-  }
-
-  private loadLocalJsonFallback(): void {
-    try {
-      if (fs.existsSync(SCANS_FILE)) {
-        this.inMemoryScans = JSON.parse(fs.readFileSync(SCANS_FILE, 'utf-8') || '[]');
-      }
-      if (fs.existsSync(SIGNALS_FILE)) {
-        this.inMemorySignals = JSON.parse(fs.readFileSync(SIGNALS_FILE, 'utf-8') || '[]');
-      }
-      if (fs.existsSync(TRADES_FILE)) {
-        this.inMemoryTrades = JSON.parse(fs.readFileSync(TRADES_FILE, 'utf-8') || '[]');
-      }
-      if (fs.existsSync(OUTCOMES_FILE)) {
-        this.inMemoryOutcomes = JSON.parse(fs.readFileSync(OUTCOMES_FILE, 'utf-8') || '[]');
-      }
-      if (fs.existsSync(SETTINGS_FILE)) {
-        this.inMemorySettings = { ...DEFAULT_APP_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8') || '{}') };
-      }
       if (fs.existsSync(ACCOUNT_FILE)) {
-        const acc = JSON.parse(fs.readFileSync(ACCOUNT_FILE, 'utf-8') || '{}');
-        this.inMemoryCurrentBalance = acc.currentBalance ?? 25;
-        this.inMemoryStartingBalance = acc.startingBalance ?? 25;
+        const raw = fs.readFileSync(ACCOUNT_FILE, 'utf-8');
+        const acc = JSON.parse(raw);
+        if (typeof acc.currentBalance === 'number' && !isNaN(acc.currentBalance)) {
+          this.inMemoryCurrentBalance = acc.currentBalance;
+        }
+        if (typeof acc.startingBalance === 'number' && !isNaN(acc.startingBalance)) {
+          this.inMemoryStartingBalance = acc.startingBalance;
+        }
       }
-      if (fs.existsSync(TERMINAL_SETUPS_FILE)) {
-        const arr = JSON.parse(fs.readFileSync(TERMINAL_SETUPS_FILE, 'utf-8') || '[]');
-        this.inMemoryTerminalSetups = new Set(arr);
+
+      if (fs.existsSync(SETTINGS_FILE)) {
+        const raw = fs.readFileSync(SETTINGS_FILE, 'utf-8');
+        const data = JSON.parse(raw);
+        this.inMemorySettings = { ...this.inMemorySettings, ...data };
       }
-      if (fs.existsSync(OPPORTUNITIES_FILE)) {
-        const arr = JSON.parse(fs.readFileSync(OPPORTUNITIES_FILE, 'utf-8') || '[]');
-        this.inMemoryOpportunities = new Map(arr.map((o: any) => [o.id, o]));
+
+      if (fs.existsSync(TRADES_FILE)) {
+        const raw = fs.readFileSync(TRADES_FILE, 'utf-8');
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          this.inMemoryTrades = list;
+        }
       }
+
+      if (fs.existsSync(OUTCOMES_FILE)) {
+        const raw = fs.readFileSync(OUTCOMES_FILE, 'utf-8');
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          this.inMemoryOutcomes = list;
+        }
+      }
+
+      if (fs.existsSync(SIGNALS_FILE)) {
+        const raw = fs.readFileSync(SIGNALS_FILE, 'utf-8');
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          this.inMemorySignals = list;
+        }
+      }
+
+      if (fs.existsSync(SCANS_FILE)) {
+        const raw = fs.readFileSync(SCANS_FILE, 'utf-8');
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          this.inMemoryScans = list;
+        }
+      }
+
+      if (fs.existsSync(OPPS_FILE)) {
+        const raw = fs.readFileSync(OPPS_FILE, 'utf-8');
+        const data = JSON.parse(raw);
+        if (Array.isArray(data)) {
+          this.inMemoryOpportunities = new Map(data.map((o: any) => [o.id, o]));
+        } else if (typeof data === 'object' && data !== null) {
+          this.inMemoryOpportunities = new Map(Object.entries(data));
+        }
+      }
+
+      if (fs.existsSync(TERMINAL_FILE)) {
+        const raw = fs.readFileSync(TERMINAL_FILE, 'utf-8');
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          this.inMemoryTerminalSetups = new Set(list);
+        }
+      }
+
       if (fs.existsSync(TELEGRAM_CHAT_FILE)) {
-        try {
-          const raw = JSON.parse(fs.readFileSync(TELEGRAM_CHAT_FILE, 'utf-8') || '{}');
-          if (raw && raw.chatId) {
-            this.inMemoryTelegramChatId = String(raw.chatId);
-          }
-        } catch {}
+        const raw = fs.readFileSync(TELEGRAM_CHAT_FILE, 'utf-8');
+        const chatData = JSON.parse(raw);
+        if (chatData?.chatId) {
+          this.inMemoryTelegramChatId = String(chatData.chatId);
+        }
       }
-    } catch (e) {
-      console.error('[Storage] JSON fallback failed:', e);
+    } catch (e: any) {
+      console.error('[Storage] Error during initLocalBackups:', e?.message || e);
     }
+  }
+
+  private async initSupabaseData(): Promise<void> {
+    if (!supabase) return;
+
+    // 1. Account State
+    try {
+      const { data: accData, error: accErr } = await supabase
+        .from('account_state')
+        .select('*')
+        .eq('id', 'main')
+        .maybeSingle();
+
+      if (accErr) {
+        console.warn('[Storage] Error fetching account_state from Supabase:', accErr.message);
+      } else if (accData) {
+        const curBal = Number(accData.current_balance ?? accData.currentBalance);
+        if (!isNaN(curBal)) {
+          this.inMemoryCurrentBalance = curBal;
+        }
+        const startBal = Number(accData.starting_balance ?? accData.startingBalance);
+        if (!isNaN(startBal) && startBal > 0) {
+          this.inMemoryStartingBalance = startBal;
+        }
+      } else {
+        // Table exists but record does not: Seed with preserved balance $91.00
+        await supabase.from('account_state').upsert({
+          id: 'main',
+          starting_balance: this.inMemoryStartingBalance,
+          current_balance: this.inMemoryCurrentBalance,
+          updated_at: new Date().toISOString(),
+        });
+      }
+    } catch (e: any) {
+      console.warn('[Storage] Supabase account_state query skipped:', e?.message || e);
+    }
+
+    // 2. App Settings
+    try {
+      const { data: setData, error: setErr } = await supabase
+        .from('app_settings')
+        .select('*')
+        .eq('id', 'main')
+        .maybeSingle();
+
+      if (!setErr && setData?.data) {
+        this.inMemorySettings = { ...this.inMemorySettings, ...setData.data };
+      } else if (!setData && this.inMemorySettings) {
+        // Seed settings
+        await supabase.from('app_settings').upsert({
+          id: 'main',
+          data: this.inMemorySettings,
+          updated_at: new Date().toISOString(),
+        });
+      }
+    } catch (e: any) {
+      console.warn('[Storage] Supabase app_settings query error:', e?.message || e);
+    }
+
+    // 3. Trade Ledger
+    try {
+      const { data: tradeRows, error: tradeErr } = await supabase
+        .from('trade_ledger')
+        .select('*')
+        .order('trade_number', { ascending: false })
+        .limit(MAX_TRADES_TO_KEEP);
+
+      if (!tradeErr && Array.isArray(tradeRows) && tradeRows.length > 0) {
+        this.inMemoryTrades = tradeRows.map((r) => this.parseTradeRow(r));
+      } else if (!tradeErr && tradeRows?.length === 0 && this.inMemoryTrades.length > 0) {
+        // Seed remote with existing local trades
+        for (const t of this.inMemoryTrades) {
+          await supabase.from('trade_ledger').upsert(this.formatTradeRow(t));
+        }
+      }
+    } catch (e: any) {
+      console.warn('[Storage] Supabase trade_ledger query error:', e?.message || e);
+    }
+
+    // 4. Trade Outcomes
+    try {
+      const { data: outcomeRows, error: outErr } = await supabase
+        .from('trade_outcomes')
+        .select('*')
+        .order('timestamp', { ascending: false })
+        .limit(500);
+
+      if (!outErr && Array.isArray(outcomeRows) && outcomeRows.length > 0) {
+        this.inMemoryOutcomes = outcomeRows.map((r) => this.parseOutcomeRow(r));
+      } else if (!outErr && outcomeRows?.length === 0 && this.inMemoryOutcomes.length > 0) {
+        for (const out of this.inMemoryOutcomes) {
+          await supabase.from('trade_outcomes').upsert(this.formatOutcomeRow(out));
+        }
+      }
+    } catch (e: any) {
+      console.warn('[Storage] Supabase trade_outcomes query error:', e?.message || e);
+    }
+
+    // 5. Signals
+    try {
+      const { data: sigRows, error: sigErr } = await supabase
+        .from('signals')
+        .select('*')
+        .order('timestamp', { ascending: false })
+        .limit(MAX_SIGNALS_TO_KEEP);
+
+      if (!sigErr && Array.isArray(sigRows) && sigRows.length > 0) {
+        this.inMemorySignals = sigRows.map((r) => r.raw_data || r);
+      } else if (!sigErr && sigRows?.length === 0 && this.inMemorySignals.length > 0) {
+        for (const s of this.inMemorySignals) {
+          await supabase.from('signals').upsert({ id: s.id, timestamp: s.timestamp, raw_data: s });
+        }
+      }
+    } catch (e: any) {
+      console.warn('[Storage] Supabase signals query error:', e?.message || e);
+    }
+
+    // 6. Scans
+    try {
+      const { data: scanRows, error: scanErr } = await supabase
+        .from('scans')
+        .select('*')
+        .order('timestamp', { ascending: false })
+        .limit(MAX_SCANS_TO_KEEP);
+
+      if (!scanErr && Array.isArray(scanRows) && scanRows.length > 0) {
+        this.inMemoryScans = scanRows.map((r) => r.raw_data || r);
+      } else if (!scanErr && scanRows?.length === 0 && this.inMemoryScans.length > 0) {
+        for (const sc of this.inMemoryScans) {
+          await supabase.from('scans').upsert({ id: sc.id, timestamp: sc.timestamp, status: sc.status, raw_data: sc });
+        }
+      }
+    } catch (e: any) {
+      console.warn('[Storage] Supabase scans query error:', e?.message || e);
+    }
+
+    // 7. Opportunities
+    try {
+      const { data: oppRows, error: oppErr } = await supabase
+        .from('opportunities')
+        .select('*')
+        .order('last_updated_time', { ascending: false })
+        .limit(200);
+
+      if (!oppErr && Array.isArray(oppRows) && oppRows.length > 0) {
+        this.inMemoryOpportunities.clear();
+        for (const r of oppRows) {
+          const opp = r.raw_data || r;
+          if (opp.id) this.inMemoryOpportunities.set(opp.id, opp);
+        }
+      } else if (!oppErr && oppRows?.length === 0 && this.inMemoryOpportunities.size > 0) {
+        for (const opp of this.inMemoryOpportunities.values()) {
+          await supabase.from('opportunities').upsert({ id: opp.id, last_updated_time: opp.lastUpdatedTime, raw_data: opp });
+        }
+      }
+    } catch (e: any) {
+      console.warn('[Storage] Supabase opportunities query error:', e?.message || e);
+    }
+
+    // 8. Telegram Config
+    try {
+      const { data: tgData } = await supabase
+        .from('telegram_config')
+        .select('*')
+        .eq('id', 'main')
+        .maybeSingle();
+
+      if (tgData?.chat_id) {
+        this.inMemoryTelegramChatId = String(tgData.chat_id);
+      } else if (this.inMemoryTelegramChatId) {
+        await supabase.from('telegram_config').upsert({
+          id: 'main',
+          chat_id: this.inMemoryTelegramChatId,
+          registered_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }
+    } catch (e: any) {
+      console.warn('[Storage] Supabase telegram_config query error:', e?.message || e);
+    }
+
+    // 9. Terminal Setups
+    try {
+      const { data: termRows } = await supabase.from('terminal_setups').select('*');
+      if (Array.isArray(termRows) && termRows.length > 0) {
+        for (const r of termRows) {
+          if (r.setup_key) this.inMemoryTerminalSetups.add(r.setup_key);
+        }
+      } else if (this.inMemoryTerminalSetups.size > 0) {
+        for (const key of this.inMemoryTerminalSetups) {
+          await supabase.from('terminal_setups').upsert({ id: key.replace(/\//g, '_'), setup_key: key });
+        }
+      }
+    } catch (e: any) {
+      console.warn('[Storage] Supabase terminal_setups query error:', e?.message || e);
+    }
+
+    // Sync state to local files to ensure disk parity
+    this.syncJsonBackups();
+  }
+
+  private formatTradeRow(trade: TradeLedgerItem): any {
+    return {
+      id: trade.id,
+      trade_number: trade.tradeNumber ?? null,
+      date: trade.date ?? null,
+      iso_time: trade.isoTime ?? null,
+      asset: trade.asset ?? 'XAU/USD',
+      direction: trade.direction ?? null,
+      entry: trade.entry !== undefined ? Number(trade.entry) : null,
+      sl: trade.sl !== undefined ? Number(trade.sl) : null,
+      sl_points: trade.slPoints !== undefined ? Number(trade.slPoints) : null,
+      tp1: trade.tp1 !== undefined ? Number(trade.tp1) : null,
+      tp1_points: trade.tp1Points !== undefined ? Number(trade.tp1Points) : null,
+      tp2: trade.tp2 !== undefined ? Number(trade.tp2) : null,
+      tp2_points: trade.tp2Points !== undefined ? Number(trade.tp2Points) : null,
+      rr: trade.rr ?? null,
+      risk_percent: trade.riskPercent !== undefined ? Number(trade.riskPercent) : null,
+      risk_amount: trade.riskAmount !== undefined ? Number(trade.riskAmount) : null,
+      lot_size: trade.lotSize !== undefined ? Number(trade.lotSize) : 0.01,
+      confidence: trade.confidence !== undefined ? Number(trade.confidence) : null,
+      setup: trade.setup ?? null,
+      result: trade.result ?? null,
+      is_active: trade.isActive ?? false,
+      pl: trade.pl !== undefined ? Number(trade.pl) : 0,
+      realized_pnl: trade.realizedPnl !== undefined ? Number(trade.realizedPnl) : (trade.pl !== undefined ? Number(trade.pl) : 0),
+      balance_after_trade: trade.balanceAfterTrade !== undefined ? Number(trade.balanceAfterTrade) : null,
+      exit_price: trade.exitPrice !== undefined ? Number(trade.exitPrice) : null,
+      exit_time: trade.exitTime ?? null,
+      closed_at: trade.closedAt ?? null,
+      close_reason: trade.closeReason ?? null,
+      source: trade.source ?? 'MANUAL',
+      broker_deal_id: trade.brokerDealId ?? null,
+      broker_order_id: trade.brokerOrderId ?? null,
+      theoretical_tp1_profit: trade.theoreticalTp1Profit !== undefined ? Number(trade.theoreticalTp1Profit) : null,
+      theoretical_tp2_profit: trade.theoreticalTp2Profit !== undefined ? Number(trade.theoreticalTp2Profit) : null,
+      notes: trade.notes ?? null,
+      signal_id: trade.signalId ?? null,
+      setup_id: trade.setupId ?? null,
+      raw_data: trade,
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  private parseTradeRow(row: any): TradeLedgerItem {
+    if (row.raw_data && typeof row.raw_data === 'object') {
+      return {
+        ...row.raw_data,
+        id: row.id,
+        tradeNumber: row.trade_number ?? row.raw_data.tradeNumber,
+        result: row.result ?? row.raw_data.result,
+        isActive: row.is_active !== undefined ? row.is_active : row.raw_data.isActive,
+        pl: row.pl !== null && row.pl !== undefined ? Number(row.pl) : row.raw_data.pl,
+        realizedPnl: row.realized_pnl !== null && row.realized_pnl !== undefined ? Number(row.realized_pnl) : row.raw_data.realizedPnl,
+        balanceAfterTrade: row.balance_after_trade !== null && row.balance_after_trade !== undefined ? Number(row.balance_after_trade) : row.raw_data.balanceAfterTrade,
+      };
+    }
+    return {
+      id: row.id,
+      tradeNumber: row.trade_number,
+      date: row.date || '',
+      isoTime: row.iso_time || '',
+      asset: row.asset || 'XAU/USD',
+      direction: row.direction || 'BUY',
+      entry: Number(row.entry || 0),
+      sl: Number(row.sl || 0),
+      slPoints: Number(row.sl_points || 0),
+      tp1: Number(row.tp1 || 0),
+      tp1Points: Number(row.tp1_points || 0),
+      tp2: row.tp2 ? Number(row.tp2) : undefined,
+      tp2Points: row.tp2_points ? Number(row.tp2_points) : undefined,
+      rr: row.rr || '1:1.5',
+      riskPercent: Number(row.risk_percent || 15),
+      riskAmount: Number(row.risk_amount || 0),
+      lotSize: Number(row.lot_size || 0.01),
+      confidence: Number(row.confidence || 75),
+      setup: row.setup || 'Manual',
+      result: row.result || 'OPEN',
+      isActive: Boolean(row.is_active),
+      pl: Number(row.pl || 0),
+      realizedPnl: Number(row.realized_pnl || 0),
+      balanceAfterTrade: Number(row.balance_after_trade || 0),
+      exitPrice: row.exit_price ? Number(row.exit_price) : undefined,
+      exitTime: row.exit_time,
+      closedAt: row.closed_at ? Number(row.closed_at) : undefined,
+      closeReason: row.close_reason,
+      source: row.source || 'MANUAL',
+      brokerDealId: row.broker_deal_id,
+      brokerOrderId: row.broker_order_id,
+      theoreticalTp1Profit: row.theoretical_tp1_profit ? Number(row.theoretical_tp1_profit) : undefined,
+      theoreticalTp2Profit: row.theoretical_tp2_profit ? Number(row.theoretical_tp2_profit) : undefined,
+      notes: row.notes,
+      signalId: row.signal_id,
+      setupId: row.setup_id,
+    };
+  }
+
+  private formatOutcomeRow(out: TradeOutcomeRecord): any {
+    const sigId = out.signalId || out.tradeId;
+    return {
+      signal_id: sigId,
+      trade_id: out.tradeId ?? null,
+      direction: out.direction ?? null,
+      order_type: out.orderType ?? null,
+      entry: out.entry !== undefined ? Number(out.entry) : null,
+      stop_loss: out.stopLoss !== undefined ? Number(out.stopLoss) : null,
+      tp1: out.tp1 !== undefined ? Number(out.tp1) : null,
+      tp2: out.tp2 !== undefined ? Number(out.tp2) : null,
+      outcome: out.outcome ?? null,
+      timestamp: out.timestamp ?? Date.now(),
+      iso_time: out.isoTime ?? new Date().toISOString(),
+      chat_id: out.chatId ?? null,
+      user_id: out.userId ?? null,
+      pl: out.pl !== undefined ? Number(out.pl) : 0,
+      realized_pnl: out.realizedPnl !== undefined ? Number(out.realizedPnl) : (out.pl !== undefined ? Number(out.pl) : 0),
+      exit_price: out.exitPrice !== undefined ? Number(out.exitPrice) : null,
+      source: out.source ?? 'MANUAL',
+      broker_deal_id: out.brokerDealId ?? null,
+      broker_order_id: out.brokerOrderId ?? null,
+      closed_at: out.closedAt ?? null,
+      close_reason: out.closeReason ?? null,
+      notes: out.notes ?? null,
+      raw_data: out,
+    };
+  }
+
+  private parseOutcomeRow(row: any): TradeOutcomeRecord {
+    if (row.raw_data && typeof row.raw_data === 'object') {
+      return {
+        ...row.raw_data,
+        signalId: row.signal_id,
+        outcome: row.outcome ?? row.raw_data.outcome,
+        realizedPnl: row.realized_pnl !== null && row.realized_pnl !== undefined ? Number(row.realized_pnl) : row.raw_data.realizedPnl,
+        pl: row.pl !== null && row.pl !== undefined ? Number(row.pl) : row.raw_data.pl,
+      };
+    }
+    return {
+      signalId: row.signal_id,
+      tradeId: row.trade_id,
+      direction: row.direction,
+      orderType: row.order_type,
+      entry: Number(row.entry || 0),
+      stopLoss: Number(row.stop_loss || 0),
+      tp1: Number(row.tp1 || 0),
+      tp2: row.tp2 ? Number(row.tp2) : undefined,
+      outcome: row.outcome,
+      timestamp: Number(row.timestamp || Date.now()),
+      isoTime: row.iso_time || new Date().toISOString(),
+      chatId: row.chat_id,
+      userId: row.user_id,
+      pl: Number(row.pl || 0),
+      realizedPnl: Number(row.realized_pnl || 0),
+      exitPrice: row.exit_price ? Number(row.exit_price) : undefined,
+      source: row.source || 'MANUAL',
+      brokerDealId: row.broker_deal_id,
+      brokerOrderId: row.broker_order_id,
+      closedAt: row.closed_at ? Number(row.closed_at) : undefined,
+      closeReason: row.close_reason,
+      notes: row.notes,
+    };
   }
 
   private syncJsonBackups(): void {
-    if (!this.shouldPersist()) {
-      return;
-    }
+    if (!this.shouldPersist()) return;
     try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
-      }
+      this.ensureDataDirectory();
       fs.writeFileSync(SCANS_FILE, JSON.stringify(this.inMemoryScans, null, 2), 'utf-8');
       fs.writeFileSync(SIGNALS_FILE, JSON.stringify(this.inMemorySignals, null, 2), 'utf-8');
       fs.writeFileSync(TRADES_FILE, JSON.stringify(this.inMemoryTrades, null, 2), 'utf-8');
-      fs.writeFileSync(OUTCOMES_FILE, JSON.stringify(this.inMemoryOutcomes, null, 2), 'utf-8');
       fs.writeFileSync(SETTINGS_FILE, JSON.stringify(this.inMemorySettings, null, 2), 'utf-8');
+      fs.writeFileSync(OUTCOMES_FILE, JSON.stringify(this.inMemoryOutcomes, null, 2), 'utf-8');
       fs.writeFileSync(
         ACCOUNT_FILE,
-        JSON.stringify({ currentBalance: this.inMemoryCurrentBalance, startingBalance: this.inMemoryStartingBalance }, null, 2),
+        JSON.stringify(
+          {
+            currentBalance: this.inMemoryCurrentBalance,
+            startingBalance: this.inMemoryStartingBalance,
+          },
+          null,
+          2
+        ),
         'utf-8'
       );
-      fs.writeFileSync(TERMINAL_SETUPS_FILE, JSON.stringify(Array.from(this.inMemoryTerminalSetups), null, 2), 'utf-8');
-      fs.writeFileSync(OPPORTUNITIES_FILE, JSON.stringify(Array.from(this.inMemoryOpportunities.values()), null, 2), 'utf-8');
+      fs.writeFileSync(TERMINAL_FILE, JSON.stringify(Array.from(this.inMemoryTerminalSetups), null, 2), 'utf-8');
+      fs.writeFileSync(OPPS_FILE, JSON.stringify(Object.fromEntries(this.inMemoryOpportunities), null, 2), 'utf-8');
       if (this.inMemoryTelegramChatId) {
-        this.writeLocalTelegramChatFallback(this.inMemoryTelegramChatId);
+        fs.writeFileSync(
+          TELEGRAM_CHAT_FILE,
+          JSON.stringify(
+            {
+              chatId: this.inMemoryTelegramChatId,
+              registeredAt: new Date().toISOString(),
+            },
+            null,
+            2
+          ),
+          'utf-8'
+        );
       }
     } catch (e) {
-      // Non-fatal local mirror sync
+      console.error('[Storage] Error during syncJsonBackups:', e);
     }
   }
 
-  private writeLocalTelegramChatFallback(chatId: string): void {
-    try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
-      }
-      fs.writeFileSync(TELEGRAM_CHAT_FILE, JSON.stringify({ chatId, registeredAt: new Date().toISOString() }, null, 2), 'utf-8');
-    } catch (e) {
-      console.error('[Storage] Error writing local telegram chat file:', e);
-    }
-  }
-
-  /**
-   * Get permanently persisted Telegram Chat ID
-   */
+  // =========================================================================
+  // Telegram Chat Persistence
+  // =========================================================================
   public getTelegramChatId(): string | null {
-    if (this.inMemoryTelegramChatId) {
-      return this.inMemoryTelegramChatId;
-    }
-    if (fs.existsSync(TELEGRAM_CHAT_FILE)) {
-      try {
-        const raw = JSON.parse(fs.readFileSync(TELEGRAM_CHAT_FILE, 'utf-8') || '{}');
-        if (raw && raw.chatId) {
-          this.inMemoryTelegramChatId = String(raw.chatId);
-          return this.inMemoryTelegramChatId;
-        }
-      } catch {}
-    }
-    return null;
+    return this.inMemoryTelegramChatId;
   }
 
-  /**
-   * Save Telegram Chat ID permanently to Firestore and local JSON mirror
-   */
   public async saveTelegramChatId(chatId: string): Promise<void> {
+    if (!chatId) return;
     this.inMemoryTelegramChatId = String(chatId);
-    this.writeLocalTelegramChatFallback(this.inMemoryTelegramChatId);
+    this.syncJsonBackups();
 
-    if (this.firestoreDb && this.shouldPersist()) {
+    if (supabase && this.shouldPersist()) {
       try {
-        const telegramRef = doc(this.firestoreDb, 'telegram_config', 'main');
-        await setDoc(telegramRef, sanitizeFirestoreData({
-          chatId: this.inMemoryTelegramChatId,
-          registeredAt: new Date().toISOString(),
-          updatedAt: Date.now(),
-        }));
-        console.log(`[Storage] Permanently persisted Telegram chat ID ${this.inMemoryTelegramChatId} to Firestore.`);
-      } catch (err) {
-        console.error('[Storage] Error persisting Telegram chat ID to Firestore:', err);
+        await supabase.from('telegram_config').upsert({
+          id: 'main',
+          chat_id: String(chatId),
+          registered_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      } catch (err: any) {
+        console.error('[Storage] Supabase saveTelegramChatId error:', err?.message || err);
       }
     }
   }
 
-  // ==========================================
-  // PUBLIC PERSISTENT API METHODS
-  // (Synchronous in-memory API with async Firestore persistence)
-  // ==========================================
-
-  public createScan(record: ScanRecord): void {
-    this.saveScan(record);
-  }
-
-  public saveScan(record: ScanRecord): void {
+  // =========================================================================
+  // Scans Persistence
+  // =========================================================================
+  public saveScan(record: ScanRecord): ScanRecord[] {
     try {
-      this.lastScannerTimestamp = record.timestamp;
-      this.lastScannerStatus = record.status || 'مسح مكتمل';
+      this.lastScannerTimestamp = record.timestamp || Date.now();
+      this.lastScannerStatus = record.status || 'SUCCESS';
 
-      const existingIdx = this.inMemoryScans.findIndex((s) => s.id === record.id);
-      if (existingIdx >= 0) {
-        this.inMemoryScans[existingIdx] = record;
-      } else {
-        this.inMemoryScans.unshift(record);
-      }
-
+      this.inMemoryScans.unshift(record);
       if (this.inMemoryScans.length > MAX_SCANS_TO_KEEP) {
         this.inMemoryScans = this.inMemoryScans.slice(0, MAX_SCANS_TO_KEEP);
       }
 
-      // Asynchronous non-blocking Firestore write
-      if (this.firestoreDb && this.shouldPersist() && record.id) {
-        setDoc(doc(this.firestoreDb, 'scans', record.id), sanitizeFirestoreData(record)).catch((err) => {
-          console.error(`[Storage] Firestore saveScan error for ${record.id}:`, err?.message || err);
-        });
+      if (supabase && this.shouldPersist() && record.id) {
+        supabase
+          .from('scans')
+          .upsert({
+            id: record.id,
+            timestamp: record.timestamp,
+            status: record.status,
+            raw_data: record,
+          })
+          .then(({ error }) => {
+            if (error) console.error('[Storage] Supabase saveScan error:', error.message);
+          });
       }
 
       this.syncJsonBackups();
+      return [...this.inMemoryScans];
     } catch (err) {
       console.error('[Storage] Error saving scan:', err);
+      return [...this.inMemoryScans];
     }
   }
 
-  public getRecentScans(limit = 50): ScanRecord[] {
+  public getScans(limit = 100): ScanRecord[] {
     return this.inMemoryScans.slice(0, limit);
   }
 
-  public getScans(limit = 50): ScanRecord[] {
-    return this.getRecentScans(limit);
-  }
-
-  public getScan(id: string): ScanRecord | undefined {
-    return this.inMemoryScans.find((s) => s.id === id);
-  }
-
-  public saveSignal(signal: TradeSignal): void {
+  // =========================================================================
+  // Signals Persistence
+  // =========================================================================
+  public saveSignal(signal: TradeSignal): TradeSignal[] {
     try {
       const existingIdx = this.inMemorySignals.findIndex((s) => s.id === signal.id);
       if (existingIdx >= 0) {
@@ -710,16 +786,24 @@ class PersistentStorage {
         this.inMemorySignals = this.inMemorySignals.slice(0, MAX_SIGNALS_TO_KEEP);
       }
 
-      // Asynchronous non-blocking Firestore write
-      if (this.firestoreDb && this.shouldPersist() && signal.id) {
-        setDoc(doc(this.firestoreDb, 'signals', signal.id), sanitizeFirestoreData(signal)).catch((err) => {
-          console.error(`[Storage] Firestore saveSignal error for ${signal.id}:`, err?.message || err);
-        });
+      if (supabase && this.shouldPersist() && signal.id) {
+        supabase
+          .from('signals')
+          .upsert({
+            id: signal.id,
+            timestamp: signal.timestamp,
+            raw_data: signal,
+          })
+          .then(({ error }) => {
+            if (error) console.error('[Storage] Supabase saveSignal error:', error.message);
+          });
       }
 
       this.syncJsonBackups();
+      return [...this.inMemorySignals];
     } catch (err) {
       console.error('[Storage] Error saving signal:', err);
+      return [...this.inMemorySignals];
     }
   }
 
@@ -727,34 +811,32 @@ class PersistentStorage {
     return this.inMemorySignals.slice(0, limit);
   }
 
-  public getSignalById(id: string): TradeSignal | undefined {
+  public getSignal(id: string): TradeSignal | undefined {
     return this.inMemorySignals.find((s) => s.id === id);
   }
 
-  public getSignal(id: string): TradeSignal | undefined {
-    return this.getSignalById(id);
+  public getSignalById(id: string): TradeSignal | undefined {
+    return this.getSignal(id);
   }
 
   public async getSignalFromStorage(id: string): Promise<TradeSignal | undefined> {
     // 1. Check in-memory first
-    const memorySignal = this.getSignalById(id);
-    if (memorySignal) return memorySignal;
+    const memSignal = this.getSignal(id);
+    if (memSignal) return memSignal;
 
-    // 2. Try Firestore if available
-    if (this.firestoreDb) {
+    // 2. Try fetching from Supabase
+    if (supabase && this.shouldPersist()) {
       try {
-        const signalDocRef = doc(this.firestoreDb, 'signals', id);
-        const signalSnap = await getDoc(signalDocRef);
-        if (signalSnap.exists()) {
-          const signalData = signalSnap.data() as TradeSignal;
-          // Add to in-memory to speed up subsequent requests
-          if (!this.inMemorySignals.some(s => s.id === signalData.id)) {
+        const { data, error } = await supabase.from('signals').select('*').eq('id', id).maybeSingle();
+        if (!error && data) {
+          const signalData: TradeSignal = data.raw_data || data;
+          if (!this.inMemorySignals.some((s) => s.id === signalData.id)) {
             this.inMemorySignals.unshift(signalData);
           }
           return signalData;
         }
       } catch (err) {
-        console.error(`[Storage] Error fetching signal ${id} from Firestore:`, err);
+        console.error(`[Storage] Error fetching signal ${id} from Supabase:`, err);
       }
     }
 
@@ -763,9 +845,9 @@ class PersistentStorage {
       if (fs.existsSync(SIGNALS_FILE)) {
         const raw = fs.readFileSync(SIGNALS_FILE, 'utf-8');
         const list: TradeSignal[] = JSON.parse(raw || '[]');
-        const fileSignal = list.find(s => s.id === id);
+        const fileSignal = list.find((s) => s.id === id);
         if (fileSignal) {
-          if (!this.inMemorySignals.some(s => s.id === fileSignal.id)) {
+          if (!this.inMemorySignals.some((s) => s.id === fileSignal.id)) {
             this.inMemorySignals.unshift(fileSignal);
           }
           return fileSignal;
@@ -776,7 +858,7 @@ class PersistentStorage {
     }
 
     // 4. Try loading the corresponding opportunity if signal is not found
-    const opp = this.getOpportunity(id) || this.getOpportunities().find(o => o.signalId === id);
+    const opp = this.getOpportunity(id) || this.getOpportunities().find((o) => o.signalId === id);
     if (opp) {
       const dir = opp.direction === 'BUY' ? 'BUY NOW' : 'SELL NOW';
       const rebuiltSignal: TradeSignal = {
@@ -810,7 +892,7 @@ class PersistentStorage {
         mainReasons: ['Rebuilt from opportunity snapshot'],
         invalidation: `Close candle below ${opp.stopLoss}`,
       };
-      if (!this.inMemorySignals.some(s => s.id === rebuiltSignal.id)) {
+      if (!this.inMemorySignals.some((s) => s.id === rebuiltSignal.id)) {
         this.inMemorySignals.unshift(rebuiltSignal);
       }
       return rebuiltSignal;
@@ -819,11 +901,14 @@ class PersistentStorage {
     return undefined;
   }
 
+  // =========================================================================
+  // Trade Ledger Persistence
+  // =========================================================================
   public saveTrade(trade: TradeLedgerItem): TradeLedgerItem[] {
     try {
       const isResultOpen = trade.result === 'OPEN';
       const highestNum = Math.max(0, ...this.inMemoryTrades.map((t) => t.tradeNumber || 0));
-      const tradeNumber = trade.tradeNumber || (highestNum + 1);
+      const tradeNumber = trade.tradeNumber || highestNum + 1;
       const isoTime = trade.isoTime || new Date().toISOString();
       const date =
         trade.date ||
@@ -853,11 +938,14 @@ class PersistentStorage {
         this.inMemoryTrades = this.inMemoryTrades.slice(0, MAX_TRADES_TO_KEEP);
       }
 
-      // Asynchronous Firestore write
-      if (this.firestoreDb && this.shouldPersist() && tradeWithActive.id) {
-        setDoc(doc(this.firestoreDb, 'trade_ledger', tradeWithActive.id), sanitizeFirestoreData(tradeWithActive)).catch((err) => {
-          console.error(`[Storage] Firestore saveTrade error for ${tradeWithActive.id}:`, err?.message || err);
-        });
+      // Asynchronous Supabase write
+      if (supabase && this.shouldPersist() && tradeWithActive.id) {
+        supabase
+          .from('trade_ledger')
+          .upsert(this.formatTradeRow(tradeWithActive))
+          .then(({ error }) => {
+            if (error) console.error(`[Storage] Supabase saveTrade error for ${tradeWithActive.id}:`, error.message);
+          });
       }
 
       this.syncJsonBackups();
@@ -872,7 +960,7 @@ class PersistentStorage {
     try {
       const isResultOpen = trade.result === 'OPEN';
       const highestNum = Math.max(0, ...this.inMemoryTrades.map((t) => t.tradeNumber || 0));
-      const tradeNumber = trade.tradeNumber || (highestNum + 1);
+      const tradeNumber = trade.tradeNumber || highestNum + 1;
       const isoTime = trade.isoTime || new Date().toISOString();
       const date =
         trade.date ||
@@ -904,11 +992,12 @@ class PersistentStorage {
 
       this.syncJsonBackups();
 
-      if (this.firestoreDb && this.shouldPersist() && tradeWithActive.id) {
+      if (supabase && this.shouldPersist() && tradeWithActive.id) {
         try {
-          await setDoc(doc(this.firestoreDb, 'trade_ledger', tradeWithActive.id), sanitizeFirestoreData(tradeWithActive));
+          const { error } = await supabase.from('trade_ledger').upsert(this.formatTradeRow(tradeWithActive));
+          if (error) console.error(`[Storage] Supabase saveTradeAsync error for ${tradeWithActive.id}:`, error.message);
         } catch (err: any) {
-          console.error(`[Storage] Firestore saveTradeAsync error for ${tradeWithActive.id}:`, err?.message || err);
+          console.error(`[Storage] Supabase saveTradeAsync exception for ${tradeWithActive.id}:`, err?.message || err);
         }
       }
 
@@ -923,18 +1012,16 @@ class PersistentStorage {
     this.inMemoryCurrentBalance = Number((this.inMemoryCurrentBalance + deltaPnl).toFixed(2));
     this.syncJsonBackups();
 
-    if (this.firestoreDb && this.shouldPersist()) {
+    if (supabase && this.shouldPersist()) {
       try {
-        await setDoc(
-          doc(this.firestoreDb, 'account_state', 'main'),
-          sanitizeFirestoreData({
-            currentBalance: this.inMemoryCurrentBalance,
-            startingBalance: this.inMemoryStartingBalance,
-            updatedAt: Date.now(),
-          })
-        );
-      } catch (err) {
-        console.error('[Storage] Firestore account_state update error:', err);
+        await supabase.from('account_state').upsert({
+          id: 'main',
+          current_balance: this.inMemoryCurrentBalance,
+          starting_balance: this.inMemoryStartingBalance,
+          updated_at: new Date().toISOString(),
+        });
+      } catch (err: any) {
+        console.error('[Storage] Supabase account_state update error:', err?.message || err);
       }
     }
     return this.inMemoryCurrentBalance;
@@ -960,6 +1047,9 @@ class PersistentStorage {
     return this.inMemoryOutcomes.find((o) => o.signalId === signalOrTradeId || o.tradeId === signalOrTradeId);
   }
 
+  // =========================================================================
+  // Trade Outcome Recording (Telegram & Manual Resolution)
+  // =========================================================================
   public recordTradeOutcome(
     record: TradeOutcomeRecord,
     signalData?: Partial<TradeSignal>
@@ -976,11 +1066,11 @@ class PersistentStorage {
         (t) => t.id === record.signalId || t.id === record.tradeId || (record.signalId && t.signalId === record.signalId)
       );
 
-      // If referenced trade does not exist, instantiate it from signalData or record if available
+      // If referenced trade does not exist, instantiate it from signalData if available
       let tradeToUpdate = existingTrade;
       if (!tradeToUpdate) {
-        if (signalData || record) {
-          const sig = (signalData || {}) as any;
+        if (signalData) {
+          const sig = signalData as any;
           const highestNum = Math.max(0, ...this.inMemoryTrades.map((t) => t.tradeNumber || 0));
           const newTrade: TradeLedgerItem = {
             id: record.tradeId || record.signalId || `trade_${Date.now()}`,
@@ -1010,9 +1100,9 @@ class PersistentStorage {
             rr: sig.rr || '1:1.5',
             result: 'OPEN',
             pl: 0,
-            balanceAfterTrade: this.inMemoryCurrentBalance || 25,
+            balanceAfterTrade: this.inMemoryCurrentBalance || 91,
             isActive: false,
-            source: record.source || 'MANUAL',
+            source: (record.source as any) || 'MANUAL',
             notes: 'تم الدخول يدوياً عبر زر التليجرام',
           };
           this.inMemoryTrades.unshift(newTrade);
@@ -1028,17 +1118,16 @@ class PersistentStorage {
         }
       }
 
-      // 1. Authoritative Realized P&L Calculation (Never calculate from riskAmount * RR)
+      // 1. Authoritative Realized P&L Calculation
       let finalRealizedPnl: number;
       if (typeof record.realizedPnl === 'number' && !isNaN(record.realizedPnl)) {
         finalRealizedPnl = Number(record.realizedPnl.toFixed(2));
       } else if (typeof record.pl === 'number' && !isNaN(record.pl)) {
         finalRealizedPnl = Number(record.pl.toFixed(2));
       } else if (record.exitPrice !== undefined && typeof record.exitPrice === 'number' && !isNaN(record.exitPrice)) {
-        // Price-action based P&L for Gold: 1 lot = 100 oz. Contract multiplier = 100
         const isBuy = String(record.direction || signalData?.signal || tradeToUpdate.direction || '').toUpperCase().includes('BUY');
         const entryPrice = Number(record.entry || tradeToUpdate.entry || signalData?.entry || record.exitPrice);
-        const priceDiff = isBuy ? (record.exitPrice - entryPrice) : (entryPrice - record.exitPrice);
+        const priceDiff = isBuy ? record.exitPrice - entryPrice : entryPrice - record.exitPrice;
         const lotSize = tradeToUpdate.lotSize || signalData?.recommendedLotSize || (signalData as any)?.lotSize || 0.01;
         finalRealizedPnl = Number((priceDiff * 100 * lotSize).toFixed(2));
       } else {
@@ -1071,7 +1160,7 @@ class PersistentStorage {
       }
 
       if (tradeToUpdate.result === 'WIN' || tradeToUpdate.result === 'LOSS') {
-        const existingTradePnl = typeof tradeToUpdate.realizedPnl === 'number' ? tradeToUpdate.realizedPnl : (tradeToUpdate.pl || 0);
+        const existingTradePnl = typeof tradeToUpdate.realizedPnl === 'number' ? tradeToUpdate.realizedPnl : tradeToUpdate.pl || 0;
         if (tradeToUpdate.result === record.outcome && existingTradePnl === finalRealizedPnl && source !== 'MT5') {
           return {
             success: true,
@@ -1099,30 +1188,35 @@ class PersistentStorage {
       const entryPrice = Number(record.entry || tradeToUpdate.entry || signalData?.entry || 0);
       const tp1Price = Number(record.tp1 || tradeToUpdate.tp1 || signalData?.tp1 || 0);
       const tp2Price = Number(record.tp2 || tradeToUpdate.tp2 || signalData?.tp2 || 0);
-      const slPrice = Number(record.stopLoss || tradeToUpdate.sl || signalData?.stopLoss || 0);
 
       const theoreticalTp1Profit = Number((Math.abs(entryPrice - tp1Price) * 100 * lotSize).toFixed(2));
       const theoreticalTp2Profit = Number((Math.abs(entryPrice - tp2Price) * 100 * lotSize).toFixed(2));
 
-      const previousPnl = typeof tradeToUpdate.realizedPnl === 'number'
-        ? tradeToUpdate.realizedPnl
-        : (tradeToUpdate.result === 'WIN' || tradeToUpdate.result === 'LOSS' ? (tradeToUpdate.pl || 0) : 0);
+      const previousPnl =
+        typeof tradeToUpdate.realizedPnl === 'number'
+          ? tradeToUpdate.realizedPnl
+          : tradeToUpdate.result === 'WIN' || tradeToUpdate.result === 'LOSS'
+          ? tradeToUpdate.pl || 0
+          : 0;
 
       const delta = Number((finalRealizedPnl - previousPnl).toFixed(2));
 
       tradeToUpdate.result = record.outcome;
       tradeToUpdate.pl = finalRealizedPnl;
       tradeToUpdate.realizedPnl = finalRealizedPnl;
-      tradeToUpdate.source = source;
+      tradeToUpdate.source = (source as any);
       if (record.brokerDealId) tradeToUpdate.brokerDealId = record.brokerDealId;
       if (record.brokerOrderId) tradeToUpdate.brokerOrderId = record.brokerOrderId;
       if (record.closedAt) tradeToUpdate.closedAt = record.closedAt;
       if (record.closeReason) tradeToUpdate.closeReason = record.closeReason;
       tradeToUpdate.theoreticalTp1Profit = theoreticalTp1Profit;
       tradeToUpdate.theoreticalTp2Profit = theoreticalTp2Profit;
-      tradeToUpdate.exitPrice = record.exitPrice !== undefined ? record.exitPrice : (isWin ? (tradeToUpdate.tp1 || record.tp1) : (tradeToUpdate.sl || record.stopLoss));
+      tradeToUpdate.exitPrice =
+        record.exitPrice !== undefined ? record.exitPrice : isWin ? tradeToUpdate.tp1 || record.tp1 : tradeToUpdate.sl || record.stopLoss;
       tradeToUpdate.exitTime = new Date(record.timestamp || Date.now()).toISOString();
-      tradeToUpdate.notes = `${tradeToUpdate.notes ? tradeToUpdate.notes + ' | ' : ''}النتيجة: ${isWin ? '🟢 رابحة' : '🔴 خاسرة'} [P&L: ${finalRealizedPnl >= 0 ? '+' : ''}$${finalRealizedPnl.toFixed(2)}] (${source})`;
+      tradeToUpdate.notes = `${tradeToUpdate.notes ? tradeToUpdate.notes + ' | ' : ''}النتيجة: ${isWin ? '🟢 رابحة' : '🔴 خاسرة'} [P&L: ${
+        finalRealizedPnl >= 0 ? '+' : ''
+      }$${finalRealizedPnl.toFixed(2)}] (${source})`;
       tradeToUpdate.isActive = false;
 
       this.inMemoryCurrentBalance = Number((this.inMemoryCurrentBalance + delta).toFixed(2));
@@ -1130,21 +1224,31 @@ class PersistentStorage {
 
       const updatedTrade = tradeToUpdate;
 
-      // Firestore persistence
-      if (this.firestoreDb && this.shouldPersist()) {
-        setDoc(doc(this.firestoreDb, 'trade_outcomes', record.signalId), sanitizeFirestoreData(record)).catch((err) => {
-          console.error('[Storage] Firestore recordTradeOutcome error:', err);
-        });
-        setDoc(doc(this.firestoreDb, 'trade_ledger', updatedTrade.id), sanitizeFirestoreData(updatedTrade)).catch((err) => {
-          console.error('[Storage] Firestore saveTrade error in outcome:', err);
-        });
-        setDoc(doc(this.firestoreDb, 'account_state', 'main'), sanitizeFirestoreData({
-          currentBalance: this.inMemoryCurrentBalance,
-          startingBalance: this.inMemoryStartingBalance,
-          updatedAt: Date.now(),
-        })).catch((err) => {
-          console.error('[Storage] Firestore account_state update error:', err);
-        });
+      // Supabase persistence
+      if (supabase && this.shouldPersist()) {
+        supabase
+          .from('trade_outcomes')
+          .upsert(this.formatOutcomeRow(record))
+          .then(({ error }) => {
+            if (error) console.error('[Storage] Supabase recordTradeOutcome error:', error.message);
+          });
+        supabase
+          .from('trade_ledger')
+          .upsert(this.formatTradeRow(updatedTrade))
+          .then(({ error }) => {
+            if (error) console.error('[Storage] Supabase saveTrade error in outcome:', error.message);
+          });
+        supabase
+          .from('account_state')
+          .upsert({
+            id: 'main',
+            current_balance: this.inMemoryCurrentBalance,
+            starting_balance: this.inMemoryStartingBalance,
+            updated_at: new Date().toISOString(),
+          })
+          .then(({ error }) => {
+            if (error) console.error('[Storage] Supabase account_state update error:', error.message);
+          });
       }
 
       this.syncJsonBackups();
@@ -1182,22 +1286,20 @@ class PersistentStorage {
     message?: string;
   }> {
     const res = this.recordTradeOutcome(record, signalData);
-    if (res.success && res.trade && this.firestoreDb && this.shouldPersist()) {
+    if (res.success && res.trade && supabase && this.shouldPersist()) {
       try {
         await Promise.all([
-          setDoc(doc(this.firestoreDb, 'trade_outcomes', record.signalId), sanitizeFirestoreData(record)),
-          setDoc(doc(this.firestoreDb, 'trade_ledger', res.trade.id), sanitizeFirestoreData(res.trade)),
-          setDoc(
-            doc(this.firestoreDb, 'account_state', 'main'),
-            sanitizeFirestoreData({
-              currentBalance: this.inMemoryCurrentBalance,
-              startingBalance: this.inMemoryStartingBalance,
-              updatedAt: Date.now(),
-            })
-          ),
+          supabase.from('trade_outcomes').upsert(this.formatOutcomeRow(record)),
+          supabase.from('trade_ledger').upsert(this.formatTradeRow(res.trade)),
+          supabase.from('account_state').upsert({
+            id: 'main',
+            current_balance: this.inMemoryCurrentBalance,
+            starting_balance: this.inMemoryStartingBalance,
+            updated_at: new Date().toISOString(),
+          }),
         ]);
       } catch (e: any) {
-        console.error('[Storage] Firestore recordTradeOutcomeAsync write error:', e?.message || e);
+        console.error('[Storage] Supabase recordTradeOutcomeAsync write error:', e?.message || e);
       }
     }
     return res;
@@ -1249,6 +1351,9 @@ class PersistentStorage {
     }
   }
 
+  // =========================================================================
+  // Stats & Dashboard
+  // =========================================================================
   public getDashboardStats(): DashboardStatsResult {
     const closedTrades = this.inMemoryTrades.filter((t) => t.result === 'WIN' || t.result === 'LOSS');
     const wins = closedTrades.filter((t) => t.result === 'WIN').length;
@@ -1298,9 +1403,7 @@ class PersistentStorage {
     const losses = todayTrades.filter((t) => t.result === 'LOSS').length;
     const winRate = tradesCount > 0 ? Number(((wins / tradesCount) * 100).toFixed(1)) : 0;
     const totalPl = Number(todayTrades.reduce((acc, t) => acc + (t.pl || 0), 0).toFixed(2));
-    const totalRiskPercentUsed = Number(
-      todayTrades.reduce((acc, t) => acc + (t.riskPercent || 0), 0).toFixed(1)
-    );
+    const totalRiskPercentUsed = Number(todayTrades.reduce((acc, t) => acc + (t.riskPercent || 0), 0).toFixed(1));
 
     return {
       date: today,
@@ -1319,6 +1422,9 @@ class PersistentStorage {
     return this.getTodayStats(dateStr);
   }
 
+  // =========================================================================
+  // Account Balance Management (Requirement 4: Strict $91.00 Preservation)
+  // =========================================================================
   public getBalance(): { currentBalance: number; startingBalance: number } {
     return {
       currentBalance: this.inMemoryCurrentBalance,
@@ -1340,6 +1446,20 @@ class PersistentStorage {
       this.inMemoryCurrentBalance = this.inMemoryStartingBalance;
       this.inMemorySettings.manualCapital = this.inMemoryStartingBalance;
       this.syncJsonBackups();
+
+      if (supabase && this.shouldPersist()) {
+        supabase
+          .from('account_state')
+          .upsert({
+            id: 'main',
+            current_balance: this.inMemoryCurrentBalance,
+            starting_balance: this.inMemoryStartingBalance,
+            updated_at: new Date().toISOString(),
+          })
+          .then(({ error }) => {
+            if (error) console.error('[Storage] Supabase setStartingBalance error:', error.message);
+          });
+      }
     }
   }
 
@@ -1347,6 +1467,20 @@ class PersistentStorage {
     if (typeof val === 'number' && !isNaN(val)) {
       this.inMemoryCurrentBalance = Number(val.toFixed(2));
       this.syncJsonBackups();
+
+      if (supabase && this.shouldPersist()) {
+        supabase
+          .from('account_state')
+          .upsert({
+            id: 'main',
+            current_balance: this.inMemoryCurrentBalance,
+            starting_balance: this.inMemoryStartingBalance,
+            updated_at: new Date().toISOString(),
+          })
+          .then(({ error }) => {
+            if (error) console.error('[Storage] Supabase setCurrentBalance error:', error.message);
+          });
+      }
     }
   }
 
@@ -1355,30 +1489,42 @@ class PersistentStorage {
     if (typeof starting === 'number' && !isNaN(starting) && starting > 0) {
       this.inMemoryStartingBalance = Number(starting.toFixed(2));
       this.inMemorySettings.manualCapital = this.inMemoryStartingBalance;
-      if (this.firestoreDb && this.shouldPersist()) {
-        setDoc(doc(this.firestoreDb, 'app_settings', 'main'), sanitizeFirestoreData({
-          ...this.inMemorySettings,
-          updatedAt: Date.now(),
-        })).catch((err) => {
-          console.error('[Storage] Firestore updateBalance settings error:', err);
-        });
+
+      if (supabase && this.shouldPersist()) {
+        supabase
+          .from('app_settings')
+          .upsert({
+            id: 'main',
+            data: this.inMemorySettings,
+            updated_at: new Date().toISOString(),
+          })
+          .then(({ error }) => {
+            if (error) console.error('[Storage] Supabase updateBalance settings error:', error.message);
+          });
       }
     }
 
-    if (this.firestoreDb && this.shouldPersist()) {
-      setDoc(doc(this.firestoreDb, 'account_state', 'main'), sanitizeFirestoreData({
-        currentBalance: this.inMemoryCurrentBalance,
-        startingBalance: this.inMemoryStartingBalance,
-        updatedAt: Date.now(),
-      })).catch((err) => {
-        console.error('[Storage] Firestore updateBalance account error:', err);
-      });
+    if (supabase && this.shouldPersist()) {
+      supabase
+        .from('account_state')
+        .upsert({
+          id: 'main',
+          current_balance: this.inMemoryCurrentBalance,
+          starting_balance: this.inMemoryStartingBalance,
+          updated_at: new Date().toISOString(),
+        })
+        .then(({ error }) => {
+          if (error) console.error('[Storage] Supabase updateBalance account error:', error.message);
+        });
     }
 
     this.syncJsonBackups();
     return this.getBalance();
   }
 
+  // =========================================================================
+  // Settings Management
+  // =========================================================================
   public getSettings(): AppSettings {
     return { ...this.inMemorySettings };
   }
@@ -1393,7 +1539,6 @@ class PersistentStorage {
     try {
       this.inMemorySettings = { ...this.inMemorySettings, ...patch };
 
-      // Ensure manualCapital in settings is numeric if provided
       if (patch.manualCapital !== undefined) {
         const newCap = Number(patch.manualCapital);
         if (!isNaN(newCap) && newCap >= 0) {
@@ -1401,13 +1546,17 @@ class PersistentStorage {
         }
       }
 
-      if (this.firestoreDb && this.shouldPersist()) {
-        setDoc(doc(this.firestoreDb, 'app_settings', 'main'), sanitizeFirestoreData({
-          ...this.inMemorySettings,
-          updatedAt: Date.now(),
-        })).catch((err) => {
-          console.error('[Storage] Firestore saveSettings app_settings error:', err);
-        });
+      if (supabase && this.shouldPersist()) {
+        supabase
+          .from('app_settings')
+          .upsert({
+            id: 'main',
+            data: this.inMemorySettings,
+            updated_at: new Date().toISOString(),
+          })
+          .then(({ error }) => {
+            if (error) console.error('[Storage] Supabase saveSettings error:', error.message);
+          });
       }
 
       this.syncJsonBackups();
@@ -1432,6 +1581,9 @@ class PersistentStorage {
     // Optional scanner event logging
   }
 
+  // =========================================================================
+  // Terminal Setups (Cooldown & Invalidation Dedup)
+  // =========================================================================
   public getTerminalSetups(): string[] {
     return Array.from(this.inMemoryTerminalSetups);
   }
@@ -1439,12 +1591,19 @@ class PersistentStorage {
   public saveTerminalSetup(key: string): void {
     if (!key) return;
     this.inMemoryTerminalSetups.add(key);
-    if (this.firestoreDb && this.shouldPersist()) {
-      setDoc(doc(this.firestoreDb, 'terminal_setups', key.replace(/\//g, '_')), {
-        key,
-        createdAt: Date.now(),
-      }).catch((err) => console.error('[Storage] Firestore saveTerminalSetup error:', err));
+
+    if (supabase && this.shouldPersist()) {
+      supabase
+        .from('terminal_setups')
+        .upsert({
+          id: key.replace(/\//g, '_'),
+          setup_key: key,
+        })
+        .then(({ error }) => {
+          if (error) console.error('[Storage] Supabase saveTerminalSetup error:', error.message);
+        });
     }
+
     this.syncJsonBackups();
   }
 
@@ -1462,6 +1621,9 @@ class PersistentStorage {
     };
   }
 
+  // =========================================================================
+  // Trade Closure & Ledger Mutation
+  // =========================================================================
   public closeTrade(
     id: string,
     result: 'WIN' | 'LOSS' | 'CANCELLED' | 'VOID' | 'EXPIRED',
@@ -1474,17 +1636,14 @@ class PersistentStorage {
       if (idx >= 0) {
         const trade = this.inMemoryTrades[idx];
         if (trade.result !== 'OPEN') {
-          // Idempotent: already closed, skip duplicate processing
           return [...this.inMemoryTrades];
         }
 
         const isRealizedTrade = result === 'WIN' || result === 'LOSS';
         const finalPl = isRealizedTrade ? Number(pl.toFixed(2)) : 0;
-        const finalExitPrice = exitPrice !== undefined ? exitPrice : (trade.exitPrice || trade.entry);
+        const finalExitPrice = exitPrice !== undefined ? exitPrice : trade.exitPrice || trade.entry;
         const exitTime = new Date().toISOString();
-        const updatedNotes = notes
-          ? (trade.notes ? `${trade.notes} | ${notes}` : notes)
-          : trade.notes;
+        const updatedNotes = notes ? (trade.notes ? `${trade.notes} | ${notes}` : notes) : trade.notes;
 
         const newBalance = isRealizedTrade
           ? Number(((trade.balanceAfterTrade || this.inMemoryCurrentBalance) + finalPl).toFixed(2))
@@ -1504,7 +1663,7 @@ class PersistentStorage {
         if (isRealizedTrade) {
           this.inMemoryCurrentBalance = newBalance;
 
-          const outcomeRecord = {
+          const outcomeRecord: TradeOutcomeRecord = {
             signalId: trade.signalId || trade.id,
             tradeId: trade.id,
             outcome: result as 'WIN' | 'LOSS',
@@ -1516,24 +1675,31 @@ class PersistentStorage {
             source: 'SYSTEM',
           };
 
-          // Dispatch outcome notification to Telegram
           telegramService.sendOutcomeNotification(outcomeRecord, this.inMemoryTrades[idx]).catch((err) => {
             console.error('[Storage] Telegram outcome alert dispatch error from closeTrade:', err);
           });
         }
 
-        if (this.firestoreDb && this.shouldPersist()) {
-          setDoc(doc(this.firestoreDb, 'trade_ledger', id), sanitizeFirestoreData(this.inMemoryTrades[idx])).catch((err) => {
-            console.error(`[Storage] Firestore closeTrade error for ${id}:`, err);
-          });
-          if (isRealizedTrade) {
-            setDoc(doc(this.firestoreDb, 'account_state', 'main'), sanitizeFirestoreData({
-              currentBalance: this.inMemoryCurrentBalance,
-              startingBalance: this.inMemoryStartingBalance,
-              updatedAt: Date.now(),
-            })).catch((err) => {
-              console.error('[Storage] Firestore closeTrade account error:', err);
+        if (supabase && this.shouldPersist()) {
+          supabase
+            .from('trade_ledger')
+            .upsert(this.formatTradeRow(this.inMemoryTrades[idx]))
+            .then(({ error }) => {
+              if (error) console.error(`[Storage] Supabase closeTrade error for ${id}:`, error.message);
             });
+
+          if (isRealizedTrade) {
+            supabase
+              .from('account_state')
+              .upsert({
+                id: 'main',
+                current_balance: this.inMemoryCurrentBalance,
+                starting_balance: this.inMemoryStartingBalance,
+                updated_at: new Date().toISOString(),
+              })
+              .then(({ error }) => {
+                if (error) console.error('[Storage] Supabase closeTrade account error:', error.message);
+              });
           }
         }
         this.syncJsonBackups();
@@ -1550,19 +1716,28 @@ class PersistentStorage {
       this.inMemoryTrades = this.inMemoryTrades.filter((t) => t.id !== id);
       const closedTrades = this.inMemoryTrades.filter((t) => t.result === 'WIN' || t.result === 'LOSS');
       const totalPl = Number(closedTrades.reduce((acc, t) => acc + (t.pl || 0), 0).toFixed(2));
-      this.inMemoryCurrentBalance = closedTrades.length === 0 ? this.inMemoryStartingBalance : Number((this.inMemoryStartingBalance + totalPl).toFixed(2));
+      this.inMemoryCurrentBalance =
+        closedTrades.length === 0 ? this.inMemoryStartingBalance : Number((this.inMemoryStartingBalance + totalPl).toFixed(2));
 
-      if (this.firestoreDb && this.shouldPersist()) {
-        deleteDoc(doc(this.firestoreDb, 'trade_ledger', id)).catch((err) => {
-          console.error(`[Storage] Firestore deleteTrade error for ${id}:`, err);
-        });
-        setDoc(doc(this.firestoreDb, 'account_state', 'main'), sanitizeFirestoreData({
-          currentBalance: this.inMemoryCurrentBalance,
-          startingBalance: this.inMemoryStartingBalance,
-          updatedAt: Date.now(),
-        })).catch((err) => {
-          console.error('[Storage] Firestore deleteTrade account error:', err);
-        });
+      if (supabase && this.shouldPersist()) {
+        supabase
+          .from('trade_ledger')
+          .delete()
+          .eq('id', id)
+          .then(({ error }) => {
+            if (error) console.error(`[Storage] Supabase deleteTrade error for ${id}:`, error.message);
+          });
+        supabase
+          .from('account_state')
+          .upsert({
+            id: 'main',
+            current_balance: this.inMemoryCurrentBalance,
+            starting_balance: this.inMemoryStartingBalance,
+            updated_at: new Date().toISOString(),
+          })
+          .then(({ error }) => {
+            if (error) console.error('[Storage] Supabase deleteTrade account error:', error.message);
+          });
       }
       this.syncJsonBackups();
       return [...this.inMemoryTrades];
@@ -1578,16 +1753,14 @@ class PersistentStorage {
       totalSignalsRecorded: this.inMemorySignals.length,
       totalTradesRecorded: this.inMemoryTrades.length,
       totalOutcomesRecorded: this.inMemoryOutcomes.length,
-      storageEngine: 'Google Firestore (Durable Cloud Storage)',
+      storageEngine: isSupabaseConfigured() ? 'Supabase PostgreSQL (Durable Cloud Storage)' : 'Local Disk Backup (Supabase Config Pending)',
       isInitialized: this.isReady,
     };
   }
 
   public saveBacktestResult(result: any): void {
     try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
-      }
+      this.ensureDataDirectory();
       fs.writeFileSync(BACKTEST_FILE, JSON.stringify(result, null, 2), 'utf-8');
     } catch (error) {
       console.error('[PersistentStorage] Error saving backtest result:', error);
@@ -1606,7 +1779,7 @@ class PersistentStorage {
   }
 
   // =========================================================================
-  // POI Tracking & Setup Freshness Persistence
+  // POI Tracking
   // =========================================================================
   public savePoi(poi: PoiRecord): void {
     const idx = this.inMemoryPois.findIndex((p) => p.id === poi.id);
@@ -1618,10 +1791,13 @@ class PersistentStorage {
         this.inMemoryPois.shift();
       }
     }
-    if (this.firestoreDb && this.shouldPersist()) {
-      setDoc(doc(this.firestoreDb, 'poi_records', poi.id), sanitizeFirestoreData(poi)).catch((err) => {
-        console.error(`[Storage] Firestore savePoi error for ${poi.id}:`, err);
-      });
+    if (supabase && this.shouldPersist()) {
+      supabase
+        .from('poi_records')
+        .upsert({ id: poi.id, raw_data: poi })
+        .then(({ error }) => {
+          if (error) console.error(`[Storage] Supabase savePoi error for ${poi.id}:`, error.message);
+        });
     }
   }
 
@@ -1648,10 +1824,13 @@ class PersistentStorage {
         this.inMemoryLifecycles.shift();
       }
     }
-    if (this.firestoreDb && this.shouldPersist()) {
-      setDoc(doc(this.firestoreDb, 'candidate_lifecycles', record.id), sanitizeFirestoreData(record)).catch((err) => {
-        console.error(`[Storage] Firestore saveLifecycle error for ${record.id}:`, err);
-      });
+    if (supabase && this.shouldPersist()) {
+      supabase
+        .from('candidate_lifecycles')
+        .upsert({ id: record.id, raw_data: record })
+        .then(({ error }) => {
+          if (error) console.error(`[Storage] Supabase saveLifecycle error for ${record.id}:`, error.message);
+        });
     }
   }
 
@@ -1671,10 +1850,17 @@ class PersistentStorage {
   public saveOpportunity(opp: TradeOpportunity): void {
     if (!opp.id) return;
     this.inMemoryOpportunities.set(opp.id, opp);
-    if (this.firestoreDb && this.shouldPersist()) {
-      setDoc(doc(this.firestoreDb, 'opportunities', opp.id.replace(/\//g, '_')), sanitizeFirestoreData(opp)).catch((err) => {
-        console.error('[Storage] Firestore saveOpportunity error:', err);
-      });
+    if (supabase && this.shouldPersist()) {
+      supabase
+        .from('opportunities')
+        .upsert({
+          id: opp.id,
+          last_updated_time: opp.lastUpdatedTime,
+          raw_data: opp,
+        })
+        .then(({ error }) => {
+          if (error) console.error('[Storage] Supabase saveOpportunity error:', error.message);
+        });
     }
     this.syncJsonBackups();
   }
@@ -1701,10 +1887,16 @@ class PersistentStorage {
     if (sigIdx >= 0) {
       this.inMemorySignals[sigIdx].lifecycleState = 'NOT_ENTERED';
       updatedSignal = this.inMemorySignals[sigIdx];
-      if (this.firestoreDb && this.shouldPersist()) {
-        setDoc(doc(this.firestoreDb, 'signals', updatedSignal.id), sanitizeFirestoreData(updatedSignal)).catch((e) => {
-          console.error('[Storage] Firestore update signal NOT_ENTERED error:', e);
-        });
+      if (supabase && this.shouldPersist()) {
+        Promise.resolve(
+          supabase
+            .from('signals')
+            .upsert({
+              id: updatedSignal.id,
+              timestamp: updatedSignal.timestamp,
+              raw_data: updatedSignal,
+            })
+        ).catch((e) => console.error('[Storage] Supabase update signal NOT_ENTERED error:', e));
       }
     }
 
@@ -1715,10 +1907,16 @@ class PersistentStorage {
       opp.lastUpdatedTime = Date.now();
       this.inMemoryOpportunities.set(opp.id, opp);
       updatedOpp = opp;
-      if (this.firestoreDb && this.shouldPersist()) {
-        setDoc(doc(this.firestoreDb, 'opportunities', opp.id.replace(/\//g, '_')), sanitizeFirestoreData(opp)).catch((e) => {
-          console.error('[Storage] Firestore update opportunity NOT_ENTERED error:', e);
-        });
+      if (supabase && this.shouldPersist()) {
+        Promise.resolve(
+          supabase
+            .from('opportunities')
+            .upsert({
+              id: opp.id,
+              last_updated_time: opp.lastUpdatedTime,
+              raw_data: opp,
+            })
+        ).catch((e) => console.error('[Storage] Supabase update opportunity NOT_ENTERED error:', e));
       }
     }
 
@@ -1727,12 +1925,14 @@ class PersistentStorage {
     if (lcIdx >= 0) {
       this.inMemoryLifecycles[lcIdx].state = 'NOT_ENTERED';
       this.inMemoryLifecycles[lcIdx].lastUpdatedTime = Date.now();
-      if (this.firestoreDb && this.shouldPersist()) {
-        setDoc(doc(this.firestoreDb, 'candidate_lifecycles', this.inMemoryLifecycles[lcIdx].id), sanitizeFirestoreData(this.inMemoryLifecycles[lcIdx])).catch(() => {});
+      if (supabase && this.shouldPersist()) {
+        Promise.resolve(
+          supabase.from('candidate_lifecycles').upsert({ id: this.inMemoryLifecycles[lcIdx].id, raw_data: this.inMemoryLifecycles[lcIdx] })
+        ).catch(() => {});
       }
     }
 
-    // 4. Also store outcome record as NOT_ENTERED so that duplicate queries know it was marked NOT_ENTERED
+    // 4. Also store outcome record as NOT_ENTERED
     const outcomeRecord: TradeOutcomeRecord = {
       signalId: signalOrOppId,
       tradeId: signalOrOppId,
@@ -1757,8 +1957,10 @@ class PersistentStorage {
     } else {
       this.inMemoryOutcomes.unshift(outcomeRecord);
     }
-    if (this.firestoreDb && this.shouldPersist()) {
-      setDoc(doc(this.firestoreDb, 'trade_outcomes', signalOrOppId), sanitizeFirestoreData(outcomeRecord)).catch(() => {});
+    if (supabase && this.shouldPersist()) {
+      Promise.resolve(
+        supabase.from('trade_outcomes').upsert(this.formatOutcomeRow(outcomeRecord))
+      ).catch(() => {});
     }
 
     this.syncJsonBackups();
@@ -1768,19 +1970,17 @@ class PersistentStorage {
   public async clearAllTrades(): Promise<TradeLedgerItem[]> {
     this.inMemoryTrades = [];
     this.inMemoryCurrentBalance = this.inMemoryStartingBalance;
-    if (this.firestoreDb && this.shouldPersist()) {
+    if (supabase && this.shouldPersist()) {
       try {
-        const ledgerSnap = await getDocs(collection(this.firestoreDb, 'trade_ledger'));
-        for (const docRef of ledgerSnap.docs) {
-          await deleteDoc(docRef.ref).catch(() => {});
-        }
-        await setDoc(doc(this.firestoreDb, 'account_state', 'main'), sanitizeFirestoreData({
-          currentBalance: this.inMemoryCurrentBalance,
-          startingBalance: this.inMemoryStartingBalance,
-          updatedAt: Date.now(),
-        })).catch(() => {});
+        await supabase.from('trade_ledger').delete().neq('id', '___non_existent___');
+        await supabase.from('account_state').upsert({
+          id: 'main',
+          current_balance: this.inMemoryCurrentBalance,
+          starting_balance: this.inMemoryStartingBalance,
+          updated_at: new Date().toISOString(),
+        });
       } catch (e) {
-        console.error('[Storage] Error clearing all trades in Firestore:', e);
+        console.error('[Storage] Error clearing all trades in Supabase:', e);
       }
     }
     this.syncJsonBackups();
@@ -1797,7 +1997,7 @@ class PersistentStorage {
       const auditBefore = {
         signalsCount: this.inMemorySignals.length,
         tradesCount: this.inMemoryTrades.length,
-        openTradesCount: this.inMemoryTrades.filter(t => t.result === 'OPEN').length,
+        openTradesCount: this.inMemoryTrades.filter((t) => t.result === 'OPEN').length,
         opportunitiesCount: this.inMemoryOpportunities.size,
         terminalSetupsCount: this.inMemoryTerminalSetups.size,
         currentBalance: this.inMemoryCurrentBalance,
@@ -1817,62 +2017,39 @@ class PersistentStorage {
       this.inMemoryLifecycles = [];
 
       // 5. Preserving completed/realized trades in ledger (WIN/LOSS)
-      const completedTrades = this.inMemoryTrades.filter(t => t.result === 'WIN' || t.result === 'LOSS');
+      const completedTrades = this.inMemoryTrades.filter((t) => t.result === 'WIN' || t.result === 'LOSS');
       this.inMemoryTrades = completedTrades;
 
       // Recalculate current balance based on preserved completed trades
       const totalPl = Number(completedTrades.reduce((acc, t) => acc + (t.pl || 0), 0).toFixed(2));
       this.inMemoryCurrentBalance = Number((this.inMemoryStartingBalance + totalPl).toFixed(2));
 
-      // 6. Sync JSON backups to write the empty collections/cleared state to disk
+      // 6. Sync JSON backups
       this.syncJsonBackups();
 
-      // 7. Clear Firestore collections asynchronously if firestoreDb is defined and persistence is enabled
-      if (this.firestoreDb && this.shouldPersist()) {
+      // 7. Clear Supabase tables if connected
+      if (supabase && this.shouldPersist()) {
         try {
-          const signalsSnap = await getDocs(collection(this.firestoreDb, 'signals'));
-          for (const docRef of signalsSnap.docs) {
-            await deleteDoc(docRef.ref).catch(() => {});
-          }
-
-          const oppsSnap = await getDocs(collection(this.firestoreDb, 'opportunities'));
-          for (const docRef of oppsSnap.docs) {
-            await deleteDoc(docRef.ref).catch(() => {});
-          }
-
-          const lifecyclesSnap = await getDocs(collection(this.firestoreDb, 'candidate_lifecycles'));
-          for (const docRef of lifecyclesSnap.docs) {
-            await deleteDoc(docRef.ref).catch(() => {});
-          }
-
-          const terminalSnap = await getDocs(collection(this.firestoreDb, 'terminal_setups'));
-          for (const docRef of terminalSnap.docs) {
-            await deleteDoc(docRef.ref).catch(() => {});
-          }
-
-          const ledgerSnap = await getDocs(collection(this.firestoreDb, 'trade_ledger'));
-          for (const docRef of ledgerSnap.docs) {
-            const data = docRef.data();
-            if (data && data.result !== 'WIN' && data.result !== 'LOSS') {
-              await deleteDoc(docRef.ref).catch(() => {});
-            }
-          }
-
-          // Save updated account state to Firestore
-          await setDoc(doc(this.firestoreDb, 'account_state', 'main'), sanitizeFirestoreData({
-            currentBalance: this.inMemoryCurrentBalance,
-            startingBalance: this.inMemoryStartingBalance,
-            updatedAt: Date.now(),
-          })).catch(() => {});
+          await supabase.from('signals').delete().neq('id', '___keep___');
+          await supabase.from('opportunities').delete().neq('id', '___keep___');
+          await supabase.from('candidate_lifecycles').delete().neq('id', '___keep___');
+          await supabase.from('terminal_setups').delete().neq('id', '___keep___');
+          await supabase.from('trade_ledger').delete().eq('result', 'OPEN');
+          await supabase.from('account_state').upsert({
+            id: 'main',
+            current_balance: this.inMemoryCurrentBalance,
+            starting_balance: this.inMemoryStartingBalance,
+            updated_at: new Date().toISOString(),
+          });
         } catch (fsErr) {
-          console.warn('[Storage] Firestore deletion during reset had some non-blocking errors:', fsErr);
+          console.warn('[Storage] Supabase deletion during reset had non-blocking error:', fsErr);
         }
       }
 
       const auditAfter = {
         signalsCount: this.inMemorySignals.length,
         tradesCount: this.inMemoryTrades.length,
-        openTradesCount: this.inMemoryTrades.filter(t => t.result === 'OPEN').length,
+        openTradesCount: this.inMemoryTrades.filter((t) => t.result === 'OPEN').length,
         opportunitiesCount: this.inMemoryOpportunities.size,
         terminalSetupsCount: this.inMemoryTerminalSetups.size,
         currentBalance: this.inMemoryCurrentBalance,
@@ -1894,3 +2071,24 @@ class PersistentStorage {
 }
 
 export const storage = new PersistentStorage();
+
+export function sanitizeFirestoreData(data: any): any {
+  if (data === null || data === undefined) return null;
+  if (typeof data === 'number') {
+    if (isNaN(data) || !isFinite(data)) return 0;
+    return data;
+  }
+  if (typeof data !== 'object') return data;
+  if (Array.isArray(data)) {
+    return data.map((item) => sanitizeFirestoreData(item)).filter((item) => item !== undefined);
+  }
+  const result: any = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value === undefined) continue;
+    if (typeof value === 'function') continue;
+    result[key] = sanitizeFirestoreData(value);
+  }
+  return result;
+}
+
+export const sanitizeDatabaseData = sanitizeFirestoreData;

@@ -1,3 +1,4 @@
+process.env.IS_TESTING = 'true';
 import { runAccountingTests } from '../server/accountingTests.js';
 
 async function main() {

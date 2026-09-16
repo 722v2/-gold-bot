@@ -4,6 +4,7 @@ import { storage } from '../server/storage.js';
 import { scanner } from '../server/scanner.js';
 
 test('Capital Integrity Audit', async (t) => {
+  storage.setTestingMode(true);
   await t.test('1. Opening/saving Settings without changing capital does not change startingBalance', () => {
     // Set baseline balance
     const initBal = storage.updateBalance(25.0, 25.0);
