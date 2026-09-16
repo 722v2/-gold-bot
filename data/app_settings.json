@@ -1,8 +1,8 @@
 {
   "capitalSource": "MANUAL",
   "manualCapital": 25,
-  "riskPerTrade": 10,
-  "maxRiskPerTrade": 15,
+  "riskPerTrade": 20,
+  "maxRiskPerTrade": 30,
   "minTp1RR": 1.5,
   "targetTp2RR": 3,
   "minimumConfidence": 75,
@@ -29,7 +29,10 @@
   "lotStep": 0.01,
   "minGoldSlPoints": 40,
   "maxGoldSlPoints": 50,
-  "maxLoss": 5,
+  "maxLoss": 5.5,
   "partialClosePercent": 50,
-  "enableTradeManagement": true
+  "enableTradeManagement": true,
+  "oppositeCooldownMinutes": 10,
+  "updatedAt": 1789476607706,
+  "notifyNoTrade": false
 }

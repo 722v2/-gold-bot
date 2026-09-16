@@ -280,10 +280,13 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
 7. في حال عدم وجود فرصة حقيقية أو تذبذب في منتصف الرينج، اختر "NO TRADE" واذكر السبب بالتفصيل.`;
 
   isAiCallRunning = true;
+  const model = process.env.NVIDIA_MODEL || 'deepseek-ai/deepseek-v4-flash-0731';
+  const timeoutMs = 10000;
+  const startTime = Date.now();
   try {
     const prompt = `حلل بيانات السوق والمرشحات الاستراتيجية المرفقة للذهب وقدم قرارك النهائي بصيغة JSON:\n${JSON.stringify(technicalContext, null, 2)}`;
 
-    const model = process.env.NVIDIA_MODEL || 'deepseek-ai/deepseek-v4-flash-0731';
+    console.log(`[NVIDIA AI] Sending API request with model: ${model}`);
     const completion = await ai.chat.completions.create({
       model,
       messages: [
@@ -294,8 +297,11 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
       max_tokens: 1024,
       response_format: { type: 'json_object' }
     }, {
-      timeout: 10000,
+      timeout: timeoutMs,
     });
+
+    const durationMs = Date.now() - startTime;
+    console.log(`[NVIDIA AI] Request completed in ${durationMs}ms (model: ${model})`);
 
     const responseContent = completion.choices[0]?.message?.content || '{}';
     const parsed = JSON.parse(responseContent.trim());
@@ -346,16 +352,18 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
       errorStr.includes('ETIMEDOUT') ||
       errorStr.includes('ECONNABORTED');
 
+    const durationMs = Date.now() - startTime;
+
     if (is429RateLimit) {
       aiCooldownUntil = Date.now() + 3 * 60 * 1000; // 3 minutes cooldown
-      console.warn(`[NVIDIA AI] HTTP 429 Too Many Requests received. Activating 3-minute cooldown until ${new Date(aiCooldownUntil).toLocaleTimeString()}. Using multi-strategy candidate engine.`);
+      console.warn(`[NVIDIA AI] HTTP 429 Too Many Requests received after ${durationMs}ms (model: ${model}). Activating 3-minute cooldown until ${new Date(aiCooldownUntil).toLocaleTimeString()}. Using multi-strategy candidate engine.`);
     } else if (isAuthError) {
       isKeyUnauthenticated = true;
-      console.warn('[NVIDIA AI] NVIDIA API key is unauthenticated. Using multi-strategy candidate engine.');
+      console.warn(`[NVIDIA AI] NVIDIA API key is unauthenticated after ${durationMs}ms (model: ${model}). Using multi-strategy candidate engine.`);
     } else if (isTimeout) {
-      console.warn('[NVIDIA AI] API request timed out. Smoothly falling back to multi-strategy candidate engine.');
+      console.warn(`[NVIDIA AI] API request timed out after ${durationMs}ms (timeout limit: ${timeoutMs}ms, model: ${model}). Smoothly falling back to multi-strategy candidate engine.`);
     } else {
-      console.warn('[NVIDIA AI] API note, falling back to multi-strategy engine:', error?.message || error);
+      console.warn(`[NVIDIA AI] API note after ${durationMs}ms (model: ${model}), falling back to multi-strategy engine:`, error?.message || error);
     }
 
     const fallback = algorithmicScreening(input);
