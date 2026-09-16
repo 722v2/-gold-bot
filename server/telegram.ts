@@ -8,23 +8,81 @@ export interface TelegramStatus {
   botId: string | null;
 }
 
+export interface PendingPnlRequest {
+  signalId: string;
+  outcome: 'WIN' | 'LOSS';
+  signal: any;
+  messageId?: number;
+  originalMessageText?: string;
+  requestedAt: number;
+}
+
 export class TelegramService {
   private botToken: string | null = null;
   private privateChatId: string | null = null;
   private botId: string | null = null;
   private configPath = path.join(process.cwd(), 'data', 'telegram_private_chat.json');
   private messageMappingPath = path.join(process.cwd(), 'data', 'telegram_signal_messages.json');
+  private pendingPnlPath = path.join(process.cwd(), 'data', 'telegram_pending_pnl.json');
   private pollingInterval: NodeJS.Timeout | null = null;
   private isPolling = false;
   private isInitializing = false;
   private lastUpdateId = 0;
   private signalMessageIds: Record<string, number> = {};
+  private pendingPnlRequests: Map<string, PendingPnlRequest> = new Map();
 
   constructor() {
     this.botToken = process.env.TELEGRAM_BOT_TOKEN || null;
     this.botId = this.getBotIdFromToken(this.botToken);
     this.loadRegisteredChat();
     this.loadMessageMapping();
+    this.loadPendingPnlRequests();
+  }
+
+  /**
+   * Load stored pending P&L requests from disk
+   */
+  private loadPendingPnlRequests(): void {
+    try {
+      if (fs.existsSync(this.pendingPnlPath)) {
+        const data = JSON.parse(fs.readFileSync(this.pendingPnlPath, 'utf8'));
+        if (data && typeof data === 'object') {
+          for (const [chatId, req] of Object.entries(data)) {
+            this.pendingPnlRequests.set(chatId, req as PendingPnlRequest);
+          }
+          console.log(`[Telegram] Loaded ${this.pendingPnlRequests.size} pending P&L input requests.`);
+        }
+      }
+    } catch (err) {
+      console.error('[Telegram] Error loading pending P&L requests:', err);
+    }
+  }
+
+  /**
+   * Save pending P&L requests to disk safely
+   */
+  private savePendingPnlRequests(): void {
+    try {
+      const dir = path.dirname(this.pendingPnlPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      const obj: Record<string, PendingPnlRequest> = {};
+      for (const [chatId, req] of this.pendingPnlRequests.entries()) {
+        obj[chatId] = req;
+      }
+      fs.writeFileSync(this.pendingPnlPath, JSON.stringify(obj, null, 2), 'utf8');
+    } catch (err) {
+      console.error('[Telegram] Error saving pending P&L requests:', err);
+    }
+  }
+
+  /**
+   * Clear pending P&L request for a chat
+   */
+  public clearPendingPnlRequest(chatId: string): void {
+    this.pendingPnlRequests.delete(chatId);
+    this.savePendingPnlRequests();
   }
 
   /**
@@ -65,7 +123,7 @@ export class TelegramService {
   }
 
   /**
-   * Load stored private chat ID from disk
+   * Load stored private chat ID from disk or storage fallback
    */
   private loadRegisteredChat(): void {
     try {
@@ -74,7 +132,13 @@ export class TelegramService {
         if (data && data.chatId) {
           this.privateChatId = String(data.chatId);
           console.log(`[Telegram] Loaded registered private chat ID: ${this.privateChatId}`);
+          return;
         }
+      }
+      const storageChatId = storage.getTelegramChatId();
+      if (storageChatId) {
+        this.privateChatId = storageChatId;
+        console.log(`[Telegram] Loaded registered private chat ID from storage: ${this.privateChatId}`);
       }
     } catch (err) {
       console.error('[Telegram] Error loading registered chat ID:', err);
@@ -82,7 +146,22 @@ export class TelegramService {
   }
 
   /**
-   * Save private chat ID to disk safely
+   * Get active private chat ID with persistent storage fallback
+   */
+  public getPrivateChatId(): string | null {
+    if (this.privateChatId) {
+      return this.privateChatId;
+    }
+    const persisted = storage.getTelegramChatId();
+    if (persisted) {
+      this.privateChatId = persisted;
+      return this.privateChatId;
+    }
+    return null;
+  }
+
+  /**
+   * Save private chat ID to disk safely and permanently in Firestore
    */
   private saveRegisteredChat(chatId: string): void {
     try {
@@ -93,6 +172,11 @@ export class TelegramService {
       fs.writeFileSync(this.configPath, JSON.stringify({ chatId, registeredAt: new Date().toISOString() }, null, 2), 'utf8');
       this.privateChatId = chatId;
       console.log(`[Telegram] Registered and saved new private chat ID: ${chatId}`);
+
+      // Permanently persist to Firestore
+      storage.saveTelegramChatId(chatId).catch((err) => {
+        console.error('[Telegram] Error saving chat ID to Firestore:', err);
+      });
     } catch (err) {
       console.error('[Telegram] Error saving registered chat ID:', err);
     }
@@ -117,6 +201,18 @@ export class TelegramService {
     try {
       // Check and clear any conflicting webhook configuration on Telegram's servers
       await this.ensureWebhookRemoved();
+
+      // Ensure persistent Firestore chat ID is loaded and applied immediately on startup
+      try {
+        await storage.waitUntilReady();
+        const persistedChatId = storage.getTelegramChatId();
+        if (persistedChatId) {
+          this.privateChatId = persistedChatId;
+          console.log(`[Telegram] Active private chat ID verified from persistent Firestore storage: ${this.privateChatId}`);
+        }
+      } catch (storageErr) {
+        console.warn('[Telegram] Warning waiting for storage during init:', storageErr);
+      }
 
       console.log('[Telegram] Brand-new Telegram integration initialized. Starting private chat detection polling...');
       
@@ -230,8 +326,9 @@ export class TelegramService {
 
     // Check for /start command
     if (text.startsWith('/start')) {
-      // Save chat ID if it's new
-      if (this.privateChatId !== chatId) {
+      const currentChatId = this.getPrivateChatId();
+      // Save chat ID if it's new or not yet registered
+      if (currentChatId !== chatId) {
         this.saveRegisteredChat(chatId);
         
         // Send a welcoming confirmation message
@@ -255,6 +352,101 @@ export class TelegramService {
 ⏱ <i>الوقت: ${new Date().toLocaleTimeString('ar-EG')}</i>
         `.trim());
       }
+      return;
+    }
+
+    // Check for /cancel command
+    if (text.startsWith('/cancel')) {
+      if (this.pendingPnlRequests.has(chatId)) {
+        this.clearPendingPnlRequest(chatId);
+        await this.sendMessageDirectly(chatId, '❌ تم إلغاء عملية توثيق نتيجة الصفقة.');
+      } else {
+        await this.sendMessageDirectly(chatId, 'ℹ️ لا توجد عملية توثيق معلقة لإلغائها.');
+      }
+      return;
+    }
+
+    // Check if there is an active pending P&L input waiting for this chat
+    const pending = this.pendingPnlRequests.get(chatId);
+    if (pending) {
+      const cleanText = text.replace(/[$€£\s]/g, '');
+      const numMatch = cleanText.match(/[-+]?[0-9]*\.?[0-9]+/);
+      if (!numMatch || isNaN(parseFloat(numMatch[0]))) {
+        const eg = pending.outcome === 'WIN' ? '12.50' : '4.00';
+        await this.sendMessageDirectly(
+          chatId,
+          `⚠️ <b>قيمة غير صالحة!</b>\nيرجى كتابة رقم صحيح لقيمة ${pending.outcome === 'WIN' ? 'الربح' : 'الخسارة'} بالدولار (USD).\nمثال: <code>${eg}</code>\n\n<i>أرسل /cancel لإلغاء العملية</i>`
+        );
+        return;
+      }
+
+      const rawAmount = parseFloat(numMatch[0]);
+      // Authoritative P&L: WIN is positive profit, LOSS is negative loss
+      const finalRealizedPnl = pending.outcome === 'WIN' ? Math.abs(rawAmount) : -Math.abs(rawAmount);
+      const exitPrice = pending.outcome === 'WIN' ? Number(pending.signal.tp1) : Number(pending.signal.stopLoss);
+
+      const record: any = {
+        signalId: pending.signal.id,
+        tradeId: pending.signal.id,
+        direction: pending.signal.signal,
+        orderType: 'MARKET',
+        entry: Number(pending.signal.entry),
+        stopLoss: Number(pending.signal.stopLoss),
+        tp1: Number(pending.signal.tp1),
+        tp2: pending.signal.tp2 ? Number(pending.signal.tp2) : undefined,
+        outcome: pending.outcome,
+        realizedPnl: finalRealizedPnl,
+        pl: finalRealizedPnl,
+        exitPrice: exitPrice,
+        source: 'MANUAL',
+        closedAt: Date.now(),
+        closeReason: 'MANUAL_TELEGRAM_BUTTON',
+        timestamp: Date.now(),
+        isoTime: new Date().toISOString(),
+      };
+
+      const res = await storage.recordTradeOutcomeAsync(record, pending.signal);
+      if (res.success) {
+        delete this.signalMessageIds[pending.signalId];
+        this.saveMessageMapping();
+
+        if (pending.messageId) {
+          try {
+            await this.removeInlineKeyboard(chatId, pending.messageId);
+            const outcomeStr = pending.outcome === 'WIN' ? '🟢 صفقة رابحة (WIN)' : '🔴 صفقة خاسرة (LOSS)';
+            const updatedText = `
+${pending.originalMessageText || ''}
+
+<b>📝 النتيجة المعتمدة:</b> ${outcomeStr}
+💰 <b>الـ P&L الفعلي المحقق:</b> ${finalRealizedPnl >= 0 ? '+' : ''}$${finalRealizedPnl.toFixed(2)}
+            `.trim();
+            await this.editMessageText(chatId, pending.messageId, updatedText);
+          } catch (e) {
+            console.warn('[Telegram] Could not edit original message:', e);
+          }
+        }
+
+        const newBal = storage.getCurrentBalance();
+        const outcomeStr = pending.outcome === 'WIN' ? '🟢 صفقة رابحة (WIN)' : '🔴 صفقة خاسرة (LOSS)';
+        this.clearPendingPnlRequest(chatId);
+
+        await this.sendMessageDirectly(
+          chatId,
+          `
+✅ <b>تم توثيق الصفقة وتحديث رصيد الحساب بنجاح!</b>
+
+📊 <b>الصفقة:</b> ${pending.signal.signal} (${pending.signal.asset || 'XAU/USD'})
+📝 <b>النتيجة:</b> ${outcomeStr}
+💵 <b>الـ P&L الفعلي المعتمد:</b> ${finalRealizedPnl >= 0 ? '+' : ''}$${finalRealizedPnl.toFixed(2)}
+🏦 <b>رصيد الحساب الجديد:</b> $${Number(newBal).toFixed(2)}
+
+⏱ <i>الوقت: ${new Date().toLocaleTimeString('ar-EG')}</i>
+          `.trim()
+        );
+      } else {
+        await this.sendMessageDirectly(chatId, `❌ <b>حدث خطأ أثناء حفظ النتيجة:</b> ${res.message || 'فشل التوثيق'}`);
+      }
+      return;
     }
   }
 
@@ -416,82 +608,85 @@ export class TelegramService {
       }
 
       if (action === 'win' || action === 'loss') {
-        // Confirm execution first by saving it to ledger if it doesn't exist
+        // Confirm trade exists in ledger (save as OPEN if not yet present)
         if (!existingTrade) {
           const newTrade: any = {
             id: signal.id,
+            signalId: signal.id,
             tradeNumber: (storage.getTrades(1)[0]?.tradeNumber || 0) + 1,
-            date: new Date(signal.timestamp).toLocaleDateString('ar-EG', {
+            date: new Date(signal.timestamp || Date.now()).toLocaleDateString('ar-EG', {
               month: 'short',
               day: 'numeric',
               hour: '2-digit',
               minute: '2-digit',
             }),
-            isoTime: new Date(signal.timestamp).toISOString(),
-            asset: 'XAU/USD',
+            isoTime: new Date(signal.timestamp || Date.now()).toISOString(),
+            asset: signal.asset || 'XAU/USD',
             direction: signal.signal as any,
-            entry: signal.entry,
-            sl: signal.stopLoss,
-            tp1: signal.tp1,
-            tp2: signal.tp2,
+            entry: Number(signal.entry),
+            sl: Number(signal.stopLoss),
+            slPoints: signal.slPoints || Math.round(Math.abs(Number(signal.entry) - Number(signal.stopLoss)) / 0.1),
+            tp1: Number(signal.tp1),
+            tp1Points: signal.tp1Points || Math.round(Math.abs(Number(signal.tp1) - Number(signal.entry)) / 0.1),
+            tp2: signal.tp2 ? Number(signal.tp2) : undefined,
+            tp2Points: signal.tp2Points || (signal.tp2 ? Math.round(Math.abs(Number(signal.tp2) - Number(signal.entry)) / 0.1) : undefined),
             lotSize: signal.standardLot ?? signal.recommendedLotSize ?? 0.01,
-            riskPercent: signal.riskPercent,
-            riskAmount: signal.riskAmount,
+            riskPercent: signal.riskPercent || 15,
+            riskAmount: signal.riskAmount || 1.5,
+            confidence: signal.confidence || 75,
+            setup: signal.setup || 'Telegram Signal',
+            rr: signal.rr || '1:1.5',
             result: 'OPEN',
             pl: 0,
             isActive: true,
-            signalId: signal.id,
+            source: 'MANUAL',
             notes: 'تم الدخول يدوياً عبر زر التليجرام',
           };
-          storage.saveTrade(newTrade);
+          await storage.saveTradeAsync(newTrade);
         }
 
         const outcomeVal = action === 'win' ? 'WIN' : 'LOSS';
         const lotSize = signal.standardLot ?? signal.recommendedLotSize ?? 0.01;
-        const exitPrice = action === 'win' ? signal.tp1 : signal.stopLoss;
-        const entryPrice = signal.entry;
-        const isBuy = String(signal.signal).toUpperCase().includes('BUY');
-        const priceDiff = isBuy ? (exitPrice - entryPrice) : (entryPrice - exitPrice);
-        const profit = Number((priceDiff * 100 * lotSize).toFixed(2));
+        const estProfit = Math.abs(Number(signal.tp1) - Number(signal.entry)) * 100 * lotSize;
+        const estLoss = Math.abs(Number(signal.entry) - Number(signal.stopLoss)) * 100 * lotSize;
+        const egVal = outcomeVal === 'WIN' ? estProfit.toFixed(2) : estLoss.toFixed(2);
 
-        const record: any = {
+        // Store pending P&L request awaiting user reply with USD amount
+        this.pendingPnlRequests.set(chatId, {
           signalId: signal.id,
-          tradeId: signal.id,
-          direction: signal.signal,
-          orderType: 'MARKET',
-          entry: entryPrice,
-          stopLoss: signal.stopLoss,
-          tp1: signal.tp1,
-          tp2: signal.tp2,
           outcome: outcomeVal,
-          realizedPnl: profit,
-          exitPrice: exitPrice,
-          source: 'MANUAL',
-          closedAt: Date.now(),
-          closeReason: 'MANUAL_TELEGRAM_BUTTON',
-          timestamp: Date.now(),
-          isoTime: new Date().toISOString(),
-        };
+          signal,
+          messageId,
+          originalMessageText: message.text,
+          requestedAt: Date.now(),
+        });
+        this.savePendingPnlRequests();
 
-        const res = storage.recordTradeOutcome(record, signal);
-        if (res.success) {
-          // Proactively remove from active signal tracking
-          delete this.signalMessageIds[signalId];
-          this.saveMessageMapping();
+        await this.answerCallbackQuery(
+          queryId,
+          outcomeVal === 'WIN' ? '🟢 يرجى إرسال قيمة الربح المحقق بالدولار' : '🔴 يرجى إرسال قيمة الخسارة المحققة بالدولار'
+        );
 
-          await this.answerCallbackQuery(queryId, `🟢 تم التوثيق بنجاح: ${outcomeVal === 'WIN' ? 'ربح' : 'خسارة'}`);
-          await this.removeInlineKeyboard(chatId, messageId);
-
-          const outcomeStr = outcomeVal === 'WIN' ? '🟢 صفقة رابحة (WIN)' : '🔴 صفقة خاسرة (LOSS)';
-          const updatedText = `
-${message.text}
-
-<b>📝 النتيجة الموثقة يدوياً:</b> ${outcomeStr}
-💰 <b>الربح/الخسارة:</b> ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}
-          `.trim();
-          await this.editMessageText(chatId, messageId, updatedText);
+        if (outcomeVal === 'WIN') {
+          await this.sendMessageDirectly(
+            chatId,
+            `🟢 <b>توثيق صفقة رابحة (WIN)</b>\n\n` +
+            `📊 <b>الصفقة:</b> ${signal.signal} (${signal.asset || 'XAU/USD'})\n` +
+            `📈 <b>الدخول:</b> $${Number(signal.entry).toFixed(2)} | <b>الهدف TP1:</b> $${Number(signal.tp1).toFixed(2)}\n\n` +
+            `✍️ <b>يرجى إرسال قيمة الربح الفعلي المحقق بالدولار (USD):</b>\n` +
+            `<i>(أرسل الرقم في المحادثة مباشرة، مثال: <code>${egVal}</code> أو <code>15.00</code>)</i>\n\n` +
+            `❌ <i>لإلغاء العملية أرسل: /cancel</i>`
+          );
         } else {
-          await this.answerCallbackQuery(queryId, `خطأ: ${res.message || 'Failed to record outcome'}`);
+          await this.sendMessageDirectly(
+            chatId,
+            `🔴 <b>توثيق صفقة خاسرة (LOSS)</b>\n\n` +
+            `📊 <b>الصفقة:</b> ${signal.signal} (${signal.asset || 'XAU/USD'})\n` +
+            `📈 <b>الدخول:</b> $${Number(signal.entry).toFixed(2)} | <b>وقف الخسارة SL:</b> $${Number(signal.stopLoss).toFixed(2)}\n\n` +
+            `✍️ <b>يرجى إرسال قيمة الخسارة الفعلية بالدولار (USD):</b>\n` +
+            `<i>(أرسل الرقم في المحادثة مباشرة، مثال: <code>${egVal}</code> أو <code>-${egVal}</code>)</i>\n\n` +
+            `❌ <i>لإلغاء العملية أرسل: /cancel</i>`
+          );
         }
 
       } else if (action === 'not_entered') {
@@ -528,11 +723,12 @@ ${message.text}
       return { success: false, error: 'Telegram service bot token not configured.' };
     }
 
-    if (!this.privateChatId) {
+    const chatId = this.getPrivateChatId();
+    if (!chatId) {
       return { success: false, error: 'NOT_REGISTERED' };
     }
 
-    const success = await this.sendMessageDirectly(this.privateChatId, text);
+    const success = await this.sendMessageDirectly(chatId, text);
     return { success };
   }
 
@@ -540,9 +736,10 @@ ${message.text}
    * Get the current registration status
    */
   public getStatus(): TelegramStatus {
+    const chatId = this.getPrivateChatId();
     return {
-      registered: this.privateChatId !== null,
-      chatId: this.privateChatId,
+      registered: chatId !== null,
+      chatId: chatId,
       botId: this.botId,
     };
   }
@@ -555,7 +752,8 @@ ${message.text}
       return { success: false, error: 'البوت غير مكوّن. يرجى إدخال TELEGRAM_BOT_TOKEN.' };
     }
 
-    if (!this.privateChatId) {
+    const chatId = this.getPrivateChatId();
+    if (!chatId) {
       return { success: false, error: 'NOT_REGISTERED' };
     }
 
@@ -570,7 +768,7 @@ ${message.text}
 ⏱ <b>الوقت:</b> ${new Date().toLocaleTimeString('ar-EG')}
     `.trim();
 
-    const success = await this.sendMessageDirectly(this.privateChatId, text);
+    const success = await this.sendMessageDirectly(chatId, text);
     return { success, error: success ? undefined : 'فشل إرسال الرسالة إلى تليجرام' };
   }
 
@@ -582,7 +780,8 @@ ${message.text}
       return { success: false, error: 'البوت غير مكوّن. يرجى إدخال TELEGRAM_BOT_TOKEN.' };
     }
 
-    if (!this.privateChatId) {
+    const chatId = this.getPrivateChatId();
+    if (!chatId) {
       return { success: false, error: 'NOT_REGISTERED' };
     }
 
@@ -617,7 +816,7 @@ ${message.text}
 ⏱ <i>الوقت: ${new Date().toLocaleTimeString('ar-EG')}</i>
     `.trim();
 
-    const success = await this.sendMessageDirectly(this.privateChatId, text);
+    const success = await this.sendMessageDirectly(chatId, text);
     return { success, error: success ? undefined : 'فشل إرسال الإشارة التجريبية إلى تليجرام' };
   }
 
@@ -625,7 +824,8 @@ ${message.text}
    * Formats and delivers a newly qualified trade signal alert
    */
   public async sendSignalNotification(signal: any): Promise<boolean> {
-    if (!this.privateChatId) return false;
+    const chatId = this.getPrivateChatId();
+    if (!chatId) return false;
 
     const isBuy = String(signal.signal).toUpperCase().includes('BUY');
     const actionEmoji = isBuy ? '🟢' : '🔴';
@@ -658,7 +858,7 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
       ]
     };
 
-    const sentMessage = await this.sendMessageDirectly(this.privateChatId, text, replyMarkup);
+    const sentMessage = await this.sendMessageDirectly(chatId, text, replyMarkup);
     if (sentMessage && sentMessage.message_id) {
       this.signalMessageIds[signal.id] = sentMessage.message_id;
       this.saveMessageMapping();
@@ -670,15 +870,17 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
    * Formats and delivers continuous trade management notifications (Phase 4)
    */
   public async sendManagementNotification(formattedMessage: string): Promise<boolean> {
-    if (!this.privateChatId) return false;
-    return this.sendMessageDirectly(this.privateChatId, formattedMessage);
+    const chatId = this.getPrivateChatId();
+    if (!chatId) return false;
+    return this.sendMessageDirectly(chatId, formattedMessage);
   }
 
   /**
    * Update active signals with latest price and floating P&L on Telegram
    */
   public async updateActiveSignals(currentPrice: number): Promise<void> {
-    if (!this.privateChatId || !this.botToken) return;
+    const chatId = this.getPrivateChatId();
+    if (!chatId || !this.botToken) return;
 
     const signalIds = Object.keys(this.signalMessageIds);
     if (signalIds.length === 0) return;
@@ -747,7 +949,7 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
           ]
         };
 
-        await this.editMessageText(this.privateChatId, messageId, text, replyMarkup);
+        await this.editMessageText(chatId, messageId, text, replyMarkup);
       } catch (err) {
         console.error(`[Telegram] Error updating active signal ${signalId}:`, err);
       }
@@ -758,7 +960,8 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
    * Formats and delivers completed trade outcome alerts
    */
   public async sendOutcomeNotification(outcome: any, trade: any): Promise<boolean> {
-    if (!this.privateChatId) return false;
+    const chatId = this.getPrivateChatId();
+    if (!chatId) return false;
 
     const isWin = outcome.outcome === 'WIN';
     const outcomeEmoji = isWin ? '🟢' : '🔴';
@@ -778,7 +981,7 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
 ⏱ <i>الوقت: ${new Date().toLocaleTimeString('ar-EG')}</i>
     `.trim();
 
-    return this.sendMessageDirectly(this.privateChatId, text);
+    return this.sendMessageDirectly(chatId, text);
   }
 
   /**

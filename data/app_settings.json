@@ -33,6 +33,6 @@
   "partialClosePercent": 50,
   "enableTradeManagement": true,
   "oppositeCooldownMinutes": 10,
-  "updatedAt": 1789476607706,
-  "notifyNoTrade": false
+  "notifyNoTrade": false,
+  "updatedAt": 1789476607706
 }

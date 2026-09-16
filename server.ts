@@ -772,12 +772,25 @@ async function startServer() {
     }
   });
 
-  app.post('/api/trades', (req, res) => {
+  app.post('/api/trades', async (req, res) => {
     try {
       const trade = req.body;
-      if (!trade || !trade.id) {
-        return res.status(400).json({ success: false, error: 'Trade payload must include an ID' });
+      if (!trade) {
+        return res.status(400).json({ success: false, error: 'Trade payload is required' });
       }
+
+      const id = trade.id || `trade_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const highestNum = Math.max(0, ...storage.getTrades(300).map((t) => t.tradeNumber || 0));
+      const tradeNumber = trade.tradeNumber || highestNum + 1;
+      const isoTime = trade.isoTime || new Date().toISOString();
+      const date =
+        trade.date ||
+        new Date().toLocaleDateString('ar-EG', {
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
 
       // Check daily risk limit & daily trade count
       const todayStats = storage.getTodayStats();
@@ -794,18 +807,58 @@ async function startServer() {
         });
       }
 
-      const updatedLedger = storage.saveTrade({
+      const isClosed = trade.result === 'WIN' || trade.result === 'LOSS';
+      const pl = typeof trade.pl === 'number' ? trade.pl : 0;
+
+      const formattedTrade = {
         ...trade,
-        isoTime: trade.isoTime || new Date().toISOString(),
-      });
+        id,
+        tradeNumber,
+        date,
+        isoTime,
+        asset: trade.asset || 'XAU/USD',
+        source: trade.source || 'MANUAL',
+        isActive: trade.isActive !== undefined ? trade.isActive : !isClosed,
+        pl,
+        realizedPnl: isClosed ? pl : undefined,
+        closedAt: isClosed ? (trade.closedAt || Date.now()) : undefined,
+      };
+
+      const updatedLedger = await storage.saveTradeAsync(formattedTrade);
+
+      // If closed immediately with P&L, update balance and record outcome
+      if (isClosed && pl !== 0) {
+        await storage.updateBalanceFromManualTrade(pl);
+        const outcomeRecord: any = {
+          signalId: formattedTrade.signalId || formattedTrade.id,
+          tradeId: formattedTrade.id,
+          direction: formattedTrade.direction,
+          orderType: 'MARKET',
+          entry: formattedTrade.entry,
+          stopLoss: formattedTrade.sl,
+          tp1: formattedTrade.tp1,
+          tp2: formattedTrade.tp2,
+          outcome: formattedTrade.result,
+          realizedPnl: pl,
+          pl,
+          exitPrice: formattedTrade.exitPrice || (formattedTrade.result === 'WIN' ? formattedTrade.tp1 : formattedTrade.sl),
+          source: formattedTrade.source || 'MANUAL',
+          closedAt: formattedTrade.closedAt || Date.now(),
+          closeReason: formattedTrade.closeReason || 'MANUAL_ENTRY',
+          timestamp: Date.now(),
+          isoTime: new Date().toISOString(),
+        };
+        await storage.recordTradeOutcomeAsync(outcomeRecord);
+      }
+
       const dailyStats = storage.getTodayStats();
-      res.json({ success: true, trades: updatedLedger, dailyStats });
+      res.json({ success: true, trade: formattedTrade, trades: updatedLedger, dailyStats });
     } catch (error: any) {
       res.status(500).json({ success: false, error: error.message });
     }
   });
 
-  app.put('/api/trades/:id', (req, res) => {
+  app.put('/api/trades/:id', async (req, res) => {
     try {
       const { id } = req.params;
       const patch = req.body;
@@ -815,8 +868,50 @@ async function startServer() {
         return res.status(404).json({ success: false, error: 'Trade not found' });
       }
 
-      const updatedItem = { ...existing, ...patch };
-      const updatedLedger = storage.saveTrade(updatedItem);
+      const wasOpen = existing.result === 'OPEN';
+      const prevPl = typeof existing.pl === 'number' ? existing.pl : 0;
+      const isNowClosed = patch.result === 'WIN' || patch.result === 'LOSS';
+      const newPl = typeof patch.pl === 'number' ? patch.pl : prevPl;
+
+      const updatedItem = {
+        ...existing,
+        ...patch,
+        isActive: patch.isActive !== undefined ? patch.isActive : (isNowClosed ? false : existing.isActive),
+        closedAt: isNowClosed ? (patch.closedAt || existing.closedAt || Date.now()) : existing.closedAt,
+        realizedPnl: isNowClosed ? newPl : existing.realizedPnl,
+        pl: isNowClosed ? newPl : (patch.pl !== undefined ? patch.pl : existing.pl),
+      };
+
+      const updatedLedger = await storage.saveTradeAsync(updatedItem);
+
+      // If closed or P&L updated, adjust balance and record outcome
+      if (isNowClosed) {
+        const delta = wasOpen ? newPl : (newPl - prevPl);
+        if (delta !== 0) {
+          await storage.updateBalanceFromManualTrade(delta);
+        }
+        const outcomeRecord: any = {
+          signalId: updatedItem.signalId || updatedItem.id,
+          tradeId: updatedItem.id,
+          direction: updatedItem.direction,
+          orderType: 'MARKET',
+          entry: updatedItem.entry,
+          stopLoss: updatedItem.sl,
+          tp1: updatedItem.tp1,
+          tp2: updatedItem.tp2,
+          outcome: updatedItem.result,
+          realizedPnl: newPl,
+          pl: newPl,
+          exitPrice: updatedItem.exitPrice || (updatedItem.result === 'WIN' ? updatedItem.tp1 : updatedItem.sl),
+          source: updatedItem.source || 'MANUAL',
+          closedAt: updatedItem.closedAt || Date.now(),
+          closeReason: updatedItem.closeReason || 'MANUAL_UPDATE',
+          timestamp: Date.now(),
+          isoTime: new Date().toISOString(),
+        };
+        await storage.recordTradeOutcomeAsync(outcomeRecord);
+      }
+
       const dailyStats = storage.getTodayStats();
       res.json({ success: true, trade: updatedItem, trades: updatedLedger, dailyStats });
     } catch (error: any) {

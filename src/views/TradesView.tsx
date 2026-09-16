@@ -23,6 +23,7 @@ interface TradesViewProps {
   currentPrice: number;
   accountMode?: AccountExecutionMode;
   mt5Account?: MT5AccountInfo;
+  onAddTrade?: (trade: Partial<TradeLedgerItem>) => Promise<boolean> | void;
   onUpdateTrade: (trade: TradeLedgerItem) => void;
   onDeleteTrade: (id: string) => void;
 }
@@ -33,10 +34,31 @@ export const TradesView: React.FC<TradesViewProps> = ({
   currentPrice,
   accountMode = 'DEMO',
   mt5Account,
+  onAddTrade,
   onUpdateTrade,
   onDeleteTrade,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'OPEN' | 'CLOSED'>('OPEN');
+
+  // Manual trade entry dialog state
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [manualDirection, setManualDirection] = useState<'BUY' | 'SELL'>('BUY');
+  const [manualEntry, setManualEntry] = useState<string>('');
+  const [manualSl, setManualSl] = useState<string>('');
+  const [manualTp1, setManualTp1] = useState<string>('');
+  const [manualTp2, setManualTp2] = useState<string>('');
+  const [manualLot, setManualLot] = useState<string>('0.01');
+  const [manualRiskPercent, setManualRiskPercent] = useState<string>('15');
+  const [manualStatus, setManualStatus] = useState<'OPEN' | 'WIN' | 'LOSS'>('OPEN');
+  const [manualPnl, setManualPnl] = useState<string>('');
+  const [isSubmittingManual, setIsSubmittingManual] = useState(false);
+
+  // Close trade confirmation with authoritative USD P&L dialog state
+  const [closingTrade, setClosingTrade] = useState<{
+    trade: TradeLedgerItem;
+    outcome: 'WIN' | 'LOSS';
+    pnlInput: string;
+  } | null>(null);
 
   const openTrades = ledger.filter((t) => {
     if (t.result !== 'OPEN') return false;
@@ -77,21 +99,108 @@ export const TradesView: React.FC<TradesViewProps> = ({
   const todayPl = todayTrades.reduce((acc, t) => acc + (t.pl || 0), 0);
   const todayRiskUsed = todayTrades.reduce((acc, t) => acc + (t.riskPercent || 0), 0);
 
-  // Close open trade
-  const handleCloseTrade = (trade: TradeLedgerItem, outcome: 'WIN' | 'LOSS') => {
-    // Win returns TP1 RR * riskAmount, Loss returns -riskAmount
+  // Initiate close open trade (opens dialog for authoritative USD P&L)
+  const handleInitiateCloseTrade = (trade: TradeLedgerItem, outcome: 'WIN' | 'LOSS') => {
     const parts = (trade.rr || '1:1.5').split(':');
     const rrMultiplier = parts.length === 2 ? parseFloat(parts[1]) || 1.5 : 1.5;
-    const pl = outcome === 'WIN' ? Number((trade.riskAmount * rrMultiplier).toFixed(2)) : -trade.riskAmount;
+    const estVal = outcome === 'WIN' ? (trade.riskAmount * rrMultiplier) : trade.riskAmount;
+    setClosingTrade({
+      trade,
+      outcome,
+      pnlInput: estVal.toFixed(2),
+    });
+  };
+
+  // Confirm close with authoritative P&L
+  const handleConfirmCloseTrade = () => {
+    if (!closingTrade) return;
+    const parsed = parseFloat(closingTrade.pnlInput);
+    const validAmount = isNaN(parsed) ? (closingTrade.outcome === 'WIN' ? 2.25 : 1.5) : Math.abs(parsed);
+    const finalPl = closingTrade.outcome === 'WIN' ? validAmount : -validAmount;
+
     const updated: TradeLedgerItem = {
-      ...trade,
-      result: outcome,
-      pl,
+      ...closingTrade.trade,
+      result: closingTrade.outcome,
+      pl: finalPl,
+      realizedPnl: finalPl,
       exitPrice: currentPrice,
       exitTime: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
-      balanceAfterTrade: Number((effectiveBal + pl).toFixed(2)),
+      balanceAfterTrade: Number((effectiveBal + finalPl).toFixed(2)),
+      isActive: false,
     };
     onUpdateTrade(updated);
+    setClosingTrade(null);
+  };
+
+  // Submit manual trade
+  const handleCreateManualTrade = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isSubmittingManual) return;
+    setIsSubmittingManual(true);
+
+    try {
+      const entry = parseFloat(manualEntry) || (currentPrice > 0 ? currentPrice : 2750);
+      const sl = parseFloat(manualSl) || (manualDirection === 'BUY' ? entry - 1.5 : entry + 1.5);
+      const tp1 = parseFloat(manualTp1) || (manualDirection === 'BUY' ? entry + 2.5 : entry - 2.5);
+      const tp2 = manualTp2 ? parseFloat(manualTp2) : undefined;
+      const lot = parseFloat(manualLot) || 0.01;
+      const riskPct = parseFloat(manualRiskPercent) || 15;
+      const riskAmt = Number(((effectiveBal * riskPct) / 100).toFixed(2));
+      const slPoints = Math.round(Math.abs(entry - sl) / 0.1);
+      const tp1Points = Math.round(Math.abs(tp1 - entry) / 0.1);
+      const tp2Points = tp2 ? Math.round(Math.abs(tp2 - entry) / 0.1) : undefined;
+
+      let pl = 0;
+      if (manualStatus !== 'OPEN') {
+        const userPnl = parseFloat(manualPnl);
+        if (!isNaN(userPnl)) {
+          pl = manualStatus === 'WIN' ? Math.abs(userPnl) : -Math.abs(userPnl);
+        } else {
+          pl = manualStatus === 'WIN' ? riskAmt * 1.5 : -riskAmt;
+        }
+      }
+
+      const newTradeItem: Partial<TradeLedgerItem> = {
+        id: `manual_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        asset: 'XAU/USD',
+        direction: manualDirection as any,
+        entry,
+        sl,
+        slPoints,
+        tp1,
+        tp1Points,
+        tp2,
+        tp2Points,
+        lotSize: lot,
+        riskPercent: riskPct,
+        riskAmount: riskAmt,
+        result: manualStatus,
+        pl,
+        realizedPnl: manualStatus !== 'OPEN' ? pl : undefined,
+        isActive: manualStatus === 'OPEN',
+        source: 'MANUAL',
+        setup: 'Manual Trade Entry',
+        notes: 'صفقة يدوية مسجلة',
+        date: new Date().toLocaleDateString('ar-EG', {
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+        isoTime: new Date().toISOString(),
+      };
+
+      if (onAddTrade) {
+        await onAddTrade(newTradeItem);
+      }
+      setShowAddModal(false);
+      setManualPnl('');
+      setManualSl('');
+      setManualTp1('');
+      setManualTp2('');
+    } finally {
+      setIsSubmittingManual(false);
+    }
   };
 
   return (
@@ -223,33 +332,46 @@ export const TradesView: React.FC<TradesViewProps> = ({
       {/* ================================================== */}
       {/* 3. SUB-TABS: OPEN TRADES vs CLOSED TRADES          */}
       {/* ================================================== */}
-      <div className="flex items-center gap-2 border-b border-stone-800 pb-2">
-        <button
-          onClick={() => setActiveSubTab('OPEN')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeSubTab === 'OPEN'
-              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
-              : 'text-stone-400 hover:text-stone-200'
-          }`}
-        >
-          <span>الصفقات المفتوحة (Open Trades)</span>
-          <span className="px-1.5 py-0.2 rounded-full bg-stone-800 text-stone-300 font-mono text-[10px]">
-            {openTrades.length}
-          </span>
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-800 pb-2">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setActiveSubTab('OPEN')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              activeSubTab === 'OPEN'
+                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                : 'text-stone-400 hover:text-stone-200'
+            }`}
+          >
+            <span>الصفقات المفتوحة (Open Trades)</span>
+            <span className="px-1.5 py-0.2 rounded-full bg-stone-800 text-stone-300 font-mono text-[10px]">
+              {openTrades.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab('CLOSED')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              activeSubTab === 'CLOSED'
+                ? 'bg-stone-800 text-stone-200 border border-stone-700'
+                : 'text-stone-400 hover:text-stone-200'
+            }`}
+          >
+            <span>الصفقات المغلقة (Closed Trades)</span>
+            <span className="px-1.5 py-0.2 rounded-full bg-stone-800 text-stone-300 font-mono text-[10px]">
+              {closedTrades.length}
+            </span>
+          </button>
+        </div>
 
         <button
-          onClick={() => setActiveSubTab('CLOSED')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeSubTab === 'CLOSED'
-              ? 'bg-stone-800 text-stone-200 border border-stone-700'
-              : 'text-stone-400 hover:text-stone-200'
-          }`}
+          onClick={() => {
+            setManualEntry(currentPrice > 0 ? currentPrice.toFixed(2) : '2750.00');
+            setShowAddModal(true);
+          }}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold font-mono transition-all"
         >
-          <span>الصفقات المغلقة (Closed Trades)</span>
-          <span className="px-1.5 py-0.2 rounded-full bg-stone-800 text-stone-300 font-mono text-[10px]">
-            {closedTrades.length}
-          </span>
+          <PlusCircle className="w-3.5 h-3.5" />
+          <span>تسجيل صفقة يدوية (Add Manual Trade)</span>
         </button>
       </div>
 
@@ -361,13 +483,13 @@ export const TradesView: React.FC<TradesViewProps> = ({
 
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => handleCloseTrade(t, 'WIN')}
+                        onClick={() => handleInitiateCloseTrade(t, 'WIN')}
                         className="px-3 py-1 rounded-lg bg-emerald-950 hover:bg-emerald-900 border border-emerald-800 text-emerald-300 text-xs font-bold transition-all"
                       >
                         إغلاق بربح (Target Hit)
                       </button>
                       <button
-                        onClick={() => handleCloseTrade(t, 'LOSS')}
+                        onClick={() => handleInitiateCloseTrade(t, 'LOSS')}
                         className="px-3 py-1 rounded-lg bg-rose-950 hover:bg-rose-900 border border-rose-800 text-rose-300 text-xs font-bold transition-all"
                       >
                         إغلاق بوقف (Stop Hit)
@@ -471,6 +593,301 @@ export const TradesView: React.FC<TradesViewProps> = ({
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ================================================== */}
+      {/* 6. MODAL: CLOSE TRADE WITH AUTHORITATIVE P&L       */}
+      {/* ================================================== */}
+      {closingTrade && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-stone-800 pb-3">
+              <div className="flex items-center gap-2">
+                <span className={`w-3 h-3 rounded-full ${closingTrade.outcome === 'WIN' ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+                <h3 className="text-sm font-bold text-stone-100">
+                  {closingTrade.outcome === 'WIN' ? 'توثيق صفقة رابحة (WIN)' : 'توثيق صفقة خاسرة (LOSS)'}
+                </h3>
+              </div>
+              <button
+                onClick={() => setClosingTrade(null)}
+                className="text-stone-400 hover:text-stone-100 text-sm font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 font-mono text-xs">
+              <div className="bg-stone-950 p-3 rounded-xl border border-stone-800 space-y-1.5">
+                <div className="flex justify-between">
+                  <span className="text-stone-400">الأصل والاتجاه:</span>
+                  <span className="font-bold text-stone-200">{closingTrade.trade.asset} ({closingTrade.trade.direction})</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-stone-400">سعر الدخول:</span>
+                  <span className="text-stone-200">${Number(closingTrade.trade.entry).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-stone-400">حجم العقد:</span>
+                  <span className="text-stone-200">{(closingTrade.trade.lotSize || 0.01).toFixed(2)} Lot</span>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-stone-200">
+                  {closingTrade.outcome === 'WIN' ? 'قيمة الربح الفعلي المحقق بالدولار (USD):' : 'قيمة الخسارة الفعلية بالدولار (USD):'}
+                </label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-3 flex items-center text-stone-400 font-bold">$</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={closingTrade.pnlInput}
+                    onChange={(e) => setClosingTrade({ ...closingTrade, pnlInput: e.target.value })}
+                    className="w-full bg-stone-950 border border-stone-700 rounded-xl py-2 pl-8 pr-3 text-stone-100 font-bold text-sm focus:outline-none focus:border-amber-500"
+                    placeholder="0.00"
+                    autoFocus
+                  />
+                </div>
+                <p className="text-[10px] text-stone-400">
+                  سيتم اعتماد هذا المبلغ المحدد بدقة في سجل التداول وتحديث رصيد المحفظة به مباشرة.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-800">
+              <button
+                type="button"
+                onClick={() => setClosingTrade(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-stone-400 hover:text-stone-200 bg-stone-800"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCloseTrade}
+                className={`px-4 py-2 rounded-xl text-xs font-bold text-white transition-all ${
+                  closingTrade.outcome === 'WIN'
+                    ? 'bg-emerald-600 hover:bg-emerald-500'
+                    : 'bg-rose-600 hover:bg-rose-500'
+                }`}
+              >
+                تأكيد الإغلاق والتوثيق
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================== */}
+      {/* 7. MODAL: ADD MANUAL TRADE                         */}
+      {/* ================================================== */}
+      {showAddModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <form
+            onSubmit={handleCreateManualTrade}
+            className="bg-stone-900 border border-stone-800 rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-2xl animate-in zoom-in-95 duration-150"
+          >
+            <div className="flex items-center justify-between border-b border-stone-800 pb-3">
+              <div className="flex items-center gap-2">
+                <PlusCircle className="w-4 h-4 text-amber-400" />
+                <h3 className="text-sm font-bold text-stone-100">تسجيل صفقة يدوية جديدة (Manual Trade)</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddModal(false)}
+                className="text-stone-400 hover:text-stone-100 text-sm font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 font-mono text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] uppercase text-stone-400 mb-1">الاتجاه (Direction)</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setManualDirection('BUY')}
+                      className={`py-2 rounded-xl font-bold text-xs transition-all ${
+                        manualDirection === 'BUY'
+                          ? 'bg-emerald-600 text-white border border-emerald-500'
+                          : 'bg-stone-950 text-stone-400 border border-stone-800'
+                      }`}
+                    >
+                      BUY NOW
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setManualDirection('SELL')}
+                      className={`py-2 rounded-xl font-bold text-xs transition-all ${
+                        manualDirection === 'SELL'
+                          ? 'bg-rose-600 text-white border border-rose-500'
+                          : 'bg-stone-950 text-stone-400 border border-stone-800'
+                      }`}
+                    >
+                      SELL NOW
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase text-stone-400 mb-1">سعر الدخول (Entry)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    value={manualEntry}
+                    onChange={(e) => setManualEntry(e.target.value)}
+                    placeholder={currentPrice > 0 ? currentPrice.toFixed(2) : '2750.00'}
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl p-2 text-stone-100 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-[10px] uppercase text-stone-400 mb-1">وقف الخسارة (SL)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={manualSl}
+                    onChange={(e) => setManualSl(e.target.value)}
+                    placeholder="اختياري"
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl p-2 text-stone-100 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase text-stone-400 mb-1">الهدف الأول (TP1)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={manualTp1}
+                    onChange={(e) => setManualTp1(e.target.value)}
+                    placeholder="اختياري"
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl p-2 text-stone-100 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase text-stone-400 mb-1">الهدف الثاني (TP2)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={manualTp2}
+                    onChange={(e) => setManualTp2(e.target.value)}
+                    placeholder="اختياري"
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl p-2 text-stone-100 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] uppercase text-stone-400 mb-1">حجم العقد (Lot)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    value={manualLot}
+                    onChange={(e) => setManualLot(e.target.value)}
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl p-2 text-stone-100 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase text-stone-400 mb-1">نسبة المخاطرة (%)</label>
+                  <input
+                    type="number"
+                    step="1"
+                    min="1"
+                    max="30"
+                    value={manualRiskPercent}
+                    onChange={(e) => setManualRiskPercent(e.target.value)}
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl p-2 text-stone-100 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase text-stone-400 mb-1">حالة الصفقة (Status)</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setManualStatus('OPEN')}
+                    className={`py-2 rounded-xl font-bold text-xs transition-all ${
+                      manualStatus === 'OPEN'
+                        ? 'bg-cyan-600 text-white border border-cyan-500'
+                        : 'bg-stone-950 text-stone-400 border border-stone-800'
+                    }`}
+                  >
+                    مفتوحة (OPEN)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setManualStatus('WIN')}
+                    className={`py-2 rounded-xl font-bold text-xs transition-all ${
+                      manualStatus === 'WIN'
+                        ? 'bg-emerald-600 text-white border border-emerald-500'
+                        : 'bg-stone-950 text-stone-400 border border-stone-800'
+                    }`}
+                  >
+                    رابحة (WIN)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setManualStatus('LOSS')}
+                    className={`py-2 rounded-xl font-bold text-xs transition-all ${
+                      manualStatus === 'LOSS'
+                        ? 'bg-rose-600 text-white border border-rose-500'
+                        : 'bg-stone-950 text-stone-400 border border-stone-800'
+                    }`}
+                  >
+                    خاسرة (LOSS)
+                  </button>
+                </div>
+              </div>
+
+              {manualStatus !== 'OPEN' && (
+                <div className="p-3 bg-stone-950 rounded-xl border border-stone-800 space-y-1">
+                  <label className="block text-xs font-bold text-stone-200">
+                    {manualStatus === 'WIN' ? 'الربح المحقق بالدولار (USD):' : 'الخسارة المحققة بالدولار (USD):'}
+                  </label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-3 flex items-center text-stone-400 font-bold">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={manualPnl}
+                      onChange={(e) => setManualPnl(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full bg-stone-900 border border-stone-700 rounded-xl py-2 pl-8 pr-3 text-stone-100 font-bold text-sm focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <p className="text-[10px] text-stone-400">
+                    سيتم حفظ هذه الصفقة مباشرة إلى قاعدة بيانات Firestore وتحديث رصيد الحساب بالربح أو الخسارة المحددة.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-800">
+              <button
+                type="button"
+                onClick={() => setShowAddModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-stone-400 hover:text-stone-200 bg-stone-800"
+              >
+                إلغاء
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmittingManual}
+                className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 transition-all disabled:opacity-50"
+              >
+                {isSubmittingManual ? 'جاري الحفظ...' : 'حفظ الصفقة في السجل'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>

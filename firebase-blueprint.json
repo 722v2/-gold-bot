@@ -80,6 +80,16 @@
         "currentPrice": { "type": "number" },
         "signal": { "type": "string" }
       }
+    },
+    "TelegramConfig": {
+      "title": "TelegramConfig",
+      "description": "Persistent Telegram bot private chat registration",
+      "type": "object",
+      "properties": {
+        "chatId": { "type": "string" },
+        "registeredAt": { "type": "string" },
+        "updatedAt": { "type": "number" }
+      }
     }
   },
   "firestore": {
@@ -106,6 +116,10 @@
     "/scans/{scanId}": {
       "schema": "ScanItem",
       "description": "Scanner tick execution history"
+    },
+    "/telegram_config/{configId}": {
+      "schema": "TelegramConfig",
+      "description": "Persistent Telegram bot private chat ID configuration"
     }
   }
 }

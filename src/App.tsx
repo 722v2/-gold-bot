@@ -387,6 +387,32 @@ export default function App() {
     }
   };
 
+  // Add Trade to Ledger (Manual Trade)
+  const handleAddTrade = async (newTrade: Partial<TradeLedgerItem>) => {
+    try {
+      const res = await fetch('/api/trades', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newTrade),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (Array.isArray(data.trades)) {
+          setLedger(data.trades);
+        }
+        await fetchDashboardAndTrades();
+        return true;
+      } else {
+        alert(`فشل تسجيل الصفقة: ${data.error || 'خطأ غير معروف'}`);
+        return false;
+      }
+    } catch (err: any) {
+      console.error('Failed to save manual trade to server:', err);
+      alert(`خطأ في حفظ الصفقة: ${err.message}`);
+      return false;
+    }
+  };
+
   // Update Trade in Ledger (e.g. Closed)
   const handleUpdateTrade = async (updatedItem: TradeLedgerItem) => {
     try {
@@ -656,6 +682,7 @@ export default function App() {
               currentPrice={currentPrice}
               accountMode={appSettings.accountMode || 'DEMO'}
               mt5Account={mt5Account}
+              onAddTrade={handleAddTrade}
               onUpdateTrade={handleUpdateTrade}
               onDeleteTrade={handleDeleteTrade}
             />

@@ -762,3 +762,25 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
     positionSizing,
   };
 }
+
+/**
+ * Calculates the XAU/USD spread cost based on lot size.
+ *
+ * For 0.01 lot, uses a spread cost of exactly $0.30 per trade.
+ * Scales proportionally with lot size:
+ * - 0.01 lot = $0.30
+ * - 0.02 lot = $0.60
+ * - 0.10 lot = $3.00
+ * - 1.00 lot = $30.00
+ *
+ * @param lotSize - Lot size (standard lots, e.g., 0.01, 0.02, 0.10, 1.00)
+ * @param asset - Asset symbol (defaults to 'XAU/USD')
+ * @returns Spread cost in USD
+ */
+export function calculateSpreadCost(lotSize: number = 0.01, asset: string = 'XAU/USD'): number {
+  const normalizedLot = typeof lotSize === 'number' && !isNaN(lotSize) && lotSize > 0 ? lotSize : 0.01;
+  return Number(((normalizedLot / 0.01) * 0.30).toFixed(2));
+}
+
+export const calculateXauusdSpreadCost = calculateSpreadCost;
+export const getSpreadCost = calculateSpreadCost;
