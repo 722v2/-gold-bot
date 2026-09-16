@@ -2,6 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import { storage } from './storage.js';
 
+const GLOBAL_TELEGRAM_SERVICE_KEY = Symbol.for('__GOLD_AI_TELEGRAM_SERVICE__');
+const GLOBAL_TELEGRAM_POLLING_RUNNING = Symbol.for('__GOLD_AI_TELEGRAM_POLLING_RUNNING__');
+
 export interface TelegramStatus {
   registered: boolean;
   chatId: string | null;
@@ -24,9 +27,9 @@ export class TelegramService {
   private configPath = path.join(process.cwd(), 'data', 'telegram_private_chat.json');
   private messageMappingPath = path.join(process.cwd(), 'data', 'telegram_signal_messages.json');
   private pendingPnlPath = path.join(process.cwd(), 'data', 'telegram_pending_pnl.json');
-  private pollingInterval: NodeJS.Timeout | null = null;
-  private isPolling = false;
+  private isRunning = false;
   private isInitializing = false;
+  private abortController: AbortController | null = null;
   private lastUpdateId = 0;
   private signalMessageIds: Record<string, number> = {};
   private pendingPnlRequests: Map<string, PendingPnlRequest> = new Map();
@@ -183,6 +186,19 @@ export class TelegramService {
   }
 
   /**
+   * Stop polling loop and cancel in-flight requests cleanly
+   */
+  public stop(): void {
+    this.isRunning = false;
+    (globalThis as any)[GLOBAL_TELEGRAM_POLLING_RUNNING] = false;
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
+    console.log('[Telegram] Polling loop stopped cleanly.');
+  }
+
+  /**
    * Initialize long-polling to detect /start command from the user
    */
   public async init(): Promise<void> {
@@ -191,37 +207,39 @@ export class TelegramService {
       return;
     }
 
-    if (this.pollingInterval || this.isInitializing) {
-      console.log('[Telegram] Polling is already running or initializing. Skipping duplicate init call.');
+    if (this.isRunning || this.isInitializing || (globalThis as any)[GLOBAL_TELEGRAM_POLLING_RUNNING]) {
+      console.log('[Telegram] Polling is already active or initializing. Skipping duplicate init call.');
       return;
     }
 
     this.isInitializing = true;
+    (globalThis as any)[GLOBAL_TELEGRAM_POLLING_RUNNING] = true;
 
     try {
       // Check and clear any conflicting webhook configuration on Telegram's servers
       await this.ensureWebhookRemoved();
 
-      // Ensure persistent Firestore chat ID is loaded and applied immediately on startup
+      // Ensure persistent storage chat ID is loaded and applied immediately on startup
       try {
         await storage.waitUntilReady();
         const persistedChatId = storage.getTelegramChatId();
         if (persistedChatId) {
           this.privateChatId = persistedChatId;
-          console.log(`[Telegram] Active private chat ID verified from persistent Firestore storage: ${this.privateChatId}`);
+          console.log(`[Telegram] Active private chat ID verified from persistent storage: ${this.privateChatId}`);
         }
       } catch (storageErr) {
         console.warn('[Telegram] Warning waiting for storage during init:', storageErr);
       }
 
       console.log('[Telegram] Brand-new Telegram integration initialized. Starting private chat detection polling...');
-      
-      // Start polling interval
-      this.pollingInterval = setInterval(() => {
-        this.pollUpdates();
-      }, 4000);
+      this.isRunning = true;
+      this.runPollingLoop().catch((err) => {
+        console.error('[Telegram] Unexpected error in polling loop:', err);
+      });
     } catch (err: any) {
       console.error('[Telegram] Error during polling initialization:', err?.message || err);
+      (globalThis as any)[GLOBAL_TELEGRAM_POLLING_RUNNING] = false;
+      this.isRunning = false;
     } finally {
       this.isInitializing = false;
     }
@@ -237,12 +255,12 @@ export class TelegramService {
       const infoUrl = `https://api.telegram.org/bot${this.botToken}/getWebhookInfo`;
       const res = await fetch(infoUrl);
       if (res.ok) {
-        const data = await res.json() as any;
+        const data = (await res.json()) as any;
         if (data?.ok && data?.result?.url) {
           console.log(`[Telegram] Webhook currently configured: "${data.result.url}". Removing webhook to prevent 409 conflict...`);
           const deleteUrl = `https://api.telegram.org/bot${this.botToken}/deleteWebhook?drop_pending_updates=false`;
           const deleteRes = await fetch(deleteUrl);
-          const deleteData = await deleteRes.json() as any;
+          const deleteData = (await deleteRes.json()) as any;
           if (deleteData?.ok) {
             console.log('[Telegram] Webhook removed successfully. getUpdates polling can proceed.');
           } else {
@@ -261,37 +279,54 @@ export class TelegramService {
   }
 
   /**
-   * Poll for updates from the Telegram API
+   * Non-overlapping sequential polling loop with 409 Conflict handling and graceful backoff
    */
-  private async pollUpdates(): Promise<void> {
-    if (!this.botToken) return;
+  private async runPollingLoop(): Promise<void> {
+    while (this.isRunning) {
+      try {
+        this.abortController = new AbortController();
+        const signal = this.abortController.signal;
 
-    // Guard: Prevent overlapping in-flight polling calls that trigger HTTP 409 conflict
-    if (this.isPolling) {
-      return;
-    }
+        const url = `https://api.telegram.org/bot${this.botToken}/getUpdates?offset=${this.lastUpdateId + 1}&limit=10&timeout=2`;
+        const res = await fetch(url, { signal });
 
-    this.isPolling = true;
-
-    try {
-      const url = `https://api.telegram.org/bot${this.botToken}/getUpdates?offset=${this.lastUpdateId + 1}&limit=10&timeout=2`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        throw new Error(`HTTP error ${res.status}`);
-      }
-
-      const body = await res.json() as any;
-      if (body && body.ok && Array.isArray(body.result)) {
-        for (const update of body.result) {
-          this.lastUpdateId = Math.max(this.lastUpdateId, update.update_id);
-          await this.processUpdate(update);
+        if (res.status === 409) {
+          // Telegram 409 Conflict: Another getUpdates request terminated this one.
+          // This typically happens during Render zero-downtime deploy handover or when previous instance is draining.
+          console.warn('[Telegram] 409 Conflict from getUpdates (another instance or deploy handover in progress). Waiting 5s before retrying...');
+          await new Promise((r) => setTimeout(r, 5000));
+          continue;
         }
+
+        if (!res.ok) {
+          console.warn(`[Telegram Polling Warning] HTTP error ${res.status}. Backing off 3s...`);
+          await new Promise((r) => setTimeout(r, 3000));
+          continue;
+        }
+
+        const body = (await res.json()) as any;
+        if (body && body.ok && Array.isArray(body.result)) {
+          for (const update of body.result) {
+            this.lastUpdateId = Math.max(this.lastUpdateId, update.update_id);
+            await this.processUpdate(update);
+          }
+        }
+
+        // Sequential rest interval between polling cycles
+        if (this.isRunning) {
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      } catch (err: any) {
+        if (err?.name === 'AbortError' || !this.isRunning) {
+          break;
+        }
+        console.debug(`[Telegram Polling Warning] ${err?.message || err}`);
+        if (this.isRunning) {
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+      } finally {
+        this.abortController = null;
       }
-    } catch (err: any) {
-      // Quietly log error to prevent console spamming on network blips
-      console.debug(`[Telegram Polling Warning] ${err?.message || err}`);
-    } finally {
-      this.isPolling = false;
     }
   }
 
@@ -999,4 +1034,18 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
   }
 }
 
-export const telegramService = new TelegramService();
+// Ensure process-wide singleton across bundled chunks and re-evaluations
+const existingInstance = (globalThis as any)[GLOBAL_TELEGRAM_SERVICE_KEY] as TelegramService | undefined;
+export const telegramService: TelegramService = existingInstance || new TelegramService();
+(globalThis as any)[GLOBAL_TELEGRAM_SERVICE_KEY] = telegramService;
+
+// Graceful cleanup on process exit
+if (typeof process !== 'undefined' && process.on) {
+  process.once('SIGTERM', () => {
+    telegramService.stop();
+  });
+  process.once('SIGINT', () => {
+    telegramService.stop();
+  });
+}
+
