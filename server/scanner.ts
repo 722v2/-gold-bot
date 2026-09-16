@@ -534,6 +534,50 @@ class LiveMarketScanner {
 
       const scanId = `scan_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
+      // Resolve dynamic rejection / descriptive reason for this scan record
+      let dynamicRejectionReason = signal.noTradeReason;
+      if (signal.signal !== 'NO TRADE' && signal.confidence < this.config.minConfidence) {
+        dynamicRejectionReason = `نسبة الثقة في الإشارة (${signal.confidence}%) أقل من الحد الأدنى المطلوب (${this.config.minConfidence}%).`;
+      } else if (isOpposingActiveTrade) {
+        dynamicRejectionReason = `صفقة ${activeTradeDirection} جارية حالياً | تم حظر إشارة ${signal.signal} المعارضة لمنع التضارب`;
+      } else if (isSameSetupActive) {
+        dynamicRejectionReason = `الصفقة لا تزال جارية (${structuralIdentity.status})`;
+      } else if (!dynamicRejectionReason && signal.mainReasons && signal.mainReasons.length > 0) {
+        dynamicRejectionReason = signal.mainReasons[0];
+      } else if (!dynamicRejectionReason && signal.signal === 'NO TRADE') {
+        dynamicRejectionReason = 'لا توجد فرصة تداول حالياً: عدم اكتمال شروط الهيكل والسيولة وإدارة المخاطر.';
+      }
+
+      // Save scan record exactly once for this completed scan
+      storage.saveScan({
+        id: scanId,
+        timestamp: Date.now(),
+        isoTime: new Date().toISOString(),
+        currentPrice,
+        signal: signal.signal,
+        entry: signal.entry,
+        stopLoss: signal.stopLoss,
+        slPoints: signal.slPoints,
+        tp1: signal.tp1,
+        tp1Points: signal.tp1Points || 0,
+        tp1Rr: signal.tp1RrString || (signal.tp1Rr ? `1:${signal.tp1Rr.toFixed(2)}` : '1:1.50'),
+        tp2: signal.tp2,
+        tp2Points: signal.tp2Points || 0,
+        tp2Rr: signal.tp2RrString || (signal.tp2Rr ? `1:${signal.tp2Rr.toFixed(2)}` : '1:3.00'),
+        rr: signal.rr,
+        confidence: signal.confidence,
+        riskPercent: signal.riskPercent,
+        riskAmount: signal.riskAmount,
+        lotSize: signal.standardLot ?? signal.recommendedLotSize,
+        setup: signal.setup,
+        reasons: signal.mainReasons,
+        status: scanResultStatus,
+        invalidation: signal.invalidation,
+        duplicateReason: isSameSetupActive ? structuralIdentity.status : undefined,
+        duplicateDetails: isSameSetupActive ? structuralIdentity.details : undefined,
+        noTradeReason: dynamicRejectionReason,
+      });
+
       // Active Trade Opposition Guard: Block emission of opposing signals
       if (isOpposingActiveTrade) {
         console.log(`[LiveMarketScanner] Active Trade Opposition Guard: Blocked ${signal.signal} because active ${activeTradeDirection} is in-flight.`);
@@ -946,36 +990,6 @@ class LiveMarketScanner {
         // Persist signal
         storage.saveSignal(signal);
 
-        // Update the scan record
-        storage.saveScan({
-          id: scanId,
-          timestamp: Date.now(),
-          isoTime: new Date().toISOString(),
-          currentPrice,
-          signal: signal.signal,
-          entry: signal.entry,
-          stopLoss: signal.stopLoss,
-          slPoints: signal.slPoints,
-          tp1: signal.tp1,
-          tp1Points: signal.tp1Points || 0,
-          tp1Rr: signal.tp1RrString || (signal.tp1Rr ? `1:${signal.tp1Rr.toFixed(2)}` : '1:1.50'),
-          tp2: signal.tp2,
-          tp2Points: signal.tp2Points || 0,
-          tp2Rr: signal.tp2RrString || (signal.tp2Rr ? `1:${signal.tp2Rr.toFixed(2)}` : '1:3.00'),
-          rr: signal.rr,
-          confidence: signal.confidence,
-          riskPercent: signal.riskPercent,
-          riskAmount: signal.riskAmount,
-          lotSize: signal.standardLot ?? signal.recommendedLotSize,
-          setup: signal.setup,
-          reasons: signal.mainReasons,
-          status: scanResultStatus,
-          invalidation: signal.invalidation,
-          duplicateReason: isSameSetupActive ? structuralIdentity.status : undefined,
-          duplicateDetails: isSameSetupActive ? structuralIdentity.details : undefined,
-          noTradeReason: signal.noTradeReason,
-        });
-
         console.log('[SCANNER] scan completed');
         return signal;
       } else {
@@ -996,45 +1010,7 @@ class LiveMarketScanner {
         this.config.lastSignal = signal;
         this.config.lastScanStatus = `آخر فحص: ${new Date().toLocaleTimeString()} - القرار: NO TRADE (حماية رأس المال - عدم اكتمال الشروط الصارمة)`;
 
-        // Resolve dynamic rejection reason based on actual scan analysis
-        let dynamicRejectionReason = signal.noTradeReason;
-        if (signal.signal !== 'NO TRADE' && signal.confidence < this.config.minConfidence) {
-          dynamicRejectionReason = `نسبة الثقة في الإشارة (${signal.confidence}%) أقل من الحد الأدنى المطلوب (${this.config.minConfidence}%).`;
-        } else if (!dynamicRejectionReason && signal.mainReasons && signal.mainReasons.length > 0) {
-          dynamicRejectionReason = signal.mainReasons[0];
-        } else if (!dynamicRejectionReason) {
-          dynamicRejectionReason = 'لا توجد فرصة تداول حالياً: عدم اكتمال شروط الهيكل والسيولة وإدارة المخاطر.';
-        }
-
         signal.currentPrice = currentPrice;
-
-        // Save scan record
-        storage.saveScan({
-          id: scanId,
-          timestamp: Date.now(),
-          isoTime: new Date().toISOString(),
-          currentPrice,
-          signal: signal.signal,
-          entry: signal.entry,
-          stopLoss: signal.stopLoss,
-          slPoints: signal.slPoints,
-          tp1: signal.tp1,
-          tp1Points: signal.tp1Points || 0,
-          tp1Rr: signal.tp1RrString || (signal.tp1Rr ? `1:${signal.tp1Rr.toFixed(2)}` : '1:1.50'),
-          tp2: signal.tp2,
-          tp2Points: signal.tp2Points || 0,
-          tp2Rr: signal.tp2RrString || (signal.tp2Rr ? `1:${signal.tp2Rr.toFixed(2)}` : '1:3.00'),
-          rr: signal.rr,
-          confidence: signal.confidence,
-          riskPercent: signal.riskPercent,
-          riskAmount: signal.riskAmount,
-          lotSize: signal.standardLot ?? signal.recommendedLotSize,
-          setup: signal.setup,
-          reasons: signal.mainReasons,
-          status: scanResultStatus,
-          invalidation: signal.invalidation,
-          noTradeReason: dynamicRejectionReason,
-        });
 
         console.log('[SCANNER] scan completed');
         return signal;
