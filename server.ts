@@ -62,7 +62,7 @@ async function startServer() {
       },
       time: new Date().toISOString(),
       timestamp: Date.now(),
-      aiModel: 'NVIDIA NIM DeepSeek V4 Pro (deepseek-ai/deepseek-v4-pro-0813)',
+      aiModel: 'NVIDIA NIM DeepSeek V4 Flash (deepseek-ai/deepseek-v4-flash)',
       hasNvidiaKey: !!process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY !== 'MY_NVIDIA_API_KEY',
       hasGeminiKey: !!process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY !== 'MY_NVIDIA_API_KEY',
     });
