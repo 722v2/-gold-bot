@@ -39,63 +39,39 @@ function getSupabaseCredentials(): { url: string; key: string; keySource: string
   return { url, key, keySource };
 }
 
-let supabaseInstance: SupabaseClient | null = null;
-let loggedStatus = false;
-
-function initSupabase(): SupabaseClient | null {
-  if (supabaseInstance) {
-    return supabaseInstance;
-  }
-
+function createSupabaseClientInstance(): SupabaseClient | null {
   const creds = getSupabaseCredentials();
   if (!creds) {
-    if (!loggedStatus) {
-      console.log(
-        '[Supabase] SUPABASE_URL or key not set in environment. PersistentStorage is operating in resilient local-backup mode and will auto-persist to Supabase once configured.'
-      );
-      loggedStatus = true;
-    }
+    console.log(
+      '[Supabase] SUPABASE_URL or key not set in environment. PersistentStorage is operating in resilient local-backup mode and will auto-persist to Supabase once configured.'
+    );
     return null;
   }
 
   try {
-    supabaseInstance = createClient(creds.url, creds.key, {
+    const client = createClient(creds.url, creds.key, {
       auth: {
         persistSession: false,
         autoRefreshToken: false,
       },
     });
-    if (!loggedStatus) {
-      console.log(`[Supabase] Initialized Supabase client (${creds.keySource}) with URL: ${creds.url}`);
-      loggedStatus = true;
-    }
-    return supabaseInstance;
+    console.log(`[Supabase] Initialized Supabase client (${creds.keySource}) with URL: ${creds.url}`);
+    return client;
   } catch (err: any) {
     console.error('[Supabase] Failed to initialize Supabase client:', err?.message || err);
     return null;
   }
 }
 
-// Initialize on module load
-initSupabase();
+// Export the real SupabaseClient instance directly or null when unconfigured
+export const supabase: SupabaseClient | null = createSupabaseClientInstance();
 
 export function isSupabaseConfigured(): boolean {
-  return initSupabase() !== null;
+  return supabase !== null;
 }
 
 export function getSupabaseClient(): SupabaseClient | null {
-  return initSupabase();
+  return supabase;
 }
 
-// Exported client proxy that always delegates to the live initialized instance
-export const supabase = new Proxy({} as SupabaseClient, {
-  get(_target, prop) {
-    const client = initSupabase();
-    if (!client) {
-      return undefined;
-    }
-    const val = (client as any)[prop];
-    return typeof val === 'function' ? val.bind(client) : val;
-  },
-});
 
