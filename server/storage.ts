@@ -183,6 +183,18 @@ export class PersistentStorage {
     }
   }
 
+  public restoreTestSnapshot(
+    trades: TradeLedgerItem[],
+    outcomes: TradeOutcomeRecord[],
+    currentBalance: number,
+    startingBalance: number
+  ): void {
+    this.inMemoryTrades = [...trades];
+    this.inMemoryOutcomes = [...outcomes];
+    this.inMemoryCurrentBalance = currentBalance;
+    this.inMemoryStartingBalance = startingBalance;
+  }
+
   private shouldPersist(): boolean {
     return !this.isTesting;
   }

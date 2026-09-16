@@ -38,6 +38,10 @@ function createTestOpenTrade(id: string, overrides: Partial<TradeLedgerItem> = {
 
 export function runAccountingTests(): { allPassed: boolean; results: TestResult[] } {
   const wasTesting = process.env.IS_TESTING === 'true';
+  const savedTrades = [...storage.getTrades()];
+  const savedOutcomes = [...storage.getTradeOutcomes(500)];
+  const savedCurrentBal = storage.getCurrentBalance();
+  const savedStartingBal = storage.getStartingBalance();
   storage.setTestingMode(true);
   try {
     const results: TestResult[] = [];
@@ -675,6 +679,7 @@ export function runAccountingTests(): { allPassed: boolean; results: TestResult[
     const allPassed = results.every((r) => r.passed);
     return { allPassed, results };
   } finally {
+    storage.restoreTestSnapshot(savedTrades, savedOutcomes, savedCurrentBal, savedStartingBal);
     storage.setTestingMode(wasTesting);
   }
 }
