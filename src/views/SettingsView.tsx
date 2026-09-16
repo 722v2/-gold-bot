@@ -59,9 +59,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const [capitalSource, setCapitalSource] = useState<CapitalSource>(settings.capitalSource || 'MANUAL');
   const [manualCapital, setManualCapital] = useState<string>(settings.manualCapital?.toString() || '25');
-  const [riskPerTrade, setRiskPerTrade] = useState<string>(settings.riskPerTrade?.toString() || '15');
-  const [maxRiskPerTrade, setMaxRiskPerTrade] = useState<string>(settings.maxRiskPerTrade?.toString() || '15');
-  const [maxLoss, setMaxLoss] = useState<string>(settings.maxLoss !== undefined ? settings.maxLoss.toString() : '5.00');
+  const [riskPerTrade, setRiskPerTrade] = useState<string>(settings.riskPerTrade?.toString() || '18');
+  const [maxRiskPerTrade, setMaxRiskPerTrade] = useState<string>(settings.maxRiskPerTrade?.toString() || '30');
+  const [maxLoss, setMaxLoss] = useState<string>(settings.maxLoss !== undefined ? settings.maxLoss.toString() : '5.50');
   const [minTp1RR, setMinTp1RR] = useState<string>(settings.minTp1RR?.toString() || '1.5');
   const [targetTp2RR, setTargetTp2RR] = useState<string>(settings.targetTp2RR?.toString() || '3.0');
   const [minimumConfidence, setMinimumConfidence] = useState<string>(settings.minimumConfidence?.toString() || '75');
@@ -193,9 +193,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setAutoTradingEnabled(settings.autoTradingEnabled || false);
     setCapitalSource(settings.capitalSource || 'MANUAL');
     setManualCapital(settings.manualCapital?.toString() || '25');
-    setRiskPerTrade(settings.riskPerTrade?.toString() || '15');
-    setMaxRiskPerTrade(settings.maxRiskPerTrade?.toString() || '15');
-    setMaxLoss(settings.maxLoss !== undefined ? settings.maxLoss.toString() : '5.00');
+    setRiskPerTrade(settings.riskPerTrade?.toString() || '18');
+    setMaxRiskPerTrade(settings.maxRiskPerTrade?.toString() || '30');
+    setMaxLoss(settings.maxLoss !== undefined ? settings.maxLoss.toString() : '5.50');
     setMinTp1RR(settings.minTp1RR?.toString() || '1.5');
     setTargetTp2RR(settings.targetTp2RR?.toString() || '3.0');
     setMinimumConfidence(settings.minimumConfidence?.toString() || '75');
@@ -213,8 +213,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     ? (mt5Account?.connected && typeof mt5Account.balance === 'number' ? mt5Account.balance : 0)
     : parsedManualCapital;
 
-  const parsedRiskPct = Math.max(0.1, parseFloat(riskPerTrade) || 15);
-  const parsedMaxRiskPct = Math.max(0.1, parseFloat(maxRiskPerTrade) || 15);
+  const parsedRiskPct = Math.max(0.1, parseFloat(riskPerTrade) || 18);
+  const parsedMaxRiskPct = Math.max(0.1, parseFloat(maxRiskPerTrade) || 30);
   const effectiveRiskPct = Math.min(parsedRiskPct, parsedMaxRiskPct);
   const liveRiskAmount = Number(((effectiveCapital * effectiveRiskPct) / 100).toFixed(2));
   const maxAllowedRiskAmount = Number(((effectiveCapital * parsedMaxRiskPct) / 100).toFixed(2));
@@ -226,7 +226,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const riskPerStdLot = previewPriceDistance * previewContract;
   const calculatedLot = riskPerStdLot > 0 ? liveRiskAmount / riskPerStdLot : 0;
   const minimumLotLoss = previewMinLot * riskPerStdLot;
-  const parsedMaxLoss = Math.max(0.5, parseFloat(maxLoss) || 5.00);
+  const parsedMaxLoss = Math.max(0.5, parseFloat(maxLoss) || 5.50);
   const isMinLotExceedingMaxLoss = minimumLotLoss > parsedMaxLoss + 0.0001;
   const isMinLotExceedingRisk = liveRiskAmount > 0 && minimumLotLoss > liveRiskAmount;
 

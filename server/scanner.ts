@@ -534,41 +534,6 @@ class LiveMarketScanner {
 
       const scanId = `scan_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
-      // Step 7 & 8: Store EVERY scan in persistent storage with all required fields
-      storage.saveScan({
-        id: scanId,
-        timestamp: Date.now(),
-        isoTime: new Date().toISOString(),
-        currentPrice,
-        signal: signal.signal,
-        entry: signal.entry,
-        stopLoss: signal.stopLoss,
-        slPoints: signal.slPoints,
-        tp1: signal.tp1,
-        tp1Points: signal.tp1Points || 0,
-        tp1Rr: signal.tp1RrString || (signal.tp1Rr ? `1:${signal.tp1Rr.toFixed(2)}` : '1:1.50'),
-        tp2: signal.tp2,
-        tp2Points: signal.tp2Points || 0,
-        tp2Rr: signal.tp2RrString || (signal.tp2Rr ? `1:${signal.tp2Rr.toFixed(2)}` : '1:3.00'),
-        rr: signal.rr,
-        confidence: signal.confidence,
-        riskPercent: signal.riskPercent,
-        riskAmount: signal.riskAmount,
-        lotSize: signal.standardLot ?? signal.recommendedLotSize,
-        setup: signal.setup,
-        reasons: signal.mainReasons,
-        status: scanResultStatus,
-        invalidation: signal.invalidation,
-        duplicateReason: isSameSetupActive ? structuralIdentity.status : undefined,
-        duplicateDetails: isSameSetupActive ? structuralIdentity.details : undefined,
-        noTradeReason: isOpposingActiveTrade
-          ? `توجد صفقة نشطة في الاتجاه المعاكس (${activeTradeDirection}). تم حظر الإشارة المعارضة حتى اكتمال أو إغلاق الصفقة الجارية.`
-          : isSameSetupActive
-          ? structuralIdentity.reason
-          : signal.noTradeReason,
-      });
-      console.log(`[SCANNER] history saved: ${signal.signal} (${scanResultStatus})`);
-
       // Active Trade Opposition Guard: Block emission of opposing signals
       if (isOpposingActiveTrade) {
         console.log(`[LiveMarketScanner] Active Trade Opposition Guard: Blocked ${signal.signal} because active ${activeTradeDirection} is in-flight.`);

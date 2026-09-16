@@ -481,7 +481,7 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
               </thead>
               <tbody className="divide-y divide-stone-800/60 text-stone-300">
                 {scanHistory.map((scan, idx) => (
-                  <tr key={scan.id || idx} className="hover:bg-stone-950/60 transition-colors">
+                  <tr key={`${scan.id || 'scan'}_${scan.timestamp || idx}`} className="hover:bg-stone-950/60 transition-colors">
                     <td className="py-2 px-2 text-stone-400 whitespace-nowrap">
                       {scan.isoTime
                         ? new Date(scan.isoTime).toLocaleTimeString('ar-EG', {

@@ -751,9 +751,14 @@ export class PersistentStorage {
       this.lastScannerTimestamp = record.timestamp || Date.now();
       this.lastScannerStatus = record.status || 'SUCCESS';
 
-      this.inMemoryScans.unshift(record);
-      if (this.inMemoryScans.length > MAX_SCANS_TO_KEEP) {
-        this.inMemoryScans = this.inMemoryScans.slice(0, MAX_SCANS_TO_KEEP);
+      const existingIdx = record.id ? this.inMemoryScans.findIndex((s) => s.id === record.id) : -1;
+      if (existingIdx !== -1) {
+        this.inMemoryScans[existingIdx] = record;
+      } else {
+        this.inMemoryScans.unshift(record);
+        if (this.inMemoryScans.length > MAX_SCANS_TO_KEEP) {
+          this.inMemoryScans = this.inMemoryScans.slice(0, MAX_SCANS_TO_KEEP);
+        }
       }
 
       if (supabase && this.shouldPersist() && record.id) {

@@ -126,8 +126,8 @@ export const ScanHistoryModal = ({ isOpen, onClose }: ScanHistoryModalProps) => 
               {isLoading ? 'جارٍ تحميل السجل من التخزين الدائم...' : 'لا توجد فحوصات مسجلة حتى الآن.'}
             </div>
           ) : (
-            scans.map((scan) => (
-              <div key={scan.id} className="pt-2.5 first:pt-0 space-y-1.5">
+            scans.map((scan, idx) => (
+              <div key={`${scan.id || 'scan'}_${scan.timestamp || idx}`} className="pt-2.5 first:pt-0 space-y-1.5">
                 <div className="flex items-center justify-between text-xs">
                   <div className="flex items-center gap-2">
                     <span className="text-stone-400 font-mono text-[11px]">

@@ -1,7 +1,7 @@
 {
   "capitalSource": "MANUAL",
   "manualCapital": 25,
-  "riskPerTrade": 10,
+  "riskPerTrade": 18,
   "maxRiskPerTrade": 30,
   "minTp1RR": 1.5,
   "targetTp2RR": 3,
@@ -34,5 +34,5 @@
   "enableTradeManagement": true,
   "oppositeCooldownMinutes": 10,
   "notifyNoTrade": false,
-  "updatedAt": 1789476607706
+  "updatedAt": 1789586800000
 }

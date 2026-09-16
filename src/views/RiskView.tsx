@@ -38,8 +38,8 @@ export const RiskView: React.FC<RiskViewProps> = ({
     ? activeCapital
     : (settings?.manualCapital ?? Number(currentBalance || 25));
 
-  const riskPercent = typeof settings?.riskPerTrade === 'number' ? settings.riskPerTrade : 15.0;
-  const maxRiskPercent = typeof settings?.maxRiskPerTrade === 'number' ? settings.maxRiskPerTrade : 15.0;
+  const riskPercent = typeof settings?.riskPerTrade === 'number' ? settings.riskPerTrade : 18.0;
+  const maxRiskPercent = typeof settings?.maxRiskPerTrade === 'number' ? settings.maxRiskPerTrade : 30.0;
   const effectiveRiskPercent = Math.min(riskPercent, maxRiskPercent);
 
   const riskAmount = Number(((effectiveCapital * effectiveRiskPercent) / 100).toFixed(2));

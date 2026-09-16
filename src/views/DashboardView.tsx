@@ -106,8 +106,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     ? activeCapital
     : (settings?.manualCapital ?? Number(currentBalance || 25));
 
-  const riskPercent = typeof settings?.riskPerTrade === 'number' ? settings.riskPerTrade : 15.0;
-  const maxRiskPercent = typeof settings?.maxRiskPerTrade === 'number' ? settings.maxRiskPerTrade : 15.0;
+  const riskPercent = typeof settings?.riskPerTrade === 'number' ? settings.riskPerTrade : 18.0;
+  const maxRiskPercent = typeof settings?.maxRiskPerTrade === 'number' ? settings.maxRiskPerTrade : 30.0;
   const effectiveRiskPercent = Math.min(riskPercent, maxRiskPercent);
   const liveRiskAmount = Number(((effectiveCapital * effectiveRiskPercent) / 100).toFixed(2));
   const maxAllowedRiskAmount = Number(((effectiveCapital * maxRiskPercent) / 100).toFixed(2));
@@ -116,7 +116,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const standardPointRisk = (settings?.contractSizeOz ?? 100) * 0.1 * 40; // 400
   const typicalLot = standardPointRisk > 0 ? liveRiskAmount / standardPointRisk : 0;
   const minLotLossAt40pts = (settings?.minimumLot ?? 0.01) * standardPointRisk; // $4.00
-  const maxLossLimit = typeof settings?.maxLoss === 'number' && settings.maxLoss > 0 ? settings.maxLoss : 5.0;
+  const maxLossLimit = typeof settings?.maxLoss === 'number' && settings.maxLoss > 0 ? settings.maxLoss : 5.5;
   const isMinLotExceedingMaxLoss = minLotLossAt40pts > maxLossLimit + 0.0001;
   const isMinLotExceedingRiskBudget = liveRiskAmount > 0 && minLotLossAt40pts > liveRiskAmount;
 
