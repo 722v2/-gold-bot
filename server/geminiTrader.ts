@@ -283,7 +283,7 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
   try {
     const prompt = `حلل بيانات السوق والمرشحات الاستراتيجية المرفقة للذهب وقدم قرارك النهائي بصيغة JSON:\n${JSON.stringify(technicalContext, null, 2)}`;
 
-    const model = process.env.NVIDIA_MODEL || 'deepseek-ai/deepseek-v4-flash';
+    const model = process.env.NVIDIA_MODEL || 'deepseek-ai/deepseek-v4-flash-0731';
     const completion = await ai.chat.completions.create({
       model,
       messages: [
