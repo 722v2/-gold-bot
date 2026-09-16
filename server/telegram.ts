@@ -15,6 +15,8 @@ export class TelegramService {
   private configPath = path.join(process.cwd(), 'data', 'telegram_private_chat.json');
   private messageMappingPath = path.join(process.cwd(), 'data', 'telegram_signal_messages.json');
   private pollingInterval: NodeJS.Timeout | null = null;
+  private isPolling = false;
+  private isInitializing = false;
   private lastUpdateId = 0;
   private signalMessageIds: Record<string, number> = {};
 
@@ -99,18 +101,67 @@ export class TelegramService {
   /**
    * Initialize long-polling to detect /start command from the user
    */
-  public init(): void {
+  public async init(): Promise<void> {
     if (!this.botToken) {
       console.warn('[Telegram] TELEGRAM_BOT_TOKEN is not configured in Secrets. Telegram service is offline.');
       return;
     }
 
-    console.log('[Telegram] Brand-new Telegram integration initialized. Starting private chat detection polling...');
-    
-    // Start polling interval
-    this.pollingInterval = setInterval(() => {
-      this.pollUpdates();
-    }, 4000);
+    if (this.pollingInterval || this.isInitializing) {
+      console.log('[Telegram] Polling is already running or initializing. Skipping duplicate init call.');
+      return;
+    }
+
+    this.isInitializing = true;
+
+    try {
+      // Check and clear any conflicting webhook configuration on Telegram's servers
+      await this.ensureWebhookRemoved();
+
+      console.log('[Telegram] Brand-new Telegram integration initialized. Starting private chat detection polling...');
+      
+      // Start polling interval
+      this.pollingInterval = setInterval(() => {
+        this.pollUpdates();
+      }, 4000);
+    } catch (err: any) {
+      console.error('[Telegram] Error during polling initialization:', err?.message || err);
+    } finally {
+      this.isInitializing = false;
+    }
+  }
+
+  /**
+   * Check and remove any configured webhook before starting getUpdates long polling
+   */
+  private async ensureWebhookRemoved(): Promise<void> {
+    if (!this.botToken) return;
+
+    try {
+      const infoUrl = `https://api.telegram.org/bot${this.botToken}/getWebhookInfo`;
+      const res = await fetch(infoUrl);
+      if (res.ok) {
+        const data = await res.json() as any;
+        if (data?.ok && data?.result?.url) {
+          console.log(`[Telegram] Webhook currently configured: "${data.result.url}". Removing webhook to prevent 409 conflict...`);
+          const deleteUrl = `https://api.telegram.org/bot${this.botToken}/deleteWebhook?drop_pending_updates=false`;
+          const deleteRes = await fetch(deleteUrl);
+          const deleteData = await deleteRes.json() as any;
+          if (deleteData?.ok) {
+            console.log('[Telegram] Webhook removed successfully. getUpdates polling can proceed.');
+          } else {
+            console.warn('[Telegram] Failed to remove webhook:', deleteData?.description);
+          }
+        } else {
+          console.log('[Telegram] Webhook check passed: No active webhook detected for this bot.');
+        }
+      } else {
+        console.warn(`[Telegram] getWebhookInfo returned HTTP ${res.status}. Attempting deleteWebhook fallback...`);
+        await fetch(`https://api.telegram.org/bot${this.botToken}/deleteWebhook?drop_pending_updates=false`);
+      }
+    } catch (err: any) {
+      console.warn('[Telegram] Error checking/removing webhook:', err?.message || err);
+    }
   }
 
   /**
@@ -118,6 +169,13 @@ export class TelegramService {
    */
   private async pollUpdates(): Promise<void> {
     if (!this.botToken) return;
+
+    // Guard: Prevent overlapping in-flight polling calls that trigger HTTP 409 conflict
+    if (this.isPolling) {
+      return;
+    }
+
+    this.isPolling = true;
 
     try {
       const url = `https://api.telegram.org/bot${this.botToken}/getUpdates?offset=${this.lastUpdateId + 1}&limit=10&timeout=2`;
@@ -136,6 +194,8 @@ export class TelegramService {
     } catch (err: any) {
       // Quietly log error to prevent console spamming on network blips
       console.debug(`[Telegram Polling Warning] ${err?.message || err}`);
+    } finally {
+      this.isPolling = false;
     }
   }
 
