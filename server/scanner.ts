@@ -793,155 +793,45 @@ class LiveMarketScanner {
         }
 
         if (isSameSetupActive) {
-          const isTelegramDelivered = opp.status === 'DISPATCHED' || !!opp.dispatchedAt || !!(opp.signalId && telegramService.getTelegramMessageId(opp.signalId));
+          // DUPLICATE PREVENTED: Update status without generating a new signal or spamming alerts
+          this.config.duplicatePrevented = true;
+          this.config.lastDecision = this.activeSignal?.signal || signal.signal;
+          this.config.lastScanStatus = `الصفقة لا تزال جارية: ${this.activeSignal?.signal || signal.signal} (${this.activeSignal?.setup || signal.setup}) | السعر: $${currentPrice.toFixed(2)} [تم منع ${structuralIdentity.status === 'DUPLICATE_ACTIVE_REENTRY' ? 'إعادة الدخول المكرر' : 'تكرار الإشارة'}]`;
+          console.log(`[LiveMarketScanner] Blocked ${structuralIdentity.status}: ${signal.setup} @ ${signal.entry}. Active trade ${this.activeSignal?.setup || opp.setupName} @ ${this.activeSignal?.entry || opp.entry} is still OPEN. Telemetry:`, structuralIdentity.details);
 
-          if (isTelegramDelivered) {
-            // DUPLICATE PREVENTED: Update status without generating a new signal or spamming alerts
-            this.config.duplicatePrevented = true;
-            this.config.lastDecision = this.activeSignal?.signal || signal.signal;
-            this.config.lastScanStatus = `الصفقة لا تزال جارية: ${this.activeSignal?.signal || signal.signal} (${this.activeSignal?.setup || signal.setup}) | السعر: $${currentPrice.toFixed(2)} [تم منع ${structuralIdentity.status === 'DUPLICATE_ACTIVE_REENTRY' ? 'إعادة الدخول المكرر' : 'تكرار الإشارة'}]`;
-            console.log(`[LiveMarketScanner] Blocked ${structuralIdentity.status}: ${signal.setup} @ ${signal.entry}. Active trade ${this.activeSignal?.setup || opp.setupName} @ ${this.activeSignal?.entry || opp.entry} is still OPEN. Telemetry:`, structuralIdentity.details);
+          // Freeze original levels! Do not overwrite with candidate signal.
+          opp.confidence = signal.confidence;
+          opp.lastUpdatedTime = Date.now();
+          storage.saveOpportunity(opp);
 
-            // Freeze original levels! Do not overwrite with candidate signal.
-            opp.confidence = signal.confidence;
-            opp.lastUpdatedTime = Date.now();
-            storage.saveOpportunity(opp);
-
-            // Keep current price updated on active signal
-            if (this.activeSignal) {
-              this.activeSignal.currentPrice = currentPrice;
-              this.config.lastSignal = this.activeSignal;
-              return this.activeSignal;
-            } else {
-              // Rebuild activeSignal from the stored original opportunity snapshot
-              const originalSignal = opp.signalId ? storage.getSignal(opp.signalId) : undefined;
-              if (originalSignal) {
-                this.activeSignal = {
-                  ...originalSignal,
-                  currentPrice,
-                };
-              } else {
-                // Fallback to rebuilding from signal using frozen opportunity prices
-                this.activeSignal = {
-                  ...signal,
-                  id: opp.signalId || signal.id,
-                  entry: opp.entry,
-                  stopLoss: opp.stopLoss,
-                  tp1: opp.tp1,
-                  tp2: opp.tp2,
-                  slPoints: Math.round(Math.abs(opp.entry - opp.stopLoss) / 0.1),
-                  tp1Points: Math.round(Math.abs(opp.tp1 - opp.entry) / 0.1),
-                  tp2Points: Math.round(Math.abs(opp.tp2 - opp.entry) / 0.1),
-                  currentPrice,
-                };
-              }
-              this.config.lastSignal = this.activeSignal;
-              return this.activeSignal;
-            }
+          // Keep current price updated on active signal
+          if (this.activeSignal) {
+            this.activeSignal.currentPrice = currentPrice;
+            this.config.lastSignal = this.activeSignal;
+            return this.activeSignal;
           } else {
+            // Rebuild activeSignal from the stored original opportunity snapshot
             const originalSignal = opp.signalId ? storage.getSignal(opp.signalId) : undefined;
-            const now = Date.now();
-            const LOCK_TTL_MS = 60000;
-
-            // Check if another attempt is currently running or lock is stale (>60s)
-            const isLockStale = !!(
-              opp.telegramDeliveryInFlight &&
-              (!opp.telegramDeliveryInFlightTime || (now - opp.telegramDeliveryInFlightTime > LOCK_TTL_MS))
-            );
-
-            if (opp.telegramDeliveryInFlight && !isLockStale) {
-              console.log(`[LiveMarketScanner] Telegram delivery attempt already in flight for active same-setup opportunity ${opp.id}. Skipping.`);
-              this.activeSignal = originalSignal ? { ...originalSignal, currentPrice } : { ...signal, id: opp.signalId || signal.id, currentPrice };
-              this.config.lastSignal = this.activeSignal;
-              return this.activeSignal;
+            if (originalSignal) {
+              this.activeSignal = {
+                ...originalSignal,
+                currentPrice,
+              };
+            } else {
+              // Fallback to rebuilding from signal using frozen opportunity prices
+              this.activeSignal = {
+                ...signal,
+                id: opp.signalId || signal.id,
+                entry: opp.entry,
+                stopLoss: opp.stopLoss,
+                tp1: opp.tp1,
+                tp2: opp.tp2,
+                slPoints: Math.round(Math.abs(opp.entry - opp.stopLoss) / 0.1),
+                tp1Points: Math.round(Math.abs(opp.tp1 - opp.entry) / 0.1),
+                tp2Points: Math.round(Math.abs(opp.tp2 - opp.entry) / 0.1),
+                currentPrice,
+              };
             }
-
-            if (isLockStale) {
-              console.warn(`[LiveMarketScanner] Stale in-flight Telegram delivery lock detected for active same-setup opportunity ${opp.id} (>60s). Releasing lock.`);
-              opp.telegramDeliveryInFlight = false;
-              opp.telegramDeliveryInFlightTime = undefined;
-            }
-
-            if (opp.telegramNextRetryTime && now < opp.telegramNextRetryTime) {
-              const remainingSec = Math.ceil((opp.telegramNextRetryTime - now) / 1000);
-              console.log(`[LiveMarketScanner] Telegram delivery retry for active same-setup opportunity ${opp.id} is in backoff. Remaining: ${remainingSec}s. Skipping.`);
-              this.activeSignal = originalSignal ? { ...originalSignal, currentPrice } : { ...signal, id: opp.signalId || signal.id, currentPrice };
-              this.config.lastSignal = this.activeSignal;
-              return this.activeSignal;
-            }
-
-            // Safe double check persistent delivery state right before triggering dispatch
-            const isAlreadyDispatched = opp.status === 'DISPATCHED' || !!opp.dispatchedAt;
-            const doubleCheckMsgId = opp.signalId ? telegramService.getTelegramMessageId(opp.signalId) : undefined;
-            if (isAlreadyDispatched || doubleCheckMsgId) {
-              console.log(`[LiveMarketScanner] Double checked delivery status: signal ${opp.signalId || opp.id} is already delivered (Status: ${opp.status}, Message ID: ${doubleCheckMsgId}). Bypassing retry.`);
-              opp.status = 'DISPATCHED';
-              opp.dispatchedAt = opp.dispatchedAt || Date.now();
-              opp.telegramRetryCount = 0;
-              opp.telegramNextRetryTime = undefined;
-              opp.telegramDeliveryInFlight = false;
-              opp.telegramDeliveryInFlightTime = undefined;
-              storage.saveOpportunity(opp);
-              this.activeSignal = originalSignal ? { ...originalSignal, currentPrice } : { ...signal, id: opp.signalId || signal.id, currentPrice };
-              this.config.lastSignal = this.activeSignal;
-              return this.activeSignal;
-            }
-
-            console.log(`[LiveMarketScanner] Retrying Telegram delivery for active same-setup opportunity ${opp.id} (Attempt ${(opp.telegramRetryCount || 0) + 1}).`);
-            opp.telegramDeliveryInFlight = true;
-            opp.telegramDeliveryInFlightTime = Date.now();
-            storage.saveOpportunity(opp);
-
-            const retrySignal = originalSignal || {
-              ...signal,
-              id: opp.signalId || signal.id,
-              entry: opp.entry,
-              stopLoss: opp.stopLoss,
-              tp1: opp.tp1,
-              tp2: opp.tp2,
-              slPoints: Math.round(Math.abs(opp.entry - opp.stopLoss) / 0.1),
-              tp1Points: Math.round(Math.abs(opp.tp1 - opp.entry) / 0.1),
-              tp2Points: Math.round(Math.abs(opp.tp2 - opp.entry) / 0.1),
-              currentPrice,
-            };
-
-            // Save signal fallback if needed
-            if (!originalSignal) {
-              storage.saveSignal(retrySignal);
-            }
-
-            let success = false;
-            try {
-              // Await the retry to avoid continuous parallel attempts
-              success = await telegramService.sendSignalNotification(retrySignal).catch((err) => {
-                console.error('[LiveMarketScanner] Telegram retry signal dispatch error:', err);
-                return false;
-              });
-            } catch (dispatchErr) {
-              console.error('[LiveMarketScanner] Unexpected exception during Telegram retry dispatch:', dispatchErr);
-              success = false;
-            } finally {
-              opp.telegramDeliveryInFlight = false;
-              opp.telegramDeliveryInFlightTime = undefined;
-
-              if (success) {
-                console.log(`[LiveMarketScanner] Telegram retry succeeded for active same-setup opportunity ${opp.id}.`);
-                opp.status = 'DISPATCHED';
-                opp.dispatchedAt = opp.dispatchedAt || Date.now();
-                opp.telegramRetryCount = 0;
-                opp.telegramNextRetryTime = undefined;
-              } else {
-                const retryCount = (opp.telegramRetryCount || 0) + 1;
-                opp.telegramRetryCount = retryCount;
-                // Backoff delay of 30 seconds for the first retry, and doubling for subsequent retries, capped at 10 minutes
-                const backoffSec = Math.min(30 * Math.pow(2, retryCount - 1), 600);
-                opp.telegramNextRetryTime = Date.now() + backoffSec * 1000;
-                console.warn(`[LiveMarketScanner] Telegram retry failed for active same-setup opportunity ${opp.id}. Next retry in ${backoffSec}s.`);
-              }
-              storage.saveOpportunity(opp);
-            }
-
-            this.activeSignal = { ...retrySignal, currentPrice };
             this.config.lastSignal = this.activeSignal;
             return this.activeSignal;
           }
