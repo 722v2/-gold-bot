@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { supabase, isSupabaseConfigured } from './supabase.js';
+import { supabase, isSupabaseConfigured, getSupabaseClient } from './supabase.js';
 import { telegramService } from './telegram.js';
 
 import {
@@ -220,7 +220,8 @@ export class PersistentStorage {
     this.initLocalBackups();
 
     // 2. If Supabase is available, sync and load from Supabase PostgreSQL
-    if (isSupabaseConfigured() && supabase && this.shouldPersist()) {
+    const activeClient = getSupabaseClient();
+    if (isSupabaseConfigured() && activeClient && this.shouldPersist()) {
       try {
         await this.initSupabaseData();
       } catch (err: any) {
@@ -316,6 +317,7 @@ export class PersistentStorage {
   }
 
   private async initSupabaseData(): Promise<void> {
+    const supabase = getSupabaseClient();
     if (!supabase) return;
 
     // 1. Account State

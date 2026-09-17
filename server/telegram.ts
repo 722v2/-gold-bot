@@ -24,6 +24,7 @@ export class TelegramService {
   private botToken: string | null = null;
   private privateChatId: string | null = null;
   private botId: string | null = null;
+  private lastSendError: string | null = null;
   private configPath = path.join(process.cwd(), 'data', 'telegram_private_chat.json');
   private messageMappingPath = path.join(process.cwd(), 'data', 'telegram_signal_messages.json');
   private pendingPnlPath = path.join(process.cwd(), 'data', 'telegram_pending_pnl.json');
@@ -35,11 +36,43 @@ export class TelegramService {
   private pendingPnlRequests: Map<string, PendingPnlRequest> = new Map();
 
   constructor() {
-    this.botToken = process.env.TELEGRAM_BOT_TOKEN || null;
+    this.botToken = this.getBotToken();
     this.botId = this.getBotIdFromToken(this.botToken);
     this.loadRegisteredChat();
     this.loadMessageMapping();
     this.loadPendingPnlRequests();
+  }
+
+  /**
+   * Dynamically resolve and sanitize Telegram bot token from environment
+   */
+  public getBotToken(): string | null {
+    const raw = process.env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_TOKEN || process.env.BOT_TOKEN || this.botToken || '';
+    if (!raw) return null;
+    const sanitized = raw.trim().replace(/^["']|["']$/g, '');
+    return sanitized.length > 0 ? sanitized : null;
+  }
+
+  /**
+   * Get authorized user IDs from environment variables
+   */
+  public getAuthorizedUserIds(): string[] {
+    const raw = process.env.TELEGRAM_AUTHORIZED_USER_IDS || process.env.TELEGRAM_CHAT_ID || process.env.TELEGRAM_USER_ID || '';
+    if (!raw) return [];
+    return raw
+      .split(/[,\s]+/)
+      .map((s) => s.trim().replace(/^["']|["']$/g, ''))
+      .filter((s) => s.length > 0);
+  }
+
+  /**
+   * Check if user/chat is authorized
+   */
+  public isAuthorized(userIdOrChatId: string | number): boolean {
+    const authorized = this.getAuthorizedUserIds();
+    if (authorized.length === 0) return true;
+    const target = String(userIdOrChatId).trim();
+    return authorized.includes(target);
   }
 
   /**
@@ -126,7 +159,7 @@ export class TelegramService {
   }
 
   /**
-   * Load stored private chat ID from disk or storage fallback
+   * Load stored private chat ID from disk or storage fallback or env vars
    */
   private loadRegisteredChat(): void {
     try {
@@ -142,6 +175,12 @@ export class TelegramService {
       if (storageChatId) {
         this.privateChatId = storageChatId;
         console.log(`[Telegram] Loaded registered private chat ID from storage: ${this.privateChatId}`);
+        return;
+      }
+      const authorizedIds = this.getAuthorizedUserIds();
+      if (authorizedIds.length > 0) {
+        this.privateChatId = authorizedIds[0];
+        console.log(`[Telegram] Loaded private chat ID from authorized user env config: ${this.privateChatId}`);
       }
     } catch (err) {
       console.error('[Telegram] Error loading registered chat ID:', err);
@@ -149,7 +188,7 @@ export class TelegramService {
   }
 
   /**
-   * Get active private chat ID with persistent storage fallback
+   * Get active private chat ID with persistent storage and env fallback
    */
   public getPrivateChatId(): string | null {
     if (this.privateChatId) {
@@ -158,6 +197,22 @@ export class TelegramService {
     const persisted = storage.getTelegramChatId();
     if (persisted) {
       this.privateChatId = persisted;
+      return this.privateChatId;
+    }
+    if (fs.existsSync(this.configPath)) {
+      try {
+        const data = JSON.parse(fs.readFileSync(this.configPath, 'utf8'));
+        if (data && data.chatId) {
+          this.privateChatId = String(data.chatId);
+          return this.privateChatId;
+        }
+      } catch {
+        // ignore disk read errors
+      }
+    }
+    const authorizedIds = this.getAuthorizedUserIds();
+    if (authorizedIds.length > 0) {
+      this.privateChatId = authorizedIds[0];
       return this.privateChatId;
     }
     return null;
@@ -202,10 +257,13 @@ export class TelegramService {
    * Initialize long-polling to detect /start command from the user
    */
   public async init(): Promise<void> {
-    if (!this.botToken) {
+    const token = this.getBotToken();
+    if (!token) {
       console.warn('[Telegram] TELEGRAM_BOT_TOKEN is not configured in Secrets. Telegram service is offline.');
       return;
     }
+    this.botToken = token;
+    this.botId = this.getBotIdFromToken(token);
 
     if (this.isRunning || this.isInitializing || (globalThis as any)[GLOBAL_TELEGRAM_POLLING_RUNNING]) {
       console.log('[Telegram] Polling is already active or initializing. Skipping duplicate init call.');
@@ -249,16 +307,17 @@ export class TelegramService {
    * Check and remove any configured webhook before starting getUpdates long polling
    */
   private async ensureWebhookRemoved(): Promise<void> {
-    if (!this.botToken) return;
+    const token = this.getBotToken();
+    if (!token) return;
 
     try {
-      const infoUrl = `https://api.telegram.org/bot${this.botToken}/getWebhookInfo`;
+      const infoUrl = `https://api.telegram.org/bot${token}/getWebhookInfo`;
       const res = await fetch(infoUrl);
       if (res.ok) {
         const data = (await res.json()) as any;
         if (data?.ok && data?.result?.url) {
           console.log(`[Telegram] Webhook currently configured: "${data.result.url}". Removing webhook to prevent 409 conflict...`);
-          const deleteUrl = `https://api.telegram.org/bot${this.botToken}/deleteWebhook?drop_pending_updates=false`;
+          const deleteUrl = `https://api.telegram.org/bot${token}/deleteWebhook?drop_pending_updates=false`;
           const deleteRes = await fetch(deleteUrl);
           const deleteData = (await deleteRes.json()) as any;
           if (deleteData?.ok) {
@@ -271,7 +330,7 @@ export class TelegramService {
         }
       } else {
         console.warn(`[Telegram] getWebhookInfo returned HTTP ${res.status}. Attempting deleteWebhook fallback...`);
-        await fetch(`https://api.telegram.org/bot${this.botToken}/deleteWebhook?drop_pending_updates=false`);
+        await fetch(`https://api.telegram.org/bot${token}/deleteWebhook?drop_pending_updates=false`);
       }
     } catch (err: any) {
       console.warn('[Telegram] Error checking/removing webhook:', err?.message || err);
@@ -284,10 +343,13 @@ export class TelegramService {
   private async runPollingLoop(): Promise<void> {
     while (this.isRunning) {
       try {
+        const token = this.getBotToken();
+        if (!token) break;
+
         this.abortController = new AbortController();
         const signal = this.abortController.signal;
 
-        const url = `https://api.telegram.org/bot${this.botToken}/getUpdates?offset=${this.lastUpdateId + 1}&limit=10&timeout=2`;
+        const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${this.lastUpdateId + 1}&limit=10&timeout=2`;
         const res = await fetch(url, { signal });
 
         if (res.status === 409) {
@@ -362,6 +424,14 @@ export class TelegramService {
     // Check for /start command
     if (text.startsWith('/start')) {
       const currentChatId = this.getPrivateChatId();
+      // Check authorization whitelist if configured
+      const fromId = String(message.from?.id || '');
+      if (!this.isAuthorized(chatId) && !this.isAuthorized(fromId)) {
+        console.warn(`[Telegram] Unauthorized /start attempt from Chat ID: ${chatId} / User ID: ${fromId}.`);
+        await this.sendMessageDirectly(chatId, '⚠️ عذراً، هذا المعرف غير مصرح له باستخدام نظام التداول الآلي.');
+        return;
+      }
+
       // Save chat ID if it's new or not yet registered
       if (currentChatId !== chatId) {
         this.saveRegisteredChat(chatId);
@@ -489,10 +559,15 @@ ${pending.originalMessageText || ''}
    * Send text directly to a specific chat ID
    */
   private async sendMessageDirectly(chatId: string, text: string, replyMarkup?: any): Promise<any> {
-    if (!this.botToken) return null;
+    const token = this.getBotToken();
+    if (!token) {
+      this.lastSendError = 'TELEGRAM_BOT_TOKEN is not configured.';
+      return null;
+    }
 
     try {
-      const url = `https://api.telegram.org/bot${this.botToken}/sendMessage`;
+      this.lastSendError = null;
+      const url = `https://api.telegram.org/bot${token}/sendMessage`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -509,9 +584,14 @@ ${pending.originalMessageText || ''}
       if (body && body.ok === true) {
         return body.result;
       }
+      
+      const errMsg = body?.description || `HTTP ${res.status}`;
+      this.lastSendError = `Telegram API Error (${res.status}): ${errMsg}`;
+      console.error(`[Telegram Outbound Error] sendMessage to chat ${chatId} failed (HTTP ${res.status}): ${errMsg}`);
       return null;
-    } catch (err) {
-      console.error(`[Telegram] Error sending message to chat ${chatId}:`, err);
+    } catch (err: any) {
+      this.lastSendError = `Network error: ${err?.message || err}`;
+      console.error(`[Telegram Network Error] Error sending message to chat ${chatId}:`, err?.message || err);
       return null;
     }
   }
@@ -520,10 +600,11 @@ ${pending.originalMessageText || ''}
    * Edit message text on Telegram
    */
   private async editMessageText(chatId: string, messageId: number, text: string, replyMarkup?: any): Promise<boolean> {
-    if (!this.botToken) return false;
+    const token = this.getBotToken();
+    if (!token) return false;
 
     try {
-      const url = `https://api.telegram.org/bot${this.botToken}/editMessageText`;
+      const url = `https://api.telegram.org/bot${token}/editMessageText`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -538,9 +619,13 @@ ${pending.originalMessageText || ''}
       });
 
       const body = await res.json() as any;
-      return body && body.ok === true;
-    } catch (err) {
-      console.error(`[Telegram] Error editing message text ${messageId} in chat ${chatId}:`, err);
+      if (body && body.ok === true) {
+        return true;
+      }
+      console.error(`[Telegram Outbound Error] editMessageText ${messageId} in chat ${chatId} failed (HTTP ${res.status}): ${body?.description || 'Unknown error'}`);
+      return false;
+    } catch (err: any) {
+      console.error(`[Telegram Network Error] Error editing message text ${messageId} in chat ${chatId}:`, err?.message || err);
       return false;
     }
   }
@@ -549,10 +634,11 @@ ${pending.originalMessageText || ''}
    * Remove inline keyboard markup from a message
    */
   private async removeInlineKeyboard(chatId: string, messageId: number): Promise<boolean> {
-    if (!this.botToken) return false;
+    const token = this.getBotToken();
+    if (!token) return false;
 
     try {
-      const url = `https://api.telegram.org/bot${this.botToken}/editMessageReplyMarkup`;
+      const url = `https://api.telegram.org/bot${token}/editMessageReplyMarkup`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -564,9 +650,13 @@ ${pending.originalMessageText || ''}
       });
 
       const body = await res.json() as any;
-      return body && body.ok === true;
-    } catch (err) {
-      console.error(`[Telegram] Error removing inline keyboard for message ${messageId} in chat ${chatId}:`, err);
+      if (body && body.ok === true) {
+        return true;
+      }
+      console.error(`[Telegram Outbound Error] removeInlineKeyboard ${messageId} in chat ${chatId} failed (HTTP ${res.status}): ${body?.description || 'Unknown error'}`);
+      return false;
+    } catch (err: any) {
+      console.error(`[Telegram Network Error] Error removing inline keyboard for message ${messageId} in chat ${chatId}:`, err?.message || err);
       return false;
     }
   }
@@ -575,10 +665,11 @@ ${pending.originalMessageText || ''}
    * Answer a callback query to acknowledge the button press in UI
    */
   private async answerCallbackQuery(callbackQueryId: string, text?: string, showAlert = false): Promise<boolean> {
-    if (!this.botToken) return false;
+    const token = this.getBotToken();
+    if (!token) return false;
 
     try {
-      const url = `https://api.telegram.org/bot${this.botToken}/answerCallbackQuery`;
+      const url = `https://api.telegram.org/bot${token}/answerCallbackQuery`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -589,9 +680,13 @@ ${pending.originalMessageText || ''}
       });
 
       const body = await res.json() as any;
-      return body && body.ok === true;
-    } catch (err) {
-      console.error(`[Telegram] Error answering callback query ${callbackQueryId}:`, err);
+      if (body && body.ok === true) {
+        return true;
+      }
+      console.error(`[Telegram Outbound Error] answerCallbackQuery ${callbackQueryId} failed (HTTP ${res.status}): ${body?.description || 'Unknown error'}`);
+      return false;
+    } catch (err: any) {
+      console.error(`[Telegram Network Error] Error answering callback query ${callbackQueryId}:`, err?.message || err);
       return false;
     }
   }
@@ -754,7 +849,8 @@ ${message.text}
    * Send a general message to the registered user private chat ONLY
    */
   public async sendMessage(text: string): Promise<{ success: boolean; error?: string }> {
-    if (!this.botToken) {
+    const token = this.getBotToken();
+    if (!token) {
       return { success: false, error: 'Telegram service bot token not configured.' };
     }
 
@@ -763,8 +859,11 @@ ${message.text}
       return { success: false, error: 'NOT_REGISTERED' };
     }
 
-    const success = await this.sendMessageDirectly(chatId, text);
-    return { success };
+    const result = await this.sendMessageDirectly(chatId, text);
+    return {
+      success: !!result,
+      error: result ? undefined : (this.lastSendError || 'فشل إرسال الرسالة إلى تليجرام'),
+    };
   }
 
   /**
@@ -772,10 +871,12 @@ ${message.text}
    */
   public getStatus(): TelegramStatus {
     const chatId = this.getPrivateChatId();
+    const token = this.getBotToken();
+    const botId = this.getBotIdFromToken(token);
     return {
       registered: chatId !== null,
       chatId: chatId,
-      botId: this.botId,
+      botId: botId,
     };
   }
 
@@ -783,13 +884,14 @@ ${message.text}
    * Sends a beautiful test notification to the detected private chat
    */
   public async sendTestNotification(): Promise<{ success: boolean; error?: string }> {
-    if (!this.botToken) {
-      return { success: false, error: 'البوت غير مكوّن. يرجى إدخال TELEGRAM_BOT_TOKEN.' };
+    const token = this.getBotToken();
+    if (!token) {
+      return { success: false, error: 'البوت غير مكوّن. يرجى إدخال TELEGRAM_BOT_TOKEN في متغيرات البيئة (Secrets).' };
     }
 
     const chatId = this.getPrivateChatId();
     if (!chatId) {
-      return { success: false, error: 'NOT_REGISTERED' };
+      return { success: false, error: 'لم يتم العثور على معرّف المحادثة الخاصة (Chat ID). يرجى فتح البوت وإرسال /start أو ضبط TELEGRAM_AUTHORIZED_USER_IDS.' };
     }
 
     const text = `
@@ -803,21 +905,25 @@ ${message.text}
 ⏱ <b>الوقت:</b> ${new Date().toLocaleTimeString('ar-EG')}
     `.trim();
 
-    const success = await this.sendMessageDirectly(chatId, text);
-    return { success, error: success ? undefined : 'فشل إرسال الرسالة إلى تليجرام' };
+    const result = await this.sendMessageDirectly(chatId, text);
+    return {
+      success: !!result,
+      error: result ? undefined : (this.lastSendError || 'فشل إرسال الرسالة إلى تليجرام'),
+    };
   }
 
   /**
    * Formats and delivers a mock / test trading signal alert
    */
   public async sendMockSignalNotification(): Promise<{ success: boolean; error?: string }> {
-    if (!this.botToken) {
-      return { success: false, error: 'البوت غير مكوّن. يرجى إدخال TELEGRAM_BOT_TOKEN.' };
+    const token = this.getBotToken();
+    if (!token) {
+      return { success: false, error: 'البوت غير مكوّن. يرجى إدخال TELEGRAM_BOT_TOKEN في متغيرات البيئة (Secrets).' };
     }
 
     const chatId = this.getPrivateChatId();
     if (!chatId) {
-      return { success: false, error: 'NOT_REGISTERED' };
+      return { success: false, error: 'لم يتم العثور على معرّف المحادثة الخاصة (Chat ID). يرجى فتح البوت وإرسال /start أو ضبط TELEGRAM_AUTHORIZED_USER_IDS.' };
     }
 
     const mockSignal = {
@@ -851,8 +957,11 @@ ${message.text}
 ⏱ <i>الوقت: ${new Date().toLocaleTimeString('ar-EG')}</i>
     `.trim();
 
-    const success = await this.sendMessageDirectly(chatId, text);
-    return { success, error: success ? undefined : 'فشل إرسال الإشارة التجريبية إلى تليجرام' };
+    const result = await this.sendMessageDirectly(chatId, text);
+    return {
+      success: !!result,
+      error: result ? undefined : (this.lastSendError || 'فشل إرسال الإشارة التجريبية إلى تليجرام'),
+    };
   }
 
   /**

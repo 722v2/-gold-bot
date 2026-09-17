@@ -2,7 +2,11 @@ import 'dotenv/config';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 function getSupabaseCredentials(): { url: string; key: string; keySource: string } | null {
-  const rawUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const rawUrl =
+    process.env.SUPABASE_URL ||
+    process.env.VITE_SUPABASE_URL ||
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    process.env.SUPABASE_PROJECT_URL;
 
   let rawKey: string | undefined;
   let keySource = 'NONE';
@@ -10,22 +14,34 @@ function getSupabaseCredentials(): { url: string; key: string; keySource: string
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
     rawKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     keySource = 'SUPABASE_SERVICE_ROLE_KEY';
+  } else if (process.env.SUPABASE_SERVICE_KEY) {
+    rawKey = process.env.SUPABASE_SERVICE_KEY;
+    keySource = 'SUPABASE_SERVICE_KEY';
   } else if (process.env.SUPABASE_KEY) {
     rawKey = process.env.SUPABASE_KEY;
     keySource = 'SUPABASE_KEY';
+  } else if (process.env.SUPABASE_SECRET_KEY) {
+    rawKey = process.env.SUPABASE_SECRET_KEY;
+    keySource = 'SUPABASE_SECRET_KEY';
+  } else if (process.env.SUPABASE_API_KEY) {
+    rawKey = process.env.SUPABASE_API_KEY;
+    keySource = 'SUPABASE_API_KEY';
   } else if (process.env.SUPABASE_ANON_KEY) {
     rawKey = process.env.SUPABASE_ANON_KEY;
     keySource = 'SUPABASE_ANON_KEY';
   } else if (process.env.VITE_SUPABASE_ANON_KEY) {
     rawKey = process.env.VITE_SUPABASE_ANON_KEY;
     keySource = 'VITE_SUPABASE_ANON_KEY';
+  } else if (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    rawKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    keySource = 'NEXT_PUBLIC_SUPABASE_ANON_KEY';
   }
 
   if (!rawUrl || !rawKey) {
     return null;
   }
 
-  const url = rawUrl.trim().replace(/^["']|["']$/g, '');
+  let url = rawUrl.trim().replace(/^["']|["']$/g, '').replace(/\/+$/, '');
   const key = rawKey.trim().replace(/^["']|["']$/g, '');
 
   if (!url || !key) {
@@ -33,7 +49,7 @@ function getSupabaseCredentials(): { url: string; key: string; keySource: string
   }
 
   if (!url.startsWith('http://') && !url.startsWith('https://')) {
-    return null;
+    url = `https://${url}`;
   }
 
   return { url, key, keySource };
@@ -42,9 +58,6 @@ function getSupabaseCredentials(): { url: string; key: string; keySource: string
 function createSupabaseClientInstance(): SupabaseClient | null {
   const creds = getSupabaseCredentials();
   if (!creds) {
-    console.log(
-      '[Supabase] SUPABASE_URL or key not set in environment. PersistentStorage is operating in resilient local-backup mode and will auto-persist to Supabase once configured.'
-    );
     return null;
   }
 
@@ -63,15 +76,31 @@ function createSupabaseClientInstance(): SupabaseClient | null {
   }
 }
 
-// Export the real SupabaseClient instance directly or null when unconfigured
-export const supabase: SupabaseClient | null = createSupabaseClientInstance();
+// Runtime cached instance
+let runtimeSupabaseInstance: SupabaseClient | null = createSupabaseClientInstance();
+
+if (!runtimeSupabaseInstance) {
+  console.log(
+    '[Supabase] SUPABASE_URL or key not set in environment. PersistentStorage is operating in resilient local-backup mode and will auto-persist to Supabase once configured.'
+  );
+}
 
 export function isSupabaseConfigured(): boolean {
-  return supabase !== null;
+  if (!runtimeSupabaseInstance) {
+    runtimeSupabaseInstance = createSupabaseClientInstance();
+  }
+  return runtimeSupabaseInstance !== null;
 }
 
 export function getSupabaseClient(): SupabaseClient | null {
-  return supabase;
+  if (!runtimeSupabaseInstance) {
+    runtimeSupabaseInstance = createSupabaseClientInstance();
+  }
+  return runtimeSupabaseInstance;
 }
+
+// Export the real SupabaseClient instance or null when unconfigured
+export const supabase: SupabaseClient | null = runtimeSupabaseInstance;
+
 
 
