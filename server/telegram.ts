@@ -34,6 +34,9 @@ export class TelegramService {
   private lastUpdateId = 0;
   private signalMessageIds: Record<string, number> = {};
   private pendingPnlRequests: Map<string, PendingPnlRequest> = new Map();
+  private rateLimitedUntil = 0;
+  private hasLoggedRateLimit = false;
+  private lastActiveSignalUpdate = new Map<string, number>();
 
   constructor() {
     this.botToken = this.getBotToken();
@@ -41,6 +44,55 @@ export class TelegramService {
     this.loadRegisteredChat();
     this.loadMessageMapping();
     this.loadPendingPnlRequests();
+  }
+
+  /**
+   * Extract retry_after seconds from Telegram 429 error response or description
+   */
+  private extractRetryAfterSeconds(body: any, statusText?: string): number {
+    if (typeof body?.parameters?.retry_after === 'number' && body.parameters.retry_after > 0) {
+      return body.parameters.retry_after;
+    }
+    const str = `${body?.description || ''} ${statusText || ''}`;
+    const match = str.match(/retry\s+after\s+(\d+)/i);
+    if (match && match[1]) {
+      const parsed = parseInt(match[1], 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+    return 60; // Safe 60-second default fallback
+  }
+
+  /**
+   * Check if Telegram is currently in 429 rate-limit cooldown
+   */
+  public isRateLimited(): boolean {
+    const now = Date.now();
+    if (now < this.rateLimitedUntil) {
+      if (!this.hasLoggedRateLimit) {
+        const remainingSec = Math.ceil((this.rateLimitedUntil - now) / 1000);
+        console.warn(`[Telegram] Rate limited by Telegram API (HTTP 429). Pausing outbound requests for ${remainingSec}s until ${new Date(this.rateLimitedUntil).toISOString()}.`);
+        this.hasLoggedRateLimit = true;
+      }
+      return true;
+    }
+    if (this.hasLoggedRateLimit) {
+      console.log('[Telegram] Rate limit cooldown period expired. Resuming Telegram requests.');
+      this.hasLoggedRateLimit = false;
+    }
+    return false;
+  }
+
+  /**
+   * Set rate limit cooldown from 429 response
+   */
+  private handleRateLimitResponse(body: any, statusText?: string): void {
+    const retrySec = this.extractRetryAfterSeconds(body, statusText);
+    this.rateLimitedUntil = Date.now() + retrySec * 1000;
+    this.hasLoggedRateLimit = false;
+    this.isRateLimited(); // logs concise warning once
+    this.lastSendError = `Telegram API Rate Limited (429): retry after ${retrySec}s`;
   }
 
   /**
@@ -343,6 +395,11 @@ export class TelegramService {
   private async runPollingLoop(): Promise<void> {
     while (this.isRunning) {
       try {
+        if (this.isRateLimited()) {
+          await new Promise((r) => setTimeout(r, 5000));
+          continue;
+        }
+
         const token = this.getBotToken();
         if (!token) break;
 
@@ -351,6 +408,16 @@ export class TelegramService {
 
         const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${this.lastUpdateId + 1}&limit=10&timeout=2`;
         const res = await fetch(url, { signal });
+
+        if (res.status === 429) {
+          let body: any = null;
+          try {
+            body = await res.json();
+          } catch {}
+          this.handleRateLimitResponse(body, res.statusText);
+          await new Promise((r) => setTimeout(r, 5000));
+          continue;
+        }
 
         if (res.status === 409) {
           // Telegram 409 Conflict: Another getUpdates request terminated this one.
@@ -559,6 +626,10 @@ ${pending.originalMessageText || ''}
    * Send text directly to a specific chat ID
    */
   private async sendMessageDirectly(chatId: string, text: string, replyMarkup?: any): Promise<any> {
+    if (this.isRateLimited()) {
+      return null;
+    }
+
     const token = this.getBotToken();
     if (!token) {
       this.lastSendError = 'TELEGRAM_BOT_TOKEN is not configured.';
@@ -580,6 +651,15 @@ ${pending.originalMessageText || ''}
         }),
       });
 
+      if (res.status === 429) {
+        let body: any = null;
+        try {
+          body = await res.json();
+        } catch {}
+        this.handleRateLimitResponse(body, res.statusText);
+        return null;
+      }
+
       const body = await res.json() as any;
       if (body && body.ok === true) {
         return body.result;
@@ -600,6 +680,10 @@ ${pending.originalMessageText || ''}
    * Edit message text on Telegram
    */
   private async editMessageText(chatId: string, messageId: number, text: string, replyMarkup?: any): Promise<boolean> {
+    if (this.isRateLimited()) {
+      return false;
+    }
+
     const token = this.getBotToken();
     if (!token) return false;
 
@@ -618,6 +702,15 @@ ${pending.originalMessageText || ''}
         }),
       });
 
+      if (res.status === 429) {
+        let body: any = null;
+        try {
+          body = await res.json();
+        } catch {}
+        this.handleRateLimitResponse(body, res.statusText);
+        return false;
+      }
+
       const body = await res.json() as any;
       if (body && body.ok === true) {
         return true;
@@ -634,6 +727,10 @@ ${pending.originalMessageText || ''}
    * Remove inline keyboard markup from a message
    */
   private async removeInlineKeyboard(chatId: string, messageId: number): Promise<boolean> {
+    if (this.isRateLimited()) {
+      return false;
+    }
+
     const token = this.getBotToken();
     if (!token) return false;
 
@@ -648,6 +745,15 @@ ${pending.originalMessageText || ''}
           reply_markup: { inline_keyboard: [] }
         }),
       });
+
+      if (res.status === 429) {
+        let body: any = null;
+        try {
+          body = await res.json();
+        } catch {}
+        this.handleRateLimitResponse(body, res.statusText);
+        return false;
+      }
 
       const body = await res.json() as any;
       if (body && body.ok === true) {
@@ -665,6 +771,10 @@ ${pending.originalMessageText || ''}
    * Answer a callback query to acknowledge the button press in UI
    */
   private async answerCallbackQuery(callbackQueryId: string, text?: string, showAlert = false): Promise<boolean> {
+    if (this.isRateLimited()) {
+      return false;
+    }
+
     const token = this.getBotToken();
     if (!token) return false;
 
@@ -678,6 +788,15 @@ ${pending.originalMessageText || ''}
           ...(text ? { text, show_alert: showAlert } : {}),
         }),
       });
+
+      if (res.status === 429) {
+        let body: any = null;
+        try {
+          body = await res.json();
+        } catch {}
+        this.handleRateLimitResponse(body, res.statusText);
+        return false;
+      }
 
       const body = await res.json() as any;
       if (body && body.ok === true) {
@@ -1023,6 +1142,8 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
    * Update active signals with latest price and floating P&L on Telegram
    */
   public async updateActiveSignals(currentPrice: number): Promise<void> {
+    if (this.isRateLimited()) return;
+
     const chatId = this.getPrivateChatId();
     if (!chatId || !this.botToken) return;
 
@@ -1045,12 +1166,19 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
         if (existingOutcome || (existingTrade && existingTrade.result !== 'OPEN') || (signal && signal.lifecycleState === 'NOT_ENTERED')) {
           // No longer active, remove from tracking to stop periodic updates
           delete this.signalMessageIds[signalId];
+          this.lastActiveSignalUpdate.delete(signalId);
           this.saveMessageMapping();
           continue;
         }
 
         if (!signal) {
           // If signal was deleted or not found, skip
+          continue;
+        }
+
+        // Throttle updates per active signal (maximum once per 60 seconds per signal)
+        const lastUpdated = this.lastActiveSignalUpdate.get(signalId) || 0;
+        if (Date.now() - lastUpdated < 60000) {
           continue;
         }
 
@@ -1093,7 +1221,10 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
           ]
         };
 
-        await this.editMessageText(chatId, messageId, text, replyMarkup);
+        const success = await this.editMessageText(chatId, messageId, text, replyMarkup);
+        if (success) {
+          this.lastActiveSignalUpdate.set(signalId, Date.now());
+        }
       } catch (err) {
         console.error(`[Telegram] Error updating active signal ${signalId}:`, err);
       }

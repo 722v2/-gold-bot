@@ -1,6 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { supabase, isSupabaseConfigured, getSupabaseClient } from './supabase.js';
+import {
+  supabase,
+  isSupabaseConfigured,
+  getSupabaseClient,
+  isSupabaseAvailable,
+  executeSupabaseQuery,
+} from './supabase.js';
 import { telegramService } from './telegram.js';
 
 import {
@@ -316,200 +322,257 @@ export class PersistentStorage {
     }
   }
 
+  private safeSupabase(fn: (client: any) => any, context?: string): void {
+    if (!supabase || !this.shouldPersist()) return;
+    executeSupabaseQuery(fn, context).catch(() => {});
+  }
+
+  private async safeSupabaseAsync(fn: (client: any) => any, context?: string): Promise<any> {
+    if (!supabase || !this.shouldPersist()) return null;
+    return executeSupabaseQuery(fn, context);
+  }
+
   private async initSupabaseData(): Promise<void> {
-    const supabase = getSupabaseClient();
-    if (!supabase) return;
+    if (!isSupabaseAvailable()) return;
+    const supabaseClient = getSupabaseClient();
+    if (!supabaseClient) return;
 
     // 1. Account State
     try {
-      const { data: accData, error: accErr } = await supabase
-        .from('account_state')
-        .select('*')
-        .eq('id', 'main')
-        .maybeSingle();
-
-      if (accErr) {
-        console.warn('[Storage] Error fetching account_state from Supabase:', accErr.message);
-      } else if (accData) {
-        const curBal = Number(accData.current_balance ?? accData.currentBalance);
+      if (!isSupabaseAvailable()) return;
+      const res = await executeSupabaseQuery(
+        (c) => c.from('account_state').select('*').eq('id', 'main').maybeSingle(),
+        'initSupabaseData:account_state'
+      );
+      if (res && res.data) {
+        const curBal = Number(res.data.current_balance ?? res.data.currentBalance);
         if (!isNaN(curBal)) {
           this.inMemoryCurrentBalance = curBal;
         }
-        const startBal = Number(accData.starting_balance ?? accData.startingBalance);
+        const startBal = Number(res.data.starting_balance ?? res.data.startingBalance);
         if (!isNaN(startBal) && startBal > 0) {
           this.inMemoryStartingBalance = startBal;
         }
-      } else {
-        // Table exists but record does not: Seed with preserved balance $91.00
-        await supabase.from('account_state').upsert({
-          id: 'main',
-          starting_balance: this.inMemoryStartingBalance,
-          current_balance: this.inMemoryCurrentBalance,
-          updated_at: new Date().toISOString(),
-        });
+      } else if (res && !res.data && !res.error) {
+        // Table exists but record does not: Seed with preserved balance
+        await executeSupabaseQuery(
+          (c) =>
+            c.from('account_state').upsert({
+              id: 'main',
+              starting_balance: this.inMemoryStartingBalance,
+              current_balance: this.inMemoryCurrentBalance,
+              updated_at: new Date().toISOString(),
+            }),
+          'initSupabaseData:seed_account_state'
+        );
       }
     } catch (e: any) {
-      console.warn('[Storage] Supabase account_state query skipped:', e?.message || e);
+      // Non-blocking
     }
 
     // 2. App Settings
     try {
-      const { data: setData, error: setErr } = await supabase
-        .from('app_settings')
-        .select('*')
-        .eq('id', 'main')
-        .maybeSingle();
-
-      if (!setErr && setData?.data) {
-        this.inMemorySettings = { ...this.inMemorySettings, ...setData.data };
-      } else if (!setData && this.inMemorySettings) {
+      if (!isSupabaseAvailable()) return;
+      const res = await executeSupabaseQuery(
+        (c) => c.from('app_settings').select('*').eq('id', 'main').maybeSingle(),
+        'initSupabaseData:app_settings'
+      );
+      if (res && res.data?.data) {
+        this.inMemorySettings = { ...this.inMemorySettings, ...res.data.data };
+      } else if (res && !res.data && this.inMemorySettings) {
         // Seed settings
-        await supabase.from('app_settings').upsert({
-          id: 'main',
-          data: this.inMemorySettings,
-          updated_at: new Date().toISOString(),
-        });
+        await executeSupabaseQuery(
+          (c) =>
+            c.from('app_settings').upsert({
+              id: 'main',
+              data: this.inMemorySettings,
+              updated_at: new Date().toISOString(),
+            }),
+          'initSupabaseData:seed_app_settings'
+        );
       }
     } catch (e: any) {
-      console.warn('[Storage] Supabase app_settings query error:', e?.message || e);
+      // Non-blocking
     }
 
     // 3. Trade Ledger
     try {
-      const { data: tradeRows, error: tradeErr } = await supabase
-        .from('trade_ledger')
-        .select('*')
-        .order('trade_number', { ascending: false })
-        .limit(MAX_TRADES_TO_KEEP);
-
-      if (!tradeErr && Array.isArray(tradeRows) && tradeRows.length > 0) {
-        this.inMemoryTrades = tradeRows.map((r) => this.parseTradeRow(r));
-      } else if (!tradeErr && tradeRows?.length === 0 && this.inMemoryTrades.length > 0) {
+      if (!isSupabaseAvailable()) return;
+      const res = await executeSupabaseQuery(
+        (c) =>
+          c
+            .from('trade_ledger')
+            .select('*')
+            .order('trade_number', { ascending: false })
+            .limit(MAX_TRADES_TO_KEEP),
+        'initSupabaseData:trade_ledger'
+      );
+      if (res && Array.isArray(res.data) && res.data.length > 0) {
+        this.inMemoryTrades = res.data.map((r) => this.parseTradeRow(r));
+      } else if (res && res.data?.length === 0 && this.inMemoryTrades.length > 0) {
         // Seed remote with existing local trades
         for (const t of this.inMemoryTrades) {
-          await supabase.from('trade_ledger').upsert(this.formatTradeRow(t));
+          if (!isSupabaseAvailable()) break;
+          await executeSupabaseQuery((c) => c.from('trade_ledger').upsert(this.formatTradeRow(t)), 'initSupabaseData:seed_trade');
         }
       }
     } catch (e: any) {
-      console.warn('[Storage] Supabase trade_ledger query error:', e?.message || e);
+      // Non-blocking
     }
 
     // 4. Trade Outcomes
     try {
-      const { data: outcomeRows, error: outErr } = await supabase
-        .from('trade_outcomes')
-        .select('*')
-        .order('timestamp', { ascending: false })
-        .limit(500);
-
-      if (!outErr && Array.isArray(outcomeRows) && outcomeRows.length > 0) {
-        this.inMemoryOutcomes = outcomeRows.map((r) => this.parseOutcomeRow(r));
-      } else if (!outErr && outcomeRows?.length === 0 && this.inMemoryOutcomes.length > 0) {
+      if (!isSupabaseAvailable()) return;
+      const res = await executeSupabaseQuery(
+        (c) =>
+          c
+            .from('trade_outcomes')
+            .select('*')
+            .order('timestamp', { ascending: false })
+            .limit(500),
+        'initSupabaseData:trade_outcomes'
+      );
+      if (res && Array.isArray(res.data) && res.data.length > 0) {
+        this.inMemoryOutcomes = res.data.map((r) => this.parseOutcomeRow(r));
+      } else if (res && res.data?.length === 0 && this.inMemoryOutcomes.length > 0) {
         for (const out of this.inMemoryOutcomes) {
-          await supabase.from('trade_outcomes').upsert(this.formatOutcomeRow(out));
+          if (!isSupabaseAvailable()) break;
+          await executeSupabaseQuery((c) => c.from('trade_outcomes').upsert(this.formatOutcomeRow(out)), 'initSupabaseData:seed_outcome');
         }
       }
     } catch (e: any) {
-      console.warn('[Storage] Supabase trade_outcomes query error:', e?.message || e);
+      // Non-blocking
     }
 
     // 5. Signals
     try {
-      const { data: sigRows, error: sigErr } = await supabase
-        .from('signals')
-        .select('*')
-        .order('timestamp', { ascending: false })
-        .limit(MAX_SIGNALS_TO_KEEP);
-
-      if (!sigErr && Array.isArray(sigRows) && sigRows.length > 0) {
-        this.inMemorySignals = sigRows.map((r) => r.raw_data || r);
-      } else if (!sigErr && sigRows?.length === 0 && this.inMemorySignals.length > 0) {
+      if (!isSupabaseAvailable()) return;
+      const res = await executeSupabaseQuery(
+        (c) =>
+          c
+            .from('signals')
+            .select('*')
+            .order('timestamp', { ascending: false })
+            .limit(MAX_SIGNALS_TO_KEEP),
+        'initSupabaseData:signals'
+      );
+      if (res && Array.isArray(res.data) && res.data.length > 0) {
+        this.inMemorySignals = res.data.map((r) => r.raw_data || r);
+      } else if (res && res.data?.length === 0 && this.inMemorySignals.length > 0) {
         for (const s of this.inMemorySignals) {
-          await supabase.from('signals').upsert({ id: s.id, timestamp: s.timestamp, raw_data: s });
+          if (!isSupabaseAvailable()) break;
+          await executeSupabaseQuery(
+            (c) => c.from('signals').upsert({ id: s.id, timestamp: s.timestamp, raw_data: s }),
+            'initSupabaseData:seed_signal'
+          );
         }
       }
     } catch (e: any) {
-      console.warn('[Storage] Supabase signals query error:', e?.message || e);
+      // Non-blocking
     }
 
     // 6. Scans
     try {
-      const { data: scanRows, error: scanErr } = await supabase
-        .from('scans')
-        .select('*')
-        .order('timestamp', { ascending: false })
-        .limit(MAX_SCANS_TO_KEEP);
-
-      if (!scanErr && Array.isArray(scanRows) && scanRows.length > 0) {
-        this.inMemoryScans = scanRows.map((r) => r.raw_data || r);
-      } else if (!scanErr && scanRows?.length === 0 && this.inMemoryScans.length > 0) {
+      if (!isSupabaseAvailable()) return;
+      const res = await executeSupabaseQuery(
+        (c) =>
+          c
+            .from('scans')
+            .select('*')
+            .order('timestamp', { ascending: false })
+            .limit(MAX_SCANS_TO_KEEP),
+        'initSupabaseData:scans'
+      );
+      if (res && Array.isArray(res.data) && res.data.length > 0) {
+        this.inMemoryScans = res.data.map((r) => r.raw_data || r);
+      } else if (res && res.data?.length === 0 && this.inMemoryScans.length > 0) {
         for (const sc of this.inMemoryScans) {
-          await supabase.from('scans').upsert({ id: sc.id, timestamp: sc.timestamp, status: sc.status, raw_data: sc });
+          if (!isSupabaseAvailable()) break;
+          await executeSupabaseQuery(
+            (c) => c.from('scans').upsert({ id: sc.id, timestamp: sc.timestamp, status: sc.status, raw_data: sc }),
+            'initSupabaseData:seed_scan'
+          );
         }
       }
     } catch (e: any) {
-      console.warn('[Storage] Supabase scans query error:', e?.message || e);
+      // Non-blocking
     }
 
     // 7. Opportunities
     try {
-      const { data: oppRows, error: oppErr } = await supabase
-        .from('opportunities')
-        .select('*')
-        .order('last_updated_time', { ascending: false })
-        .limit(200);
-
-      if (!oppErr && Array.isArray(oppRows) && oppRows.length > 0) {
+      if (!isSupabaseAvailable()) return;
+      const res = await executeSupabaseQuery(
+        (c) =>
+          c
+            .from('opportunities')
+            .select('*')
+            .order('last_updated_time', { ascending: false })
+            .limit(200),
+        'initSupabaseData:opportunities'
+      );
+      if (res && Array.isArray(res.data) && res.data.length > 0) {
         this.inMemoryOpportunities.clear();
-        for (const r of oppRows) {
+        for (const r of res.data) {
           const opp = r.raw_data || r;
           if (opp.id) this.inMemoryOpportunities.set(opp.id, opp);
         }
-      } else if (!oppErr && oppRows?.length === 0 && this.inMemoryOpportunities.size > 0) {
+      } else if (res && res.data?.length === 0 && this.inMemoryOpportunities.size > 0) {
         for (const opp of this.inMemoryOpportunities.values()) {
-          await supabase.from('opportunities').upsert({ id: opp.id, last_updated_time: opp.lastUpdatedTime, raw_data: opp });
+          if (!isSupabaseAvailable()) break;
+          await executeSupabaseQuery(
+            (c) => c.from('opportunities').upsert({ id: opp.id, last_updated_time: opp.lastUpdatedTime, raw_data: opp }),
+            'initSupabaseData:seed_opportunity'
+          );
         }
       }
     } catch (e: any) {
-      console.warn('[Storage] Supabase opportunities query error:', e?.message || e);
+      // Non-blocking
     }
 
     // 8. Telegram Config
     try {
-      const { data: tgData } = await supabase
-        .from('telegram_config')
-        .select('*')
-        .eq('id', 'main')
-        .maybeSingle();
-
-      if (tgData?.chat_id) {
-        this.inMemoryTelegramChatId = String(tgData.chat_id);
-      } else if (this.inMemoryTelegramChatId) {
-        await supabase.from('telegram_config').upsert({
-          id: 'main',
-          chat_id: this.inMemoryTelegramChatId,
-          registered_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
+      if (!isSupabaseAvailable()) return;
+      const res = await executeSupabaseQuery(
+        (c) => c.from('telegram_config').select('*').eq('id', 'main').maybeSingle(),
+        'initSupabaseData:telegram_config'
+      );
+      if (res && res.data?.chat_id) {
+        this.inMemoryTelegramChatId = String(res.data.chat_id);
+      } else if (res && this.inMemoryTelegramChatId) {
+        await executeSupabaseQuery(
+          (c) =>
+            c.from('telegram_config').upsert({
+              id: 'main',
+              chat_id: this.inMemoryTelegramChatId,
+              registered_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            }),
+          'initSupabaseData:seed_telegram'
+        );
       }
     } catch (e: any) {
-      console.warn('[Storage] Supabase telegram_config query error:', e?.message || e);
+      // Non-blocking
     }
 
     // 9. Terminal Setups
     try {
-      const { data: termRows } = await supabase.from('terminal_setups').select('*');
-      if (Array.isArray(termRows) && termRows.length > 0) {
-        for (const r of termRows) {
+      if (!isSupabaseAvailable()) return;
+      const res = await executeSupabaseQuery((c) => c.from('terminal_setups').select('*'), 'initSupabaseData:terminal_setups');
+      if (res && Array.isArray(res.data) && res.data.length > 0) {
+        for (const r of res.data) {
           if (r.setup_key) this.inMemoryTerminalSetups.add(r.setup_key);
         }
-      } else if (this.inMemoryTerminalSetups.size > 0) {
+      } else if (res && this.inMemoryTerminalSetups.size > 0) {
         for (const key of this.inMemoryTerminalSetups) {
-          await supabase.from('terminal_setups').upsert({ id: key.replace(/\//g, '_'), setup_key: key });
+          if (!isSupabaseAvailable()) break;
+          await executeSupabaseQuery(
+            (c) => c.from('terminal_setups').upsert({ id: key.replace(/\//g, '_'), setup_key: key }),
+            'initSupabaseData:seed_terminal'
+          );
         }
       }
     } catch (e: any) {
-      console.warn('[Storage] Supabase terminal_setups query error:', e?.message || e);
+      // Non-blocking
     }
 
     // Sync state to local files to ensure disk parity
@@ -731,18 +794,16 @@ export class PersistentStorage {
     this.inMemoryTelegramChatId = String(chatId);
     this.syncJsonBackups();
 
-    if (supabase && this.shouldPersist()) {
-      try {
-        await supabase.from('telegram_config').upsert({
+    this.safeSupabase(
+      (c) =>
+        c.from('telegram_config').upsert({
           id: 'main',
           chat_id: String(chatId),
           registered_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-        });
-      } catch (err: any) {
-        console.error('[Storage] Supabase saveTelegramChatId error:', err?.message || err);
-      }
-    }
+        }),
+      'saveTelegramChatId'
+    );
   }
 
   // =========================================================================
@@ -763,18 +824,17 @@ export class PersistentStorage {
         }
       }
 
-      if (supabase && this.shouldPersist() && record.id) {
-        supabase
-          .from('scans')
-          .upsert({
-            id: record.id,
-            timestamp: record.timestamp,
-            status: record.status,
-            raw_data: record,
-          })
-          .then(({ error }) => {
-            if (error) console.error('[Storage] Supabase saveScan error:', error.message);
-          });
+      if (record.id) {
+        this.safeSupabase(
+          (c) =>
+            c.from('scans').upsert({
+              id: record.id,
+              timestamp: record.timestamp,
+              status: record.status,
+              raw_data: record,
+            }),
+          'saveScan'
+        );
       }
 
       this.syncJsonBackups();
@@ -805,17 +865,16 @@ export class PersistentStorage {
         this.inMemorySignals = this.inMemorySignals.slice(0, MAX_SIGNALS_TO_KEEP);
       }
 
-      if (supabase && this.shouldPersist() && signal.id) {
-        supabase
-          .from('signals')
-          .upsert({
-            id: signal.id,
-            timestamp: signal.timestamp,
-            raw_data: signal,
-          })
-          .then(({ error }) => {
-            if (error) console.error('[Storage] Supabase saveSignal error:', error.message);
-          });
+      if (signal.id) {
+        this.safeSupabase(
+          (c) =>
+            c.from('signals').upsert({
+              id: signal.id,
+              timestamp: signal.timestamp,
+              raw_data: signal,
+            }),
+          'saveSignal'
+        );
       }
 
       this.syncJsonBackups();
@@ -844,19 +903,16 @@ export class PersistentStorage {
     if (memSignal) return memSignal;
 
     // 2. Try fetching from Supabase
-    if (supabase && this.shouldPersist()) {
-      try {
-        const { data, error } = await supabase.from('signals').select('*').eq('id', id).maybeSingle();
-        if (!error && data) {
-          const signalData: TradeSignal = data.raw_data || data;
-          if (!this.inMemorySignals.some((s) => s.id === signalData.id)) {
-            this.inMemorySignals.unshift(signalData);
-          }
-          return signalData;
-        }
-      } catch (err) {
-        console.error(`[Storage] Error fetching signal ${id} from Supabase:`, err);
+    const res = await this.safeSupabaseAsync(
+      (c) => c.from('signals').select('*').eq('id', id).maybeSingle(),
+      'getSignalFromStorage'
+    );
+    if (res && !res.error && res.data) {
+      const signalData: TradeSignal = res.data.raw_data || res.data;
+      if (!this.inMemorySignals.some((s) => s.id === signalData.id)) {
+        this.inMemorySignals.unshift(signalData);
       }
+      return signalData;
     }
 
     // 3. Try reading local saved_signals.json backup if available
@@ -958,13 +1014,11 @@ export class PersistentStorage {
       }
 
       // Asynchronous Supabase write
-      if (supabase && this.shouldPersist() && tradeWithActive.id) {
-        supabase
-          .from('trade_ledger')
-          .upsert(this.formatTradeRow(tradeWithActive))
-          .then(({ error }) => {
-            if (error) console.error(`[Storage] Supabase saveTrade error for ${tradeWithActive.id}:`, error.message);
-          });
+      if (tradeWithActive.id) {
+        this.safeSupabase(
+          (c) => c.from('trade_ledger').upsert(this.formatTradeRow(tradeWithActive)),
+          `saveTrade:${tradeWithActive.id}`
+        );
       }
 
       this.syncJsonBackups();
@@ -1011,13 +1065,11 @@ export class PersistentStorage {
 
       this.syncJsonBackups();
 
-      if (supabase && this.shouldPersist() && tradeWithActive.id) {
-        try {
-          const { error } = await supabase.from('trade_ledger').upsert(this.formatTradeRow(tradeWithActive));
-          if (error) console.error(`[Storage] Supabase saveTradeAsync error for ${tradeWithActive.id}:`, error.message);
-        } catch (err: any) {
-          console.error(`[Storage] Supabase saveTradeAsync exception for ${tradeWithActive.id}:`, err?.message || err);
-        }
+      if (tradeWithActive.id) {
+        await this.safeSupabaseAsync(
+          (c) => c.from('trade_ledger').upsert(this.formatTradeRow(tradeWithActive)),
+          `saveTradeAsync:${tradeWithActive.id}`
+        );
       }
 
       return [...this.inMemoryTrades];
@@ -1031,18 +1083,16 @@ export class PersistentStorage {
     this.inMemoryCurrentBalance = Number((this.inMemoryCurrentBalance + deltaPnl).toFixed(2));
     this.syncJsonBackups();
 
-    if (supabase && this.shouldPersist()) {
-      try {
-        await supabase.from('account_state').upsert({
+    this.safeSupabase(
+      (c) =>
+        c.from('account_state').upsert({
           id: 'main',
           current_balance: this.inMemoryCurrentBalance,
           starting_balance: this.inMemoryStartingBalance,
           updated_at: new Date().toISOString(),
-        });
-      } catch (err: any) {
-        console.error('[Storage] Supabase account_state update error:', err?.message || err);
-      }
-    }
+        }),
+      'updateBalanceFromManualTrade'
+    );
     return this.inMemoryCurrentBalance;
   }
 
@@ -1244,31 +1294,24 @@ export class PersistentStorage {
       const updatedTrade = tradeToUpdate;
 
       // Supabase persistence
-      if (supabase && this.shouldPersist()) {
-        supabase
-          .from('trade_outcomes')
-          .upsert(this.formatOutcomeRow(record))
-          .then(({ error }) => {
-            if (error) console.error('[Storage] Supabase recordTradeOutcome error:', error.message);
-          });
-        supabase
-          .from('trade_ledger')
-          .upsert(this.formatTradeRow(updatedTrade))
-          .then(({ error }) => {
-            if (error) console.error('[Storage] Supabase saveTrade error in outcome:', error.message);
-          });
-        supabase
-          .from('account_state')
-          .upsert({
+      this.safeSupabase(
+        (c) => c.from('trade_outcomes').upsert(this.formatOutcomeRow(record)),
+        'recordTradeOutcome:outcomes'
+      );
+      this.safeSupabase(
+        (c) => c.from('trade_ledger').upsert(this.formatTradeRow(updatedTrade)),
+        'recordTradeOutcome:ledger'
+      );
+      this.safeSupabase(
+        (c) =>
+          c.from('account_state').upsert({
             id: 'main',
             current_balance: this.inMemoryCurrentBalance,
             starting_balance: this.inMemoryStartingBalance,
             updated_at: new Date().toISOString(),
-          })
-          .then(({ error }) => {
-            if (error) console.error('[Storage] Supabase account_state update error:', error.message);
-          });
-      }
+          }),
+        'recordTradeOutcome:account_state'
+      );
 
       this.syncJsonBackups();
 
@@ -1305,21 +1348,21 @@ export class PersistentStorage {
     message?: string;
   }> {
     const res = this.recordTradeOutcome(record, signalData);
-    if (res.success && res.trade && supabase && this.shouldPersist()) {
-      try {
-        await Promise.all([
-          supabase.from('trade_outcomes').upsert(this.formatOutcomeRow(record)),
-          supabase.from('trade_ledger').upsert(this.formatTradeRow(res.trade)),
-          supabase.from('account_state').upsert({
-            id: 'main',
-            current_balance: this.inMemoryCurrentBalance,
-            starting_balance: this.inMemoryStartingBalance,
-            updated_at: new Date().toISOString(),
-          }),
-        ]);
-      } catch (e: any) {
-        console.error('[Storage] Supabase recordTradeOutcomeAsync write error:', e?.message || e);
-      }
+    if (res.success && res.trade) {
+      await Promise.all([
+        this.safeSupabaseAsync((c) => c.from('trade_outcomes').upsert(this.formatOutcomeRow(record)), 'recordTradeOutcomeAsync:outcomes'),
+        this.safeSupabaseAsync((c) => c.from('trade_ledger').upsert(this.formatTradeRow(res.trade!)), 'recordTradeOutcomeAsync:ledger'),
+        this.safeSupabaseAsync(
+          (c) =>
+            c.from('account_state').upsert({
+              id: 'main',
+              current_balance: this.inMemoryCurrentBalance,
+              starting_balance: this.inMemoryStartingBalance,
+              updated_at: new Date().toISOString(),
+            }),
+          'recordTradeOutcomeAsync:account_state'
+        ),
+      ]);
     }
     return res;
   }
@@ -1466,19 +1509,16 @@ export class PersistentStorage {
       this.inMemorySettings.manualCapital = this.inMemoryStartingBalance;
       this.syncJsonBackups();
 
-      if (supabase && this.shouldPersist()) {
-        supabase
-          .from('account_state')
-          .upsert({
+      this.safeSupabase(
+        (c) =>
+          c.from('account_state').upsert({
             id: 'main',
             current_balance: this.inMemoryCurrentBalance,
             starting_balance: this.inMemoryStartingBalance,
             updated_at: new Date().toISOString(),
-          })
-          .then(({ error }) => {
-            if (error) console.error('[Storage] Supabase setStartingBalance error:', error.message);
-          });
-      }
+          }),
+        'setStartingBalance'
+      );
     }
   }
 
@@ -1487,19 +1527,16 @@ export class PersistentStorage {
       this.inMemoryCurrentBalance = Number(val.toFixed(2));
       this.syncJsonBackups();
 
-      if (supabase && this.shouldPersist()) {
-        supabase
-          .from('account_state')
-          .upsert({
+      this.safeSupabase(
+        (c) =>
+          c.from('account_state').upsert({
             id: 'main',
             current_balance: this.inMemoryCurrentBalance,
             starting_balance: this.inMemoryStartingBalance,
             updated_at: new Date().toISOString(),
-          })
-          .then(({ error }) => {
-            if (error) console.error('[Storage] Supabase setCurrentBalance error:', error.message);
-          });
-      }
+          }),
+        'setCurrentBalance'
+      );
     }
   }
 
@@ -1509,33 +1546,27 @@ export class PersistentStorage {
       this.inMemoryStartingBalance = Number(starting.toFixed(2));
       this.inMemorySettings.manualCapital = this.inMemoryStartingBalance;
 
-      if (supabase && this.shouldPersist()) {
-        supabase
-          .from('app_settings')
-          .upsert({
+      this.safeSupabase(
+        (c) =>
+          c.from('app_settings').upsert({
             id: 'main',
             data: this.inMemorySettings,
             updated_at: new Date().toISOString(),
-          })
-          .then(({ error }) => {
-            if (error) console.error('[Storage] Supabase updateBalance settings error:', error.message);
-          });
-      }
+          }),
+        'updateBalance:settings'
+      );
     }
 
-    if (supabase && this.shouldPersist()) {
-      supabase
-        .from('account_state')
-        .upsert({
+    this.safeSupabase(
+      (c) =>
+        c.from('account_state').upsert({
           id: 'main',
           current_balance: this.inMemoryCurrentBalance,
           starting_balance: this.inMemoryStartingBalance,
           updated_at: new Date().toISOString(),
-        })
-        .then(({ error }) => {
-          if (error) console.error('[Storage] Supabase updateBalance account error:', error.message);
-        });
-    }
+        }),
+      'updateBalance:account_state'
+    );
 
     this.syncJsonBackups();
     return this.getBalance();
@@ -1565,18 +1596,15 @@ export class PersistentStorage {
         }
       }
 
-      if (supabase && this.shouldPersist()) {
-        supabase
-          .from('app_settings')
-          .upsert({
+      this.safeSupabase(
+        (c) =>
+          c.from('app_settings').upsert({
             id: 'main',
             data: this.inMemorySettings,
             updated_at: new Date().toISOString(),
-          })
-          .then(({ error }) => {
-            if (error) console.error('[Storage] Supabase saveSettings error:', error.message);
-          });
-      }
+          }),
+        'saveSettings'
+      );
 
       this.syncJsonBackups();
       return {
@@ -1611,17 +1639,14 @@ export class PersistentStorage {
     if (!key) return;
     this.inMemoryTerminalSetups.add(key);
 
-    if (supabase && this.shouldPersist()) {
-      supabase
-        .from('terminal_setups')
-        .upsert({
+    this.safeSupabase(
+      (c) =>
+        c.from('terminal_setups').upsert({
           id: key.replace(/\//g, '_'),
           setup_key: key,
-        })
-        .then(({ error }) => {
-          if (error) console.error('[Storage] Supabase saveTerminalSetup error:', error.message);
-        });
-    }
+        }),
+      'saveTerminalSetup'
+    );
 
     this.syncJsonBackups();
   }
@@ -1699,28 +1724,24 @@ export class PersistentStorage {
           });
         }
 
-        if (supabase && this.shouldPersist()) {
-          supabase
-            .from('trade_ledger')
-            .upsert(this.formatTradeRow(this.inMemoryTrades[idx]))
-            .then(({ error }) => {
-              if (error) console.error(`[Storage] Supabase closeTrade error for ${id}:`, error.message);
-            });
+        this.safeSupabase(
+          (c) => c.from('trade_ledger').upsert(this.formatTradeRow(this.inMemoryTrades[idx])),
+          `closeTrade:${id}`
+        );
 
-          if (isRealizedTrade) {
-            supabase
-              .from('account_state')
-              .upsert({
+        if (isRealizedTrade) {
+          this.safeSupabase(
+            (c) =>
+              c.from('account_state').upsert({
                 id: 'main',
                 current_balance: this.inMemoryCurrentBalance,
                 starting_balance: this.inMemoryStartingBalance,
                 updated_at: new Date().toISOString(),
-              })
-              .then(({ error }) => {
-                if (error) console.error('[Storage] Supabase closeTrade account error:', error.message);
-              });
-          }
+              }),
+            'closeTrade:account_state'
+          );
         }
+
         this.syncJsonBackups();
       }
       return [...this.inMemoryTrades];
@@ -1738,26 +1759,18 @@ export class PersistentStorage {
       this.inMemoryCurrentBalance =
         closedTrades.length === 0 ? this.inMemoryStartingBalance : Number((this.inMemoryStartingBalance + totalPl).toFixed(2));
 
-      if (supabase && this.shouldPersist()) {
-        supabase
-          .from('trade_ledger')
-          .delete()
-          .eq('id', id)
-          .then(({ error }) => {
-            if (error) console.error(`[Storage] Supabase deleteTrade error for ${id}:`, error.message);
-          });
-        supabase
-          .from('account_state')
-          .upsert({
+      this.safeSupabase((c) => c.from('trade_ledger').delete().eq('id', id), `deleteTrade:${id}`);
+      this.safeSupabase(
+        (c) =>
+          c.from('account_state').upsert({
             id: 'main',
             current_balance: this.inMemoryCurrentBalance,
             starting_balance: this.inMemoryStartingBalance,
             updated_at: new Date().toISOString(),
-          })
-          .then(({ error }) => {
-            if (error) console.error('[Storage] Supabase deleteTrade account error:', error.message);
-          });
-      }
+          }),
+        'deleteTrade:account_state'
+      );
+
       this.syncJsonBackups();
       return [...this.inMemoryTrades];
     } catch (error) {
@@ -1810,14 +1823,7 @@ export class PersistentStorage {
         this.inMemoryPois.shift();
       }
     }
-    if (supabase && this.shouldPersist()) {
-      supabase
-        .from('poi_records')
-        .upsert({ id: poi.id, raw_data: poi })
-        .then(({ error }) => {
-          if (error) console.error(`[Storage] Supabase savePoi error for ${poi.id}:`, error.message);
-        });
-    }
+    this.safeSupabase((c) => c.from('poi_records').upsert({ id: poi.id, raw_data: poi }), `savePoi:${poi.id}`);
   }
 
   public savePois(pois: PoiRecord[]): void {
@@ -1843,14 +1849,10 @@ export class PersistentStorage {
         this.inMemoryLifecycles.shift();
       }
     }
-    if (supabase && this.shouldPersist()) {
-      supabase
-        .from('candidate_lifecycles')
-        .upsert({ id: record.id, raw_data: record })
-        .then(({ error }) => {
-          if (error) console.error(`[Storage] Supabase saveLifecycle error for ${record.id}:`, error.message);
-        });
-    }
+    this.safeSupabase(
+      (c) => c.from('candidate_lifecycles').upsert({ id: record.id, raw_data: record }),
+      `saveLifecycle:${record.id}`
+    );
   }
 
   public saveLifecycles(records: CandidateLifecycleRecord[]): void {
@@ -1869,18 +1871,15 @@ export class PersistentStorage {
   public saveOpportunity(opp: TradeOpportunity): void {
     if (!opp.id) return;
     this.inMemoryOpportunities.set(opp.id, opp);
-    if (supabase && this.shouldPersist()) {
-      supabase
-        .from('opportunities')
-        .upsert({
+    this.safeSupabase(
+      (c) =>
+        c.from('opportunities').upsert({
           id: opp.id,
           last_updated_time: opp.lastUpdatedTime,
           raw_data: opp,
-        })
-        .then(({ error }) => {
-          if (error) console.error('[Storage] Supabase saveOpportunity error:', error.message);
-        });
-    }
+        }),
+      `saveOpportunity:${opp.id}`
+    );
     this.syncJsonBackups();
   }
 
@@ -1906,17 +1905,15 @@ export class PersistentStorage {
     if (sigIdx >= 0) {
       this.inMemorySignals[sigIdx].lifecycleState = 'NOT_ENTERED';
       updatedSignal = this.inMemorySignals[sigIdx];
-      if (supabase && this.shouldPersist()) {
-        Promise.resolve(
-          supabase
-            .from('signals')
-            .upsert({
-              id: updatedSignal.id,
-              timestamp: updatedSignal.timestamp,
-              raw_data: updatedSignal,
-            })
-        ).catch((e) => console.error('[Storage] Supabase update signal NOT_ENTERED error:', e));
-      }
+      this.safeSupabase(
+        (c) =>
+          c.from('signals').upsert({
+            id: updatedSignal!.id,
+            timestamp: updatedSignal!.timestamp,
+            raw_data: updatedSignal,
+          }),
+        `markNotEntered:signal:${updatedSignal.id}`
+      );
     }
 
     // 2. Update Opportunity in memory and storage
@@ -1926,17 +1923,15 @@ export class PersistentStorage {
       opp.lastUpdatedTime = Date.now();
       this.inMemoryOpportunities.set(opp.id, opp);
       updatedOpp = opp;
-      if (supabase && this.shouldPersist()) {
-        Promise.resolve(
-          supabase
-            .from('opportunities')
-            .upsert({
-              id: opp.id,
-              last_updated_time: opp.lastUpdatedTime,
-              raw_data: opp,
-            })
-        ).catch((e) => console.error('[Storage] Supabase update opportunity NOT_ENTERED error:', e));
-      }
+      this.safeSupabase(
+        (c) =>
+          c.from('opportunities').upsert({
+            id: opp.id,
+            last_updated_time: opp.lastUpdatedTime,
+            raw_data: opp,
+          }),
+        `markNotEntered:opportunity:${opp.id}`
+      );
     }
 
     // 3. Update candidate lifecycle if found
@@ -1944,11 +1939,10 @@ export class PersistentStorage {
     if (lcIdx >= 0) {
       this.inMemoryLifecycles[lcIdx].state = 'NOT_ENTERED';
       this.inMemoryLifecycles[lcIdx].lastUpdatedTime = Date.now();
-      if (supabase && this.shouldPersist()) {
-        Promise.resolve(
-          supabase.from('candidate_lifecycles').upsert({ id: this.inMemoryLifecycles[lcIdx].id, raw_data: this.inMemoryLifecycles[lcIdx] })
-        ).catch(() => {});
-      }
+      this.safeSupabase(
+        (c) => c.from('candidate_lifecycles').upsert({ id: this.inMemoryLifecycles[lcIdx].id, raw_data: this.inMemoryLifecycles[lcIdx] }),
+        `markNotEntered:lifecycle:${this.inMemoryLifecycles[lcIdx].id}`
+      );
     }
 
     // 4. Also store outcome record as NOT_ENTERED
@@ -1976,11 +1970,10 @@ export class PersistentStorage {
     } else {
       this.inMemoryOutcomes.unshift(outcomeRecord);
     }
-    if (supabase && this.shouldPersist()) {
-      Promise.resolve(
-        supabase.from('trade_outcomes').upsert(this.formatOutcomeRow(outcomeRecord))
-      ).catch(() => {});
-    }
+    this.safeSupabase(
+      (c) => c.from('trade_outcomes').upsert(this.formatOutcomeRow(outcomeRecord)),
+      `markNotEntered:outcome:${signalOrOppId}`
+    );
 
     this.syncJsonBackups();
     return { success: true, signal: updatedSignal, opportunity: updatedOpp };
@@ -1989,19 +1982,17 @@ export class PersistentStorage {
   public async clearAllTrades(): Promise<TradeLedgerItem[]> {
     this.inMemoryTrades = [];
     this.inMemoryCurrentBalance = this.inMemoryStartingBalance;
-    if (supabase && this.shouldPersist()) {
-      try {
-        await supabase.from('trade_ledger').delete().neq('id', '___non_existent___');
-        await supabase.from('account_state').upsert({
+    await this.safeSupabaseAsync((c) => c.from('trade_ledger').delete().neq('id', '___non_existent___'), 'clearAllTrades:ledger');
+    await this.safeSupabaseAsync(
+      (c) =>
+        c.from('account_state').upsert({
           id: 'main',
           current_balance: this.inMemoryCurrentBalance,
           starting_balance: this.inMemoryStartingBalance,
           updated_at: new Date().toISOString(),
-        });
-      } catch (e) {
-        console.error('[Storage] Error clearing all trades in Supabase:', e);
-      }
-    }
+        }),
+      'clearAllTrades:account_state'
+    );
     this.syncJsonBackups();
     return [];
   }
@@ -2047,23 +2038,23 @@ export class PersistentStorage {
       this.syncJsonBackups();
 
       // 7. Clear Supabase tables if connected
-      if (supabase && this.shouldPersist()) {
-        try {
-          await supabase.from('signals').delete().neq('id', '___keep___');
-          await supabase.from('opportunities').delete().neq('id', '___keep___');
-          await supabase.from('candidate_lifecycles').delete().neq('id', '___keep___');
-          await supabase.from('terminal_setups').delete().neq('id', '___keep___');
-          await supabase.from('trade_ledger').delete().eq('result', 'OPEN');
-          await supabase.from('account_state').upsert({
-            id: 'main',
-            current_balance: this.inMemoryCurrentBalance,
-            starting_balance: this.inMemoryStartingBalance,
-            updated_at: new Date().toISOString(),
-          });
-        } catch (fsErr) {
-          console.warn('[Storage] Supabase deletion during reset had non-blocking error:', fsErr);
-        }
-      }
+      await Promise.all([
+        this.safeSupabaseAsync((c) => c.from('signals').delete().neq('id', '___keep___'), 'resetTradingState:signals'),
+        this.safeSupabaseAsync((c) => c.from('opportunities').delete().neq('id', '___keep___'), 'resetTradingState:opportunities'),
+        this.safeSupabaseAsync((c) => c.from('candidate_lifecycles').delete().neq('id', '___keep___'), 'resetTradingState:lifecycles'),
+        this.safeSupabaseAsync((c) => c.from('terminal_setups').delete().neq('id', '___keep___'), 'resetTradingState:terminal_setups'),
+        this.safeSupabaseAsync((c) => c.from('trade_ledger').delete().eq('result', 'OPEN'), 'resetTradingState:open_trades'),
+        this.safeSupabaseAsync(
+          (c) =>
+            c.from('account_state').upsert({
+              id: 'main',
+              current_balance: this.inMemoryCurrentBalance,
+              starting_balance: this.inMemoryStartingBalance,
+              updated_at: new Date().toISOString(),
+            }),
+          'resetTradingState:account_state'
+        ),
+      ]);
 
       const auditAfter = {
         signalsCount: this.inMemorySignals.length,

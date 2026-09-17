@@ -85,6 +85,126 @@ if (!runtimeSupabaseInstance) {
   );
 }
 
+// Temporary connectivity & backoff state
+let consecutiveNetworkFailures = 0;
+let supabaseBackoffUntil = 0;
+let hasLoggedBackoff = false;
+
+/**
+ * Checks whether an error is a transport/network layer failure (e.g. fetch failed, DNS, timeout)
+ */
+export function isSupabaseTransportError(err: any): boolean {
+  if (!err) return false;
+  const msg = String(err?.message || err);
+  const name = String(err?.name || '');
+  const code = String(err?.code || '');
+
+  return (
+    (name === 'TypeError' && msg.includes('fetch failed')) ||
+    msg.includes('fetch failed') ||
+    msg.includes('UND_ERR') ||
+    msg.includes('ECONNREFUSED') ||
+    msg.includes('ECONNRESET') ||
+    msg.includes('ETIMEDOUT') ||
+    msg.includes('ENOTFOUND') ||
+    msg.includes('EAI_AGAIN') ||
+    code === 'ENOTFOUND' ||
+    code === 'ECONNREFUSED' ||
+    code === 'ETIMEDOUT'
+  );
+}
+
+/**
+ * Checks if Supabase is currently available (configured and not in network backoff)
+ */
+export function isSupabaseAvailable(): boolean {
+  if (!isSupabaseConfigured()) {
+    return false;
+  }
+  const now = Date.now();
+  if (now < supabaseBackoffUntil) {
+    return false;
+  }
+  if (hasLoggedBackoff) {
+    console.log('[Supabase] Backoff cooldown expired. Attempting to resume Supabase persistence operations.');
+    hasLoggedBackoff = false;
+  }
+  return true;
+}
+
+/**
+ * Called when a Supabase operation succeeds to reset failure counters and backoff state
+ */
+export function recordSupabaseSuccess(): void {
+  if (consecutiveNetworkFailures > 0 || supabaseBackoffUntil > 0) {
+    console.log('[Supabase] Connection verified successfully. Cloud database synchronization active.');
+  }
+  consecutiveNetworkFailures = 0;
+  supabaseBackoffUntil = 0;
+  hasLoggedBackoff = false;
+}
+
+/**
+ * Called when a Supabase operation fails. If it is a transport-level failure, triggers exponential backoff.
+ */
+export function recordSupabaseError(err: any, context?: string): void {
+  if (!isSupabaseTransportError(err)) {
+    // Normal database/query error (e.g. 400 Bad Request, schema mismatch) - log without triggering network backoff
+    const ctx = context ? ` [${context}]` : '';
+    console.warn(`[Supabase Error]${ctx}:`, err?.message || err);
+    return;
+  }
+
+  consecutiveNetworkFailures++;
+  // Exponential backoff: 15s -> 30s -> 60s -> 120s -> 240s, capped at 300s (5 minutes)
+  const backoffSeconds = Math.min(300, 15 * Math.pow(2, Math.min(consecutiveNetworkFailures - 1, 5)));
+  supabaseBackoffUntil = Date.now() + (backoffSeconds * 1000);
+
+  if (!hasLoggedBackoff || consecutiveNetworkFailures === 1 || consecutiveNetworkFailures % 10 === 0) {
+    const ctx = context ? ` during ${context}` : '';
+    console.warn(
+      `[Supabase] Network transport failure${ctx} (${err?.message || 'fetch failed'}). ` +
+      `Entering temporary backoff for ${backoffSeconds}s (failures: ${consecutiveNetworkFailures}). ` +
+      `Local JSON persistence remains primary and 100% active.`
+    );
+    hasLoggedBackoff = true;
+  }
+}
+
+/**
+ * Safely executes a Supabase query with automatic backoff and transport failure suppression.
+ * Returns null if in backoff or if network transport fails.
+ */
+export async function executeSupabaseQuery<T = any>(
+  queryFn: (client: SupabaseClient) => PromiseLike<{ data?: T; error?: any } | any> | Promise<{ data?: T; error?: any } | any> | any,
+  context?: string
+): Promise<{ data?: T; error?: any } | null> {
+  if (!isSupabaseAvailable()) {
+    return null;
+  }
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  try {
+    const res = await queryFn(client);
+    if (res && res.error) {
+      if (isSupabaseTransportError(res.error)) {
+        recordSupabaseError(res.error, context);
+        return null;
+      }
+      if (context) {
+        console.warn(`[Supabase Error] [${context}]:`, res.error?.message || res.error);
+      }
+      return res;
+    }
+    recordSupabaseSuccess();
+    return res;
+  } catch (err: any) {
+    recordSupabaseError(err, context);
+    return null;
+  }
+}
+
 export function isSupabaseConfigured(): boolean {
   if (!runtimeSupabaseInstance) {
     runtimeSupabaseInstance = createSupabaseClientInstance();
