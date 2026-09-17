@@ -506,19 +506,25 @@ export interface TradeLedgerItem {
   reversalWatchTimestamp?: number;
   suggestedSL?: number;
   suggestedTP2?: number;
+  notifiedStates?: string[];
 }
 
 export type TradeManagementState =
+  | 'ACTIVE'
   | 'HOLD'
-  | 'TP1_APPROACHING'
+  | 'TP1_REACHED'
   | 'TP1_HIT'
+  | 'TP1_APPROACHING'
+  | 'BE_LOCKED'
   | 'PROTECT_PROFIT'
+  | 'WEAKENING'
+  | 'REVERSAL_WATCH'
+  | 'INVALIDATED'
+  | 'EXIT_RECOMMENDED'
+  | 'EARLY_EXIT'
   | 'TRAIL_STOP'
   | 'TARGET_EXTENSION'
-  | 'REVERSAL_WATCH'
-  | 'EARLY_EXIT'
   | 'REVERSE_CANDIDATE'
-  | 'INVALIDATED'
   | 'DATA_INCOMPLETE'
   | 'CLOSED';
 

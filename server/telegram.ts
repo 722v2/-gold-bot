@@ -1140,95 +1140,12 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
 
   /**
    * Update active signals with latest price and floating P&L on Telegram
+   * DEPRECATED: Replaced by event-driven post-entry trade management notifications (TP1_REACHED, BE_LOCKED, WEAKENING, INVALIDATED).
+   * Normal HOLD/development between Entry and TP1/SL produces ZERO Telegram API calls to prevent rate limiting.
    */
-  public async updateActiveSignals(currentPrice: number): Promise<void> {
-    if (this.isRateLimited()) return;
-
-    const chatId = this.getPrivateChatId();
-    if (!chatId || !this.botToken) return;
-
-    const signalIds = Object.keys(this.signalMessageIds);
-    if (signalIds.length === 0) return;
-
-    for (const signalId of signalIds) {
-      try {
-        const messageId = this.signalMessageIds[signalId];
-        if (!messageId) continue;
-
-        // Check if the signal is still active
-        // It is considered inactive if:
-        // 1. A trade outcome record exists for it.
-        // 2. Or the trade in ledger exists and is closed.
-        const existingOutcome = storage.getTradeOutcome(signalId);
-        const existingTrade = storage.getTrade(signalId);
-        const signal = storage.getSignal(signalId);
-
-        if (existingOutcome || (existingTrade && existingTrade.result !== 'OPEN') || (signal && signal.lifecycleState === 'NOT_ENTERED')) {
-          // No longer active, remove from tracking to stop periodic updates
-          delete this.signalMessageIds[signalId];
-          this.lastActiveSignalUpdate.delete(signalId);
-          this.saveMessageMapping();
-          continue;
-        }
-
-        if (!signal) {
-          // If signal was deleted or not found, skip
-          continue;
-        }
-
-        // Throttle updates per active signal (maximum once per 60 seconds per signal)
-        const lastUpdated = this.lastActiveSignalUpdate.get(signalId) || 0;
-        if (Date.now() - lastUpdated < 60000) {
-          continue;
-        }
-
-        const isBuy = String(signal.signal).toUpperCase().includes('BUY');
-        const actionEmoji = isBuy ? '🟢' : '🔴';
-        const actionText = isBuy ? 'شراء الآن (BUY NOW)' : 'بيع الآن (SELL NOW)';
-
-        const lotSize = signal.standardLot ?? signal.recommendedLotSize ?? 0.01;
-        const priceDiff = isBuy ? (currentPrice - signal.entry) : (signal.entry - currentPrice);
-        const unrealizedPnl = priceDiff * 100 * lotSize;
-        const pnlSign = unrealizedPnl >= 0 ? '+' : '';
-
-        const text = `
-<b>🔔 إشارة تداول نشطة من Gold AI Scanner!</b>
-
-${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
-📊 <b>الأصل:</b> XAU/USD (الذهب)
-📈 <b>سعر الدخول:</b> $${Number(signal.entry).toFixed(2)}
-🛑 <b>وقف الخسارة (SL):</b> $${Number(signal.stopLoss).toFixed(2)} (${signal.slPoints} نقطة)
-🎯 <b>الهدف الأول (TP1):</b> $${Number(signal.tp1).toFixed(2)}
-🎯 <b>الهدف الثاني (TP2):</b> ${signal.tp2 ? '$' + Number(signal.tp2).toFixed(2) : 'غير محدد'}
-⚖️ <b>المخاطرة:</b> ${signal.riskPercent || 15}% ($${Number(signal.riskAmount || 1.5).toFixed(2)})
-🧠 <b>نسبة الثقة:</b> ${signal.confidence}%
-🛠️ <b>النموذج الفني:</b> ${signal.setup || 'غير محدد'}
-
-⚡ <b>حالة الصفقة:</b> نشطة (ACTIVE)
-💵 <b>السعر الحالي:</b> $${currentPrice.toFixed(2)}
-💰 <b>أرباح/خسائر غير محققة (Floating P&L):</b> ${pnlSign}$${unrealizedPnl.toFixed(2)}
-
-⏱ <i>تحديث تلقائي: ${new Date().toLocaleTimeString('ar-EG')} | Live Feed</i>
-        `.trim();
-
-        const replyMarkup = {
-          inline_keyboard: [
-            [
-              { text: '🟢 WIN', callback_data: `win:${signal.id}` },
-              { text: '🔴 LOSS', callback_data: `loss:${signal.id}` },
-              { text: '⚪ NOT ENTERED', callback_data: `not_entered:${signal.id}` }
-            ]
-          ]
-        };
-
-        const success = await this.editMessageText(chatId, messageId, text, replyMarkup);
-        if (success) {
-          this.lastActiveSignalUpdate.set(signalId, Date.now());
-        }
-      } catch (err) {
-        console.error(`[Telegram] Error updating active signal ${signalId}:`, err);
-      }
-    }
+  public async updateActiveSignals(_currentPrice: number): Promise<void> {
+    // No-op: Periodic floating P&L updates are intentionally disabled.
+    return;
   }
 
   /**
