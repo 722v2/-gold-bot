@@ -51,6 +51,7 @@ export interface SetupCandidate {
   strategyConfidence?: number;
   executionQualityScore?: number;
   entryTiming?: EntryTiming;
+  timingWarning?: string;
   setupFreshness?: PoiFreshnessState;
   pullbackQuality?: PullbackQuality;
   tpRunway?: TpPathRunway;
@@ -395,7 +396,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       direction === 'BUY' ? 'BULLISH' : 'BEARISH',
       poiTop,
       poiBottom,
-      poiMeta?.createdCandleTime ?? (candles5m[0]?.timestamp || Date.now() - 3600000),
+      poiMeta?.createdCandleTime ?? (candles5m[Math.max(0, candles5m.length - 2)]?.timestamp || Date.now() - 300000),
       poiMeta?.invalidationPrice ?? stopLoss
     );
 
@@ -437,9 +438,10 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       indicators15m.marketRegime || 'UNCLEAR'
     );
 
+    let timingWarning: string | undefined = undefined;
     if (timingAssessment.timing === 'CHASED') {
-      console.log(`[StrategyEngine] Disqualified ${setupName} to prevent chasing (${timingAssessment.reason})`);
-      return null;
+      timingWarning = `CHASED (${timingAssessment.reason})`;
+      console.log(`[StrategyEngine] Candidate ${setupName} tagged with timing penalty/warning (${timingAssessment.reason})`);
     }
 
     // 7. Phase 3: Price Action Trigger Assessment
@@ -547,6 +549,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       strategyConfidence,
       executionQualityScore: eqResult.score,
       entryTiming: timingAssessment.timing,
+      timingWarning,
       setupFreshness: poiFreshness.state,
       pullbackQuality: pullbackAssessment.quality,
       tpRunway: tpPathAssessment.runway,
@@ -561,6 +564,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       supportingConfluences: [
         ...confluences,
         `جودة التنفيذ: ${eqResult.score}/100 (${timingAssessment.timing})`,
+        ...(timingWarning ? [`تنبيه التوقيت: ${timingWarning}`] : []),
         `حالة المنطقة: ${poiFreshness.state}`,
         `مسار الهدف: ${tpPathAssessment.runway}`,
       ],
@@ -1063,7 +1067,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   const rangeHighBoundary = indicators15m.regimeContext?.rangeBoundaries?.high ?? Math.max(indicators15m.swingHigh, indicators15m.resistance);
   const rangeLowBoundary = indicators15m.regimeContext?.rangeBoundaries?.low ?? Math.min(indicators15m.swingLow, indicators15m.support);
 
-  const bb5mWidth = indicators5m.bollingerBands.upper - indicators5m.bollingerBands.lower;
+  const bb5mWidth = indicators5m.bollingerBands ? (indicators5m.bollingerBands.upper - indicators5m.bollingerBands.lower) : 10.0;
   const isSqueezePreceding =
     bb5mWidth <= Math.max(12.0, atr5m * 5.0) ||
     indicators15m.marketRegime === 'NORMAL_RANGE' ||
@@ -1090,9 +1094,9 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
 
   const hasBullMomentum =
     currentPrice >= indicators5m.ema20 ||
-    indicators5m.macd.histogram >= 0 ||
+    (indicators5m.macd?.histogram ?? 0) >= 0 ||
     indicators5m.rsi14 >= 50 ||
-    last5m.close >= indicators5m.bollingerBands.middle;
+    (indicators5m.bollingerBands ? last5m.close >= indicators5m.bollingerBands.middle : true);
 
   if (isSqueezePreceding && isDecisiveBullClose && isNotOverextendedUpside && hasBullMomentum) {
     // Structural SL placed just below broken range high / recent candle low with buffer
@@ -1132,9 +1136,9 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
 
   const hasBearMomentum =
     currentPrice <= indicators5m.ema20 ||
-    indicators5m.macd.histogram <= 0 ||
+    (indicators5m.macd?.histogram ?? 0) <= 0 ||
     indicators5m.rsi14 <= 50 ||
-    last5m.close <= indicators5m.bollingerBands.middle;
+    (indicators5m.bollingerBands ? last5m.close <= indicators5m.bollingerBands.middle : true);
 
   if (isSqueezePreceding && isDecisiveBearClose && isNotOverextendedDownside && hasBearMomentum) {
     // Structural SL placed just above broken range low / recent candle high with buffer

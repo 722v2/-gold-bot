@@ -419,6 +419,7 @@ export interface TradeSignal {
   structuralOrigin?: string;
   targetObjective?: number;
   entryTiming?: EntryTiming;
+  timingWarning?: string;
   setupFreshness?: PoiFreshnessState;
   pullbackQuality?: PullbackQuality;
   tpRunway?: TpPathRunway;
