@@ -161,3 +161,60 @@ CREATE TABLE IF NOT EXISTS terminal_setups (
 INSERT INTO account_state (id, starting_balance, current_balance, updated_at)
 VALUES ('main', 25.00, 91.00, NOW())
 ON CONFLICT (id) DO NOTHING;
+
+-- =============================================================================
+-- Security, Permissions & Row-Level Security (RLS) Configuration
+-- =============================================================================
+
+-- Grant schema usage
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+
+-- Grant table & sequence privileges
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+
+-- Ensure future created tables also inherit proper privileges
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+
+-- Enable RLS on all persistent tables
+ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE account_state ENABLE ROW LEVEL SECURITY;
+ALTER TABLE trade_ledger ENABLE ROW LEVEL SECURITY;
+ALTER TABLE trade_outcomes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE signals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE opportunities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE telegram_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE candidate_lifecycles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE poi_records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE terminal_setups ENABLE ROW LEVEL SECURITY;
+
+-- Idempotent RLS Policies: Permit full backend read/write operations
+-- Service Role bypasses RLS by default in PostgreSQL, but explicit policies ensure no denial.
+
+DO $$
+DECLARE
+  tbl TEXT;
+  tables TEXT[] := ARRAY[
+    'app_settings',
+    'account_state',
+    'trade_ledger',
+    'trade_outcomes',
+    'signals',
+    'scans',
+    'opportunities',
+    'telegram_config',
+    'candidate_lifecycles',
+    'poi_records',
+    'terminal_setups'
+  ];
+BEGIN
+  FOREACH tbl IN ARRAY tables LOOP
+    -- Drop existing policy if present to allow idempotent re-execution
+    EXECUTE format('DROP POLICY IF EXISTS "allow_full_access_%I" ON %I;', tbl, tbl);
+    -- Create open read/write policy for backend service and authorized clients
+    EXECUTE format('CREATE POLICY "allow_full_access_%I" ON %I FOR ALL USING (true) WITH CHECK (true);', tbl, tbl);
+  END LOOP;
+END $$;
+
