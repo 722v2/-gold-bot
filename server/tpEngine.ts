@@ -12,6 +12,10 @@ export interface DynamicTpRequest {
   candles15m: Candle[];
   candles5m: Candle[];
   minRr?: number;
+  structuralTargetHint?: {
+    price: number;
+    label: string;
+  };
 }
 
 export type StructuralSourceType =
@@ -24,6 +28,7 @@ export type StructuralSourceType =
   | '5M_BB'
   | '15M_BB'
   | 'SESSION_LIQUIDITY'
+  | 'STRUCTURAL_HINT'
   | 'FIB_EXTENSION_1272'
   | 'FIB_EXTENSION_1618'
   | 'ATR_PROJECTION'
@@ -84,7 +89,7 @@ export interface DynamicTpResult {
  * 6. TP2 must also be a genuine structural level available at entry timestamp.
  */
 export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpResult {
-  const { direction, entry, stopLoss, indicators1h, indicators15m, indicators5m, candles1h } = req;
+  const { direction, entry, stopLoss, indicators1h, indicators15m, indicators5m, candles1h, structuralTargetHint } = req;
   const isBuy = direction === 'BUY';
   const minRr = req.minRr ?? 1.5;
 
@@ -276,7 +281,33 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
     }
   }
 
-  // C. 5M & 15M Order Block Target (Priority 2)
+  // C. Strategy / Pattern Structural Target Hint (Priority 1)
+  if (
+    structuralTargetHint &&
+    typeof structuralTargetHint.price === 'number' &&
+    !isNaN(structuralTargetHint.price) &&
+    isFinite(structuralTargetHint.price)
+  ) {
+    const hintPrice = Number(structuralTargetHint.price.toFixed(2));
+    const isDirectionallyValid = isBuy ? hintPrice > entry : hintPrice < entry;
+    if (isDirectionallyValid) {
+      const dist = Number(Math.abs(hintPrice - entry).toFixed(2));
+      const rr = Number((dist / slDistance).toFixed(2));
+      // Apply the same distance boundary filter (e.g. <= 4.0 * atr1h)
+      if (dist <= 4.0 * atr1h) {
+        candidateLevels.push({
+          price: hintPrice,
+          type: 'STRUCTURAL_HINT',
+          priority: 1,
+          name: structuralTargetHint.label || 'Structural Target Hint',
+          distance: dist,
+          rr,
+        });
+      }
+    }
+  }
+
+  // D. 5M & 15M Order Block Target (Priority 2)
   if (isBuy) {
     if (indicators5m?.orderBlock?.type === 'BEARISH' && indicators5m.orderBlock.low > entry) {
       const dist = Number((indicators5m.orderBlock.low - entry).toFixed(2));

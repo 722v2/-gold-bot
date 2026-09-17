@@ -309,15 +309,28 @@ class LiveMarketScanner {
         );
 
         if (!hasOpenTrade) {
-          // The signal was never entered as an active trade in the trade ledger.
-          // A signal that was never entered must NOT be treated as an open trade,
-          // nor should it be marked COMPLETED. Mark it NOT_ENTERED to clean up stale state.
-          opp.status = 'NOT_ENTERED';
-          opp.lastUpdatedTime = Date.now();
-          storage.saveOpportunity(opp);
-          console.log(
-            `[LiveMarketScanner] Stale unentered opportunity ${opp.id} (signal: ${opp.signalId}) marked NOT_ENTERED (no corresponding open trade).`
-          );
+          // A recently dispatched or active opportunity must NOT be demoted to NOT_ENTERED immediately,
+          // because it may be awaiting the user's manual trade entry or Telegram action (WIN / LOSS / NOT ENTERED).
+          // Only genuinely stale opportunities (e.g. older than 4 hours without an open trade or resolution)
+          // should be automatically cleaned up as NOT_ENTERED.
+          const oppAgeMs = Date.now() - (opp.dispatchedAt || opp.firstObservedTime || opp.lastUpdatedTime || 0);
+          const STALE_UNENTERED_THRESHOLD_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+          if (oppAgeMs > STALE_UNENTERED_THRESHOLD_MS) {
+            // Truly stale unentered opportunity from a prior session or hours ago without execution.
+            // Mark it NOT_ENTERED to clean up stale state.
+            opp.status = 'NOT_ENTERED';
+            opp.lastUpdatedTime = Date.now();
+            storage.saveOpportunity(opp);
+            console.log(
+              `[LiveMarketScanner] Stale unentered opportunity ${opp.id} (signal: ${opp.signalId}, age: ${Math.round(oppAgeMs / 60000)}m) marked NOT_ENTERED (exceeded stale threshold with no open trade).`
+            );
+          } else {
+            // Keep recent ACTIVE / DISPATCHED opportunity protected while awaiting trade action.
+            console.log(
+              `[LiveMarketScanner] Preserving active/dispatched opportunity ${opp.id} (signal: ${opp.signalId}, age: ${Math.round(oppAgeMs / 60000)}m) awaiting execution/user action.`
+            );
+          }
         }
       }
 

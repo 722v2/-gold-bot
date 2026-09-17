@@ -332,6 +332,20 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     const slQuality = assessStopLossQuality(direction, entry, stopLoss, indicators5m, minSlPoints, maxSlPoints);
 
     // 2. Compute dynamic take profits using structural levels (TP1 >= minRr, TP2 >= 2.5R to 3R)
+    let structuralTargetHint: { price: number; label: string } | undefined = undefined;
+    if (
+      patternMetadata?.neckline !== undefined &&
+      patternMetadata?.neckline !== null &&
+      typeof patternMetadata.neckline === 'number' &&
+      !isNaN(patternMetadata.neckline) &&
+      isFinite(patternMetadata.neckline)
+    ) {
+      structuralTargetHint = {
+        price: patternMetadata.neckline,
+        label: 'Pattern Neckline',
+      };
+    }
+
     const tpResult = calculateDynamicTakeProfits({
       direction,
       entry,
@@ -344,6 +358,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       candles15m,
       candles5m,
       minRr,
+      structuralTargetHint,
     });
 
     if (!tpResult.valid || tpResult.tp1Rr < minRr) {
