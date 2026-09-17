@@ -323,12 +323,12 @@ export class PersistentStorage {
   }
 
   private safeSupabase(fn: (client: any) => any, context?: string): void {
-    if (!supabase || !this.shouldPersist()) return;
+    if (!isSupabaseConfigured() || !this.shouldPersist()) return;
     executeSupabaseQuery(fn, context).catch(() => {});
   }
 
   private async safeSupabaseAsync(fn: (client: any) => any, context?: string): Promise<any> {
-    if (!supabase || !this.shouldPersist()) return null;
+    if (!isSupabaseConfigured() || !this.shouldPersist()) return null;
     return executeSupabaseQuery(fn, context);
   }
 

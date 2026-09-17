@@ -1,11 +1,11 @@
 import 'dotenv/config';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-function extractKeyRole(key: string): 'service_role' | 'anon' | 'unknown' {
+function extractKeyRole(key: string): 'service_role' | 'secret_key' | 'anon' | 'unknown' {
   try {
     if (!key) return 'unknown';
     const trimmed = key.trim();
-    if (trimmed.startsWith('sb_secret_')) return 'service_role';
+    if (trimmed.startsWith('sb_secret_')) return 'secret_key';
     if (trimmed.startsWith('sb_publishable_')) return 'anon';
 
     const parts = trimmed.split('.');
@@ -24,7 +24,7 @@ function extractKeyRole(key: string): 'service_role' | 'anon' | 'unknown' {
   }
 }
 
-function getSupabaseCredentials(): { url: string; key: string; keySource: string; keyRole: 'service_role' | 'anon' | 'unknown' } | null {
+function getSupabaseCredentials(): { url: string; key: string; keySource: string; keyRole: 'service_role' | 'secret_key' | 'anon' | 'unknown' } | null {
   const rawUrl =
     process.env.SUPABASE_URL ||
     process.env.VITE_SUPABASE_URL ||
@@ -38,12 +38,12 @@ function getSupabaseCredentials(): { url: string; key: string; keySource: string
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
     rawKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     keySource = 'SUPABASE_SERVICE_ROLE_KEY';
-  } else if (process.env.SUPABASE_SERVICE_KEY) {
-    rawKey = process.env.SUPABASE_SERVICE_KEY;
-    keySource = 'SUPABASE_SERVICE_KEY';
   } else if (process.env.SUPABASE_SECRET_KEY) {
     rawKey = process.env.SUPABASE_SECRET_KEY;
     keySource = 'SUPABASE_SECRET_KEY';
+  } else if (process.env.SUPABASE_SERVICE_KEY) {
+    rawKey = process.env.SUPABASE_SERVICE_KEY;
+    keySource = 'SUPABASE_SERVICE_KEY';
   } else if (process.env.SUPABASE_KEY) {
     rawKey = process.env.SUPABASE_KEY;
     keySource = 'SUPABASE_KEY';
@@ -95,15 +95,15 @@ function createSupabaseClientInstance(): SupabaseClient | null {
       },
     });
 
-    if (creds.keyRole === 'service_role') {
-      console.log(`[Supabase] Initialized Supabase client with privileged service_role key (${creds.keySource}) with URL: ${creds.url}`);
-    } else if (creds.keyRole === 'anon') {
+    console.log(`[Supabase] URL: ${creds.url}`);
+    console.log(`[Supabase] Key source: ${creds.keySource}`);
+    console.log(`[Supabase] Auth role: ${creds.keyRole}`);
+
+    if (creds.keyRole === 'anon') {
       console.warn(
         `[Supabase Warning] Backend initialized with 'anon' (publishable) key from ${creds.keySource}. ` +
-        `If table RLS policies restrict writes, configure 'SUPABASE_SERVICE_ROLE_KEY' in Render / server environment.`
+        `Table operations may be restricted if RLS is enabled. Set 'SUPABASE_SERVICE_ROLE_KEY' in your server environment.`
       );
-    } else {
-      console.log(`[Supabase] Initialized Supabase client (${creds.keySource}, role: ${creds.keyRole}) with URL: ${creds.url}`);
     }
 
     return client;
