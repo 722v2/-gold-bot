@@ -3,6 +3,7 @@ import { AssetType, Candle, SignalDecision, TechnicalIndicators, TradeSignal } f
 import { BrokerContractSpecs, evaluateTradeRisk } from './riskManager.js';
 import { calculateDynamicTakeProfits } from './tpEngine.js';
 import { generateMultiStrategyCandidates } from './strategyEngine.js';
+import { experienceMemoryEngine } from './experienceMemory.js';
 
 let nvidiaClient: OpenAI | null = null;
 let lastTestedApiKey: string | null = null;
@@ -195,7 +196,29 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
     return buildFinalSignal(screened, input);
   }
 
-  const technicalContext = {
+  // Look up relevant historical experience for top candidate if available
+  let historicalExperienceContext: any = null;
+  const topCandidate = candidatesContext.selectedCandidate || candidatesContext.allCandidates[0];
+  if (topCandidate) {
+    try {
+      const prospectiveFactors = experienceMemoryEngine.normalizeFactors({
+        direction: topCandidate.direction,
+        setupFamily: topCandidate.strategyFamily || topCandidate.setupName,
+        indicators1h,
+        indicators15m,
+        indicators5m,
+      });
+      const prospectiveKey = experienceMemoryEngine.generateCombinationKey(prospectiveFactors);
+      historicalExperienceContext = experienceMemoryEngine.getExperienceContext({
+        combinationKey: prospectiveKey,
+        factors: prospectiveFactors,
+      }, Date.now());
+    } catch (expErr) {
+      console.warn('[NVIDIA AI] Non-blocking experience lookup error:', expErr);
+    }
+  }
+
+  const technicalContext: any = {
     asset,
     balance,
     currentPrice,
@@ -213,6 +236,7 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
       confidence: c.confidence,
       score: c.score,
     })),
+    ...(historicalExperienceContext ? { historicalTradingExperience: historicalExperienceContext } : {}),
     h1: {
       trend: indicators1h.structure,
       ema20: indicators1h.ema20,
@@ -277,7 +301,8 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
    - الهدف الثاني (TP2): 2.5R أو 3R فما فوق لاستهداف سيولة هيكلية أو امتدادية أبعد.
    - إذا تم توفير مرشحات استراتيجية صالحة في "topCandidates"، قم بتقييمها واختيار الأقوى أو تأكيدها.
 6. الثقة (Confidence): من 70 إلى 96 للصفقات الصالحة.
-7. في حال عدم وجود فرصة حقيقية أو تذبذب في منتصف الرينج، اختر "NO TRADE" واذكر السبب بالتفصيل.`;
+7. في حال عدم وجود فرصة حقيقية أو تذبذب في منتصف الرينج، اختر "NO TRADE" واذكر السبب بالتفصيل.
+8. ملاحظة استشارية إضافية: بيانات الخبرة التاريخية (historicalTradingExperience) إن وُجدت هي سياق استشاري تكميلي فقط، ولا يجب أن تلغي أبداً التحليل الفني والهيكلي الحالي للسوق ولا تكون الأساس الوحيد للقرار. يتم تجاهلها تماماً إذا كانت غير متوافقة مع القواعد الفنية وإدارة المخاطر.`;
 
   isAiCallRunning = true;
   const model = process.env.NVIDIA_MODEL || 'deepseek-ai/deepseek-v4-flash-0731';

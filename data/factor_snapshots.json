@@ -1,0 +1,23 @@
+{
+  "sig_1789640305592_exwgh": {
+    "signalId": "sig_1789640305592_exwgh",
+    "setupFamily": "Bare Support Rejection",
+    "direction": "BUY",
+    "factors": {
+      "setupFamily": "Bare Support Rejection",
+      "direction": "BUY",
+      "htfStructure": "RANGING",
+      "m15Structure": "BULLISH",
+      "marketRegime": "STRONG_TREND",
+      "liquidity": "NONE",
+      "orderBlock": "BULLISH_OB",
+      "fvg": "BEARISH_FVG",
+      "zone": "EQUILIBRIUM",
+      "rsi": "NEUTRAL",
+      "macd": "NEUTRAL",
+      "volatility": "HIGH"
+    },
+    "combinationKey": "direction=BUY|fvg=BEARISH_FVG|htfStructure=RANGING|liquidity=NONE|m15Structure=BULLISH|macd=NEUTRAL|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Bare Support Rejection|volatility=HIGH|zone=EQUILIBRIUM",
+    "createdAt": 1789640305592
+  }
+}

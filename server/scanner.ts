@@ -9,6 +9,7 @@ import { tradeMonitor } from './tradeMonitor.js';
 import { tradeManagementEngine } from './tradeManagementEngine.js';
 import { checkStructuralSameSetupIdentity, generateOpportunityId } from './tradeQualityEngine.js';
 import { telegramService } from './telegram.js';
+import { experienceMemoryEngine } from './experienceMemory.js';
 
 class LiveMarketScanner {
   private config: ScannerConfig = {
@@ -250,39 +251,115 @@ class LiveMarketScanner {
       const ind5m = analyzeTechnicals(candles5m);
 
       // Synchronize in-flight trade state with TradeLedger & TradeMonitor
-      const openTrades = storage.getTrades(300).filter((t) => t.result === 'OPEN' && t.isActive !== false);
+      const allTrades = storage.getTrades(300);
+      const openTrades = allTrades.filter((t) => t.result === 'OPEN' && t.isActive !== false);
+      const outcomes = storage.getTradeOutcomes();
 
-      // Restore activeSignal from storage on startup / restart if there's an active/dispatched opportunity
-      if (!this.activeSignal) {
-        const activeOpp = storage.getOpportunities().find(o => o.status === 'ACTIVE' || o.status === 'DISPATCHED');
-        if (activeOpp) {
-          const originalSignal = activeOpp.signalId ? storage.getSignal(activeOpp.signalId) : undefined;
+      // Reconcile stale/orphan opportunities against authoritative trade ledger & trade outcomes
+      const activeOrDispatchedOpps = storage.getOpportunities().filter(
+        (o) => o.status === 'ACTIVE' || o.status === 'DISPATCHED'
+      );
+
+      for (const opp of activeOrDispatchedOpps) {
+        // Check if there is an authoritative trade resolution in trade_ledger or trade_outcomes
+        const matchingTrade = allTrades.find(
+          (t) =>
+            t.id === opp.id ||
+            t.id === opp.signalId ||
+            (t as any).signalId === opp.id ||
+            (t as any).signalId === opp.signalId
+        );
+        const matchingOutcome = outcomes.find(
+          (out) =>
+            out.signalId === opp.signalId ||
+            out.signalId === opp.id ||
+            out.tradeId === opp.signalId ||
+            out.tradeId === opp.id
+        );
+
+        const isResolvedInLedger = matchingTrade && matchingTrade.result !== 'OPEN';
+        const isResolvedInOutcomes = matchingOutcome && !!matchingOutcome.outcome;
+
+        if (isResolvedInLedger || isResolvedInOutcomes) {
+          const isWin =
+            (matchingTrade && matchingTrade.result === 'WIN') ||
+            (matchingOutcome && matchingOutcome.outcome === 'WIN');
+          const isCancelled =
+            (matchingTrade && (matchingTrade.result === 'CANCELLED' || matchingTrade.result === 'VOID')) ||
+            (matchingOutcome && ((matchingOutcome.outcome as string) === 'VOID' || (matchingOutcome.outcome as string) === 'CANCELLED'));
+
+          opp.status = isWin ? 'COMPLETED' : (isCancelled ? 'CANCELLED' : 'FAILED');
+          if (isWin) opp.completedAt = opp.completedAt || Date.now();
+          else opp.failedAt = opp.failedAt || Date.now();
+          opp.lastUpdatedTime = Date.now();
+          storage.saveOpportunity(opp);
+          console.log(
+            `[LiveMarketScanner] Reconciled stale opportunity ${opp.id} (signal: ${opp.signalId}) with authoritative closed trade -> ${opp.status}`
+          );
+          continue;
+        }
+
+        // Check if there is an authoritative active open trade in openTrades
+        const hasOpenTrade = openTrades.some(
+          (t) =>
+            t.id === opp.id ||
+            t.id === opp.signalId ||
+            (t as any).signalId === opp.id ||
+            (t as any).signalId === opp.signalId
+        );
+
+        if (!hasOpenTrade) {
+          // The signal was never entered as an active trade in the trade ledger.
+          // A signal that was never entered must NOT be treated as an open trade,
+          // nor should it be marked COMPLETED. Mark it NOT_ENTERED to clean up stale state.
+          opp.status = 'NOT_ENTERED';
+          opp.lastUpdatedTime = Date.now();
+          storage.saveOpportunity(opp);
+          console.log(
+            `[LiveMarketScanner] Stale unentered opportunity ${opp.id} (signal: ${opp.signalId}) marked NOT_ENTERED (no corresponding open trade).`
+          );
+        }
+      }
+
+      // Restore activeSignal ONLY if there is a legitimate corresponding open trade in openTrades
+      if (!this.activeSignal && openTrades.length > 0) {
+        // Find if any legitimate ACTIVE/DISPATCHED opportunity matches an open trade
+        const legitimateOpp = storage.getOpportunities().find(
+          (o) =>
+            (o.status === 'ACTIVE' || o.status === 'DISPATCHED') &&
+            openTrades.some(
+              (t) =>
+                t.id === o.id ||
+                t.id === o.signalId ||
+                (t as any).signalId === o.id ||
+                (t as any).signalId === o.signalId
+            )
+        );
+
+        if (legitimateOpp) {
+          const originalSignal = legitimateOpp.signalId ? storage.getSignal(legitimateOpp.signalId) : undefined;
           if (originalSignal) {
             this.activeSignal = {
               ...originalSignal,
               currentPrice,
             };
-            this.config.activeSetupName = this.activeSignal.setup;
-            this.config.lastSignal = this.activeSignal;
-            console.log(`[LiveMarketScanner] Restored activeSignal on startup/restart from original signal ${originalSignal.id} for opportunity ${activeOpp.id}`);
           } else {
-            // Rebuild fallback signal from the opportunity fields
-            const dir = activeOpp.direction === 'BUY' ? 'BUY NOW' : 'SELL NOW';
+            const dir = legitimateOpp.direction === 'BUY' ? 'BUY NOW' : 'SELL NOW';
             this.activeSignal = {
-              id: activeOpp.signalId || `restored_${activeOpp.id}`,
-              timestamp: activeOpp.firstObservedTime,
+              id: legitimateOpp.signalId || `restored_${legitimateOpp.id}`,
+              timestamp: legitimateOpp.firstObservedTime,
               asset,
               signal: dir,
               currentPrice,
-              entry: activeOpp.entry,
-              stopLoss: activeOpp.stopLoss,
-              slPoints: Math.round(Math.abs(activeOpp.entry - activeOpp.stopLoss) / 0.1),
-              tp1: activeOpp.tp1,
-              tp1Points: Math.round(Math.abs(activeOpp.tp1 - activeOpp.entry) / 0.1),
+              entry: legitimateOpp.entry,
+              stopLoss: legitimateOpp.stopLoss,
+              slPoints: Math.round(Math.abs(legitimateOpp.entry - legitimateOpp.stopLoss) / 0.1),
+              tp1: legitimateOpp.tp1,
+              tp1Points: Math.round(Math.abs(legitimateOpp.tp1 - legitimateOpp.entry) / 0.1),
               tp1Rr: 1.5,
               tp1RrString: '1:1.50',
-              tp2: activeOpp.tp2,
-              tp2Points: Math.round(Math.abs(activeOpp.tp2 - activeOpp.entry) / 0.1),
+              tp2: legitimateOpp.tp2,
+              tp2Points: Math.round(Math.abs(legitimateOpp.tp2 - legitimateOpp.entry) / 0.1),
               tp2Rr: 3.0,
               tp2RrString: '1:3.00',
               primaryTarget: 'TP1',
@@ -293,30 +370,79 @@ class LiveMarketScanner {
               potentialProfit: 0,
               potentialLoss: 0,
               recommendedLotSize: 0.01,
-              confidence: activeOpp.confidence,
-              timeframe: activeOpp.timeframe,
-              setup: activeOpp.setupName,
-              mainReasons: ['Restored from persistent storage'],
-              invalidation: `Close candle below ${activeOpp.stopLoss}`,
+              confidence: legitimateOpp.confidence,
+              timeframe: legitimateOpp.timeframe,
+              setup: legitimateOpp.setupName,
+              mainReasons: ['Restored from persistent storage with active open trade'],
+              invalidation: `Close candle below ${legitimateOpp.stopLoss}`,
             };
-            this.config.activeSetupName = this.activeSignal.setup;
-            this.config.lastSignal = this.activeSignal;
-            console.log(`[LiveMarketScanner] Restored fallback activeSignal on startup/restart for opportunity ${activeOpp.id}`);
           }
+          this.config.activeSetupName = this.activeSignal.setup;
+          this.config.lastSignal = this.activeSignal;
+          console.log(
+            `[LiveMarketScanner] Restored activeSignal for legitimate open trade from opportunity ${legitimateOpp.id} (signal: ${this.activeSignal.id})`
+          );
+        } else {
+          // If open trade exists in ledger but no opportunity was matched, build activeSignal from the open trade
+          const primaryOpenTrade = openTrades[0];
+          this.activeSignal = {
+            id: primaryOpenTrade.id,
+            timestamp: primaryOpenTrade.isoTime ? new Date(primaryOpenTrade.isoTime).getTime() : Date.now(),
+            asset: (primaryOpenTrade.asset as any) || asset,
+            signal: (primaryOpenTrade.direction || 'BUY NOW') as any,
+            currentPrice,
+            entry: Number(primaryOpenTrade.entry),
+            stopLoss: Number(primaryOpenTrade.sl),
+            slPoints: primaryOpenTrade.slPoints || Math.round(Math.abs(Number(primaryOpenTrade.entry) - Number(primaryOpenTrade.sl)) / 0.1),
+            tp1: Number(primaryOpenTrade.tp1),
+            tp1Points: primaryOpenTrade.tp1Points || Math.round(Math.abs(Number(primaryOpenTrade.tp1) - Number(primaryOpenTrade.entry)) / 0.1),
+            tp1Rr: 1.5,
+            tp1RrString: '1:1.50',
+            tp2: primaryOpenTrade.tp2 ? Number(primaryOpenTrade.tp2) : Number(primaryOpenTrade.entry),
+            tp2Points: primaryOpenTrade.tp2Points || 0,
+            tp2Rr: 3.0,
+            tp2RrString: '1:3.00',
+            primaryTarget: 'TP1',
+            rr: primaryOpenTrade.rr || '1:1.50',
+            rrRatio: 1.5,
+            riskPercent: primaryOpenTrade.riskPercent || 15,
+            riskAmount: primaryOpenTrade.riskAmount || 0,
+            potentialProfit: 0,
+            potentialLoss: 0,
+            recommendedLotSize: primaryOpenTrade.lotSize || 0.01,
+            confidence: primaryOpenTrade.confidence || 80,
+            timeframe: '15M / 5M',
+            setup: primaryOpenTrade.setup || 'Active Trade',
+            mainReasons: ['Restored from authoritative open trade in ledger'],
+            invalidation: `Close candle beyond ${primaryOpenTrade.sl}`,
+          };
+          this.config.activeSetupName = this.activeSignal.setup;
+          this.config.lastSignal = this.activeSignal;
+          console.log(
+            `[LiveMarketScanner] Restored activeSignal directly from open ledger trade ${primaryOpenTrade.id} (${primaryOpenTrade.setup})`
+          );
         }
       }
 
       // Check if our activeSignal's trade was closed in the trade ledger
       if (this.activeSignal) {
-        const matchingTrade = storage.getTrades(300).find((t) => t.id === this.activeSignal?.id);
+        const matchingTrade = allTrades.find(
+          (t) =>
+            t.id === this.activeSignal?.id ||
+            (t as any).signalId === this.activeSignal?.id
+        );
         if (matchingTrade && matchingTrade.result !== 'OPEN') {
           console.log(`[LiveMarketScanner] Active trade ${this.activeSignal.id} is closed in ledger (${matchingTrade.result}). Clearing activeSignal.`);
           const oppId = generateOpportunityId(this.activeSignal);
-          const opp = storage.getOpportunity(oppId);
+          const opp =
+            storage.getOpportunity(oppId) ||
+            storage.getOpportunity(this.activeSignal.id) ||
+            storage.getOpportunities().find(o => o.signalId === this.activeSignal?.id);
           if (opp) {
             opp.status = matchingTrade.result === 'WIN' ? 'COMPLETED' : 'FAILED';
             if (opp.status === 'FAILED') opp.failedAt = Date.now();
             else opp.completedAt = Date.now();
+            opp.lastUpdatedTime = Date.now();
             storage.saveOpportunity(opp);
           }
           this.activeSignal = null;
@@ -337,10 +463,14 @@ class LiveMarketScanner {
         if (slHit) {
           console.log(`[LiveMarketScanner] Active setup ${this.activeSignal.setup} hit Stop Loss. Resetting active setup.`);
           const oppId = generateOpportunityId(this.activeSignal);
-          const opp = storage.getOpportunity(oppId);
+          const opp =
+            storage.getOpportunity(oppId) ||
+            storage.getOpportunity(this.activeSignal.id) ||
+            storage.getOpportunities().find(o => o.signalId === this.activeSignal?.id);
           if (opp) {
             opp.status = 'FAILED';
             opp.failedAt = Date.now();
+            opp.lastUpdatedTime = Date.now();
             storage.saveOpportunity(opp);
           }
           this.activeSignal = null;
@@ -348,10 +478,26 @@ class LiveMarketScanner {
         } else if (tp2Hit) {
           console.log(`[LiveMarketScanner] Active setup ${this.activeSignal.setup} reached TP2. Resetting active setup.`);
           const oppId = generateOpportunityId(this.activeSignal);
-          const opp = storage.getOpportunity(oppId);
+          const opp =
+            storage.getOpportunity(oppId) ||
+            storage.getOpportunity(this.activeSignal.id) ||
+            storage.getOpportunities().find(o => o.signalId === this.activeSignal?.id);
           if (opp) {
-            opp.status = 'COMPLETED';
-            opp.completedAt = Date.now();
+            // Only mark as COMPLETED if there is authoritative evidence that the trade was entered in ledger
+            const hasEnteredTrade = allTrades.some(
+              (t) =>
+                t.id === this.activeSignal?.id ||
+                (t as any).signalId === this.activeSignal?.id ||
+                t.id === opp.id ||
+                t.id === opp.signalId
+            );
+            if (hasEnteredTrade) {
+              opp.status = 'COMPLETED';
+              opp.completedAt = Date.now();
+            } else {
+              opp.status = 'NOT_ENTERED';
+            }
+            opp.lastUpdatedTime = Date.now();
             storage.saveOpportunity(opp);
           }
           this.activeSignal = null;
@@ -634,7 +780,7 @@ class LiveMarketScanner {
         }
 
         if (isSameSetupActive) {
-          const isTelegramDelivered = !!(opp.signalId && telegramService.getTelegramMessageId(opp.signalId));
+          const isTelegramDelivered = opp.status === 'DISPATCHED' || !!opp.dispatchedAt || !!(opp.signalId && telegramService.getTelegramMessageId(opp.signalId));
 
           if (isTelegramDelivered) {
             // DUPLICATE PREVENTED: Update status without generating a new signal or spamming alerts
@@ -681,29 +827,47 @@ class LiveMarketScanner {
             }
           } else {
             const originalSignal = opp.signalId ? storage.getSignal(opp.signalId) : undefined;
-            // Check if another attempt is already running or backoff has not elapsed
-            if (opp.telegramDeliveryInFlight) {
+            const now = Date.now();
+            const LOCK_TTL_MS = 60000;
+
+            // Check if another attempt is currently running or lock is stale (>60s)
+            const isLockStale = !!(
+              opp.telegramDeliveryInFlight &&
+              (!opp.telegramDeliveryInFlightTime || (now - opp.telegramDeliveryInFlightTime > LOCK_TTL_MS))
+            );
+
+            if (opp.telegramDeliveryInFlight && !isLockStale) {
               console.log(`[LiveMarketScanner] Telegram delivery attempt already in flight for active same-setup opportunity ${opp.id}. Skipping.`);
               this.activeSignal = originalSignal ? { ...originalSignal, currentPrice } : { ...signal, id: opp.signalId || signal.id, currentPrice };
               this.config.lastSignal = this.activeSignal;
               return this.activeSignal;
             }
 
-            if (opp.telegramNextRetryTime && Date.now() < opp.telegramNextRetryTime) {
-              const remainingSec = Math.ceil((opp.telegramNextRetryTime - Date.now()) / 1000);
+            if (isLockStale) {
+              console.warn(`[LiveMarketScanner] Stale in-flight Telegram delivery lock detected for active same-setup opportunity ${opp.id} (>60s). Releasing lock.`);
+              opp.telegramDeliveryInFlight = false;
+              opp.telegramDeliveryInFlightTime = undefined;
+            }
+
+            if (opp.telegramNextRetryTime && now < opp.telegramNextRetryTime) {
+              const remainingSec = Math.ceil((opp.telegramNextRetryTime - now) / 1000);
               console.log(`[LiveMarketScanner] Telegram delivery retry for active same-setup opportunity ${opp.id} is in backoff. Remaining: ${remainingSec}s. Skipping.`);
               this.activeSignal = originalSignal ? { ...originalSignal, currentPrice } : { ...signal, id: opp.signalId || signal.id, currentPrice };
               this.config.lastSignal = this.activeSignal;
               return this.activeSignal;
             }
 
-            // Safe double check persistent message mapping right before triggering dispatch
+            // Safe double check persistent delivery state right before triggering dispatch
+            const isAlreadyDispatched = opp.status === 'DISPATCHED' || !!opp.dispatchedAt;
             const doubleCheckMsgId = opp.signalId ? telegramService.getTelegramMessageId(opp.signalId) : undefined;
-            if (doubleCheckMsgId) {
-              console.log(`[LiveMarketScanner] Double checked persistent mapping: signal ${opp.signalId} is already delivered (Message ID: ${doubleCheckMsgId}). Bypassing retry.`);
+            if (isAlreadyDispatched || doubleCheckMsgId) {
+              console.log(`[LiveMarketScanner] Double checked delivery status: signal ${opp.signalId || opp.id} is already delivered (Status: ${opp.status}, Message ID: ${doubleCheckMsgId}). Bypassing retry.`);
               opp.status = 'DISPATCHED';
+              opp.dispatchedAt = opp.dispatchedAt || Date.now();
               opp.telegramRetryCount = 0;
               opp.telegramNextRetryTime = undefined;
+              opp.telegramDeliveryInFlight = false;
+              opp.telegramDeliveryInFlightTime = undefined;
               storage.saveOpportunity(opp);
               this.activeSignal = originalSignal ? { ...originalSignal, currentPrice } : { ...signal, id: opp.signalId || signal.id, currentPrice };
               this.config.lastSignal = this.activeSignal;
@@ -712,6 +876,7 @@ class LiveMarketScanner {
 
             console.log(`[LiveMarketScanner] Retrying Telegram delivery for active same-setup opportunity ${opp.id} (Attempt ${(opp.telegramRetryCount || 0) + 1}).`);
             opp.telegramDeliveryInFlight = true;
+            opp.telegramDeliveryInFlightTime = Date.now();
             storage.saveOpportunity(opp);
 
             const retrySignal = originalSignal || {
@@ -732,27 +897,36 @@ class LiveMarketScanner {
               storage.saveSignal(retrySignal);
             }
 
-            // Await the retry to avoid continuous parallel attempts
-            const success = await telegramService.sendSignalNotification(retrySignal).catch((err) => {
-              console.error('[LiveMarketScanner] Telegram retry signal dispatch error:', err);
-              return false;
-            });
+            let success = false;
+            try {
+              // Await the retry to avoid continuous parallel attempts
+              success = await telegramService.sendSignalNotification(retrySignal).catch((err) => {
+                console.error('[LiveMarketScanner] Telegram retry signal dispatch error:', err);
+                return false;
+              });
+            } catch (dispatchErr) {
+              console.error('[LiveMarketScanner] Unexpected exception during Telegram retry dispatch:', dispatchErr);
+              success = false;
+            } finally {
+              opp.telegramDeliveryInFlight = false;
+              opp.telegramDeliveryInFlightTime = undefined;
 
-            opp.telegramDeliveryInFlight = false;
-            if (success) {
-              console.log(`[LiveMarketScanner] Telegram retry succeeded for active same-setup opportunity ${opp.id}.`);
-              opp.status = 'DISPATCHED';
-              opp.telegramRetryCount = 0;
-              opp.telegramNextRetryTime = undefined;
-            } else {
-              const retryCount = (opp.telegramRetryCount || 0) + 1;
-              opp.telegramRetryCount = retryCount;
-              // Backoff delay of 30 seconds for the first retry, and doubling for subsequent retries, capped at 10 minutes
-              const backoffSec = Math.min(30 * Math.pow(2, retryCount - 1), 600);
-              opp.telegramNextRetryTime = Date.now() + backoffSec * 1000;
-              console.warn(`[LiveMarketScanner] Telegram retry failed for active same-setup opportunity ${opp.id}. Next retry in ${backoffSec}s.`);
+              if (success) {
+                console.log(`[LiveMarketScanner] Telegram retry succeeded for active same-setup opportunity ${opp.id}.`);
+                opp.status = 'DISPATCHED';
+                opp.dispatchedAt = opp.dispatchedAt || Date.now();
+                opp.telegramRetryCount = 0;
+                opp.telegramNextRetryTime = undefined;
+              } else {
+                const retryCount = (opp.telegramRetryCount || 0) + 1;
+                opp.telegramRetryCount = retryCount;
+                // Backoff delay of 30 seconds for the first retry, and doubling for subsequent retries, capped at 10 minutes
+                const backoffSec = Math.min(30 * Math.pow(2, retryCount - 1), 600);
+                opp.telegramNextRetryTime = Date.now() + backoffSec * 1000;
+                console.warn(`[LiveMarketScanner] Telegram retry failed for active same-setup opportunity ${opp.id}. Next retry in ${backoffSec}s.`);
+              }
+              storage.saveOpportunity(opp);
             }
-            storage.saveOpportunity(opp);
 
             this.activeSignal = { ...retrySignal, currentPrice };
             this.config.lastSignal = this.activeSignal;
@@ -760,122 +934,42 @@ class LiveMarketScanner {
           }
         }
 
-        if (opp.status === 'DISPATCHED') {
-          const isTelegramDelivered = !!(opp.signalId && telegramService.getTelegramMessageId(opp.signalId));
+        if (opp.status === 'DISPATCHED' || !!opp.dispatchedAt) {
+          console.log(`[LiveMarketScanner] Opportunity ${oppId} was already dispatched (Status: ${opp.status}, DispatchedAt: ${opp.dispatchedAt}). Suppressing duplicate evolving alert.`);
+          this.config.duplicatePrevented = true;
+          this.config.lastDecision = signal.signal;
+          this.config.lastScanStatus = `تم منع إعادة إصدار الإشعار للفرصة الجارية: ${signal.signal} (${signal.setup})`;
 
-          if (isTelegramDelivered) {
-            console.log(`[LiveMarketScanner] Opportunity ${oppId} was already dispatched. Suppressing duplicate evolving alert.`);
-            this.config.duplicatePrevented = true;
-            this.config.lastDecision = signal.signal;
-            this.config.lastScanStatus = `تم منع إعادة إصدار الإشعار للفرصة الجارية: ${signal.signal} (${signal.setup})`;
+          // Freeze original levels! Do not overwrite with candidate signal.
+          opp.confidence = signal.confidence;
+          opp.lastUpdatedTime = Date.now();
+          storage.saveOpportunity(opp);
 
-            // Freeze original levels! Do not overwrite with candidate signal.
-            opp.confidence = signal.confidence;
-            opp.lastUpdatedTime = Date.now();
-            storage.saveOpportunity(opp);
-
-            if (this.activeSignal) {
-              this.activeSignal.currentPrice = currentPrice;
-              this.config.lastSignal = this.activeSignal;
-              return this.activeSignal;
-            } else {
-              const originalSignal = opp.signalId ? storage.getSignal(opp.signalId) : undefined;
-              if (originalSignal) {
-                this.activeSignal = {
-                  ...originalSignal,
-                  currentPrice,
-                };
-              } else {
-                this.activeSignal = {
-                  ...signal,
-                  id: opp.signalId || signal.id,
-                  entry: opp.entry,
-                  stopLoss: opp.stopLoss,
-                  tp1: opp.tp1,
-                  tp2: opp.tp2,
-                  slPoints: Math.round(Math.abs(opp.entry - opp.stopLoss) / 0.1),
-                  tp1Points: Math.round(Math.abs(opp.tp1 - opp.entry) / 0.1),
-                  tp2Points: Math.round(Math.abs(opp.tp2 - opp.entry) / 0.1),
-                  currentPrice,
-                };
-              }
-              this.config.lastSignal = this.activeSignal;
-              return this.activeSignal;
-            }
+          if (this.activeSignal) {
+            this.activeSignal.currentPrice = currentPrice;
+            this.config.lastSignal = this.activeSignal;
+            return this.activeSignal;
           } else {
             const originalSignal = opp.signalId ? storage.getSignal(opp.signalId) : undefined;
-            // Check if another attempt is already running or backoff has not elapsed
-            if (opp.telegramDeliveryInFlight) {
-              console.log(`[LiveMarketScanner] Telegram delivery attempt already in flight for DISPATCHED opportunity ${opp.id}. Skipping.`);
-              this.activeSignal = originalSignal ? { ...originalSignal, currentPrice } : { ...signal, id: opp.signalId || signal.id, currentPrice };
-              this.config.lastSignal = this.activeSignal;
-              return this.activeSignal;
-            }
-
-            if (opp.telegramNextRetryTime && Date.now() < opp.telegramNextRetryTime) {
-              const remainingSec = Math.ceil((opp.telegramNextRetryTime - Date.now()) / 1000);
-              console.log(`[LiveMarketScanner] Telegram delivery retry for DISPATCHED opportunity ${opp.id} is in backoff. Remaining: ${remainingSec}s. Skipping.`);
-              this.activeSignal = originalSignal ? { ...originalSignal, currentPrice } : { ...signal, id: opp.signalId || signal.id, currentPrice };
-              this.config.lastSignal = this.activeSignal;
-              return this.activeSignal;
-            }
-
-            // Safe double check persistent message mapping right before triggering dispatch
-            const doubleCheckMsgId = opp.signalId ? telegramService.getTelegramMessageId(opp.signalId) : undefined;
-            if (doubleCheckMsgId) {
-              console.log(`[LiveMarketScanner] Double checked persistent mapping: DISPATCHED signal ${opp.signalId} is already delivered (Message ID: ${doubleCheckMsgId}). Bypassing retry.`);
-              opp.telegramRetryCount = 0;
-              opp.telegramNextRetryTime = undefined;
-              storage.saveOpportunity(opp);
-              this.activeSignal = originalSignal ? { ...originalSignal, currentPrice } : { ...signal, id: opp.signalId || signal.id, currentPrice };
-              this.config.lastSignal = this.activeSignal;
-              return this.activeSignal;
-            }
-
-            console.log(`[LiveMarketScanner] Retrying Telegram delivery for DISPATCHED opportunity ${opp.id} (Attempt ${(opp.telegramRetryCount || 0) + 1}).`);
-            opp.telegramDeliveryInFlight = true;
-            storage.saveOpportunity(opp);
-
-            const retrySignal = originalSignal || {
-              ...signal,
-              id: opp.signalId || signal.id,
-              entry: opp.entry,
-              stopLoss: opp.stopLoss,
-              tp1: opp.tp1,
-              tp2: opp.tp2,
-              slPoints: Math.round(Math.abs(opp.entry - opp.stopLoss) / 0.1),
-              tp1Points: Math.round(Math.abs(opp.tp1 - opp.entry) / 0.1),
-              tp2Points: Math.round(Math.abs(opp.tp2 - opp.entry) / 0.1),
-              currentPrice,
-            };
-
-            // Save signal fallback if needed
-            if (!originalSignal) {
-              storage.saveSignal(retrySignal);
-            }
-
-            // Await the retry to avoid continuous parallel attempts
-            const success = await telegramService.sendSignalNotification(retrySignal).catch((err) => {
-              console.error('[LiveMarketScanner] Telegram retry signal dispatch error:', err);
-              return false;
-            });
-
-            opp.telegramDeliveryInFlight = false;
-            if (success) {
-              console.log(`[LiveMarketScanner] Telegram retry succeeded for DISPATCHED opportunity ${opp.id}.`);
-              opp.telegramRetryCount = 0;
-              opp.telegramNextRetryTime = undefined;
+            if (originalSignal) {
+              this.activeSignal = {
+                ...originalSignal,
+                currentPrice,
+              };
             } else {
-              const retryCount = (opp.telegramRetryCount || 0) + 1;
-              opp.telegramRetryCount = retryCount;
-              // Backoff delay of 30 seconds for the first retry, and doubling for subsequent retries, capped at 10 minutes
-              const backoffSec = Math.min(30 * Math.pow(2, retryCount - 1), 600);
-              opp.telegramNextRetryTime = Date.now() + backoffSec * 1000;
-              console.warn(`[LiveMarketScanner] Telegram retry failed for DISPATCHED opportunity ${opp.id}. Next retry in ${backoffSec}s.`);
+              this.activeSignal = {
+                ...signal,
+                id: opp.signalId || signal.id,
+                entry: opp.entry,
+                stopLoss: opp.stopLoss,
+                tp1: opp.tp1,
+                tp2: opp.tp2,
+                slPoints: Math.round(Math.abs(opp.entry - opp.stopLoss) / 0.1),
+                tp1Points: Math.round(Math.abs(opp.tp1 - opp.entry) / 0.1),
+                tp2Points: Math.round(Math.abs(opp.tp2 - opp.entry) / 0.1),
+                currentPrice,
+              };
             }
-            storage.saveOpportunity(opp);
-
-            this.activeSignal = { ...retrySignal, currentPrice };
             this.config.lastSignal = this.activeSignal;
             return this.activeSignal;
           }
@@ -889,6 +983,20 @@ class LiveMarketScanner {
         this.config.lastSignal = signal;
         this.config.lastScanStatus = `تم رصد صفقة مؤكدة: ${signal.signal} (${signal.setup}) بنسبة ثقة ${signal.confidence}%`;
         console.log(`[LiveMarketScanner] New qualified signal detected: ${signal.signal} @ ${signal.entry}`);
+
+        // Capture decision-time factor snapshot for experience memory
+        try {
+          const factorSnapshot = experienceMemoryEngine.captureDecisionSnapshot(signal, ind1h, ind15m, ind5m);
+          if (factorSnapshot) {
+            signal.factorSnapshot = factorSnapshot;
+            if (opp) {
+              opp.factorSnapshot = factorSnapshot;
+              storage.saveOpportunity(opp);
+            }
+          }
+        } catch (fErr) {
+          console.warn('[LiveMarketScanner] Decision snapshot capture error (non-blocking):', fErr);
+        }
 
         // Persist new qualified signal to disk
         storage.saveSignal(signal);

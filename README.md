@@ -12,7 +12,7 @@ Follow these steps to migrate historical trades, signals, scans, and account sta
 Before running the data migration, initialize your Supabase tables:
 1. Go to your **Supabase Dashboard** -> **SQL Editor**.
 2. Paste the contents of `supabase/schema.sql` and click **Run**.
-3. Confirm all 11 tables (`app_settings`, `account_state`, `trade_ledger`, `trade_outcomes`, `signals`, `scans`, `opportunities`, `telegram_config`, `candidate_lifecycles`, `poi_records`, `terminal_setups`) are created.
+3. Confirm all 12 tables (`app_settings`, `account_state`, `trade_ledger`, `trade_outcomes`, `signals`, `scans`, `opportunities`, `telegram_config`, `candidate_lifecycles`, `poi_records`, `terminal_setups`, `experience_records`) are created.
 
 ### 2. Configure GitHub Actions Secrets
 In your GitHub repository:

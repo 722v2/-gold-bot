@@ -157,6 +157,28 @@ CREATE TABLE IF NOT EXISTS terminal_setups (
   created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
+-- 12. Experience Records Table (Experience Memory Engine)
+CREATE TABLE IF NOT EXISTS experience_records (
+  id TEXT PRIMARY KEY,
+  signal_id TEXT NOT NULL,
+  trade_id TEXT,
+  combination_key TEXT NOT NULL,
+  factors JSONB NOT NULL,
+  direction TEXT NOT NULL,
+  setup_family TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  realized_pnl NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  rr NUMERIC(8, 2),
+  completed_at BIGINT NOT NULL,
+  raw_data JSONB NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_experience_records_completed_at ON experience_records(completed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_experience_records_combination_key ON experience_records(combination_key);
+CREATE INDEX IF NOT EXISTS idx_experience_records_signal_id ON experience_records(signal_id);
+CREATE INDEX IF NOT EXISTS idx_experience_records_setup_family ON experience_records(setup_family);
+
 -- Seed Account State with exactly $91.00 current balance if not already present
 INSERT INTO account_state (id, starting_balance, current_balance, updated_at)
 VALUES ('main', 25.00, 91.00, NOW())
@@ -189,6 +211,7 @@ ALTER TABLE telegram_config ENABLE ROW LEVEL SECURITY;
 ALTER TABLE candidate_lifecycles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE poi_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE terminal_setups ENABLE ROW LEVEL SECURITY;
+ALTER TABLE experience_records ENABLE ROW LEVEL SECURITY;
 
 -- Note: The service_role key has the PostgreSQL BYPASSRLS attribute,
 -- allowing the backend full read/write access while external unauthenticated

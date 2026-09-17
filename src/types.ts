@@ -284,6 +284,7 @@ export interface AppSettings {
   partialClosePercent?: number; // Configurable percentage to close at TP1 (e.g. 50%)
   enableTradeManagement?: boolean; // Enable Phase 4 continuous trade lifecycle management
   oppositeCooldownMinutes?: number; // Configurable cooldown minutes for opposite signals after trade close
+  enableExperienceMemory?: boolean; // Enable feedback memory / historical experience learning
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -310,6 +311,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   partialClosePercent: 50,
   enableTradeManagement: true,
   oppositeCooldownMinutes: 10,
+  enableExperienceMemory: true,
 };
 
 export interface BrokerSettings {
@@ -442,6 +444,7 @@ export interface TradeSignal {
   invalidation: string; // When the trade becomes invalid
   noTradeReason?: string; // Reason if NO TRADE
   aiAnalysisText?: string;
+  factorSnapshot?: any; // Decision-time categorical factor snapshot for experience memory
 }
 
 export interface Reinforcement {
@@ -773,6 +776,8 @@ export interface TradeOpportunity {
   telegramRetryCount?: number;
   telegramNextRetryTime?: number;
   telegramDeliveryInFlight?: boolean;
+  telegramDeliveryInFlightTime?: number;
+  factorSnapshot?: any;
 }
 
 

@@ -33,6 +33,7 @@
   "partialClosePercent": 50,
   "enableTradeManagement": true,
   "oppositeCooldownMinutes": 10,
+  "enableExperienceMemory": true,
   "notifyNoTrade": false,
   "updatedAt": 1789586800000
 }

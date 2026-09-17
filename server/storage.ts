@@ -141,6 +141,8 @@ const TERMINAL_FILE = path.join(DATA_DIR, 'terminal_setups.json');
 const OPPS_FILE = path.join(DATA_DIR, 'opportunities.json');
 const TELEGRAM_CHAT_FILE = path.join(DATA_DIR, 'telegram_private_chat.json');
 const BACKTEST_FILE = path.join(DATA_DIR, 'backtest_history.json');
+const SNAPSHOTS_FILE = path.join(DATA_DIR, 'factor_snapshots.json');
+const EXPERIENCES_FILE = path.join(DATA_DIR, 'experience_records.json');
 
 const MAX_SCANS_TO_KEEP = 100;
 const MAX_SIGNALS_TO_KEEP = 50;
@@ -156,6 +158,9 @@ export class PersistentStorage {
   private inMemoryOpportunities: Map<string, TradeOpportunity> = new Map();
   private inMemoryTerminalSetups: Set<string> = new Set();
   private inMemoryTelegramChatId: string | null = null;
+  private inMemoryFactorSnapshots: Map<string, any> = new Map();
+  private inMemoryExperienceRecords: any[] = [];
+  private outcomeListeners: Array<(record: TradeOutcomeRecord, trade?: TradeLedgerItem) => void> = [];
 
   // CRITICAL REQUIREMENT 4: Starting balance $25.00, preserved current balance $91.00
   private inMemoryStartingBalance = 25.0;
@@ -295,10 +300,28 @@ export class PersistentStorage {
       if (fs.existsSync(OPPS_FILE)) {
         const raw = fs.readFileSync(OPPS_FILE, 'utf-8');
         const data = JSON.parse(raw);
+        this.inMemoryOpportunities.clear();
         if (Array.isArray(data)) {
-          this.inMemoryOpportunities = new Map(data.map((o: any) => [o.id, o]));
+          for (const o of data) {
+            if (o && o.id) {
+              if (o.telegramDeliveryInFlight) {
+                o.telegramDeliveryInFlight = false;
+                o.telegramDeliveryInFlightTime = undefined;
+              }
+              this.inMemoryOpportunities.set(o.id, o);
+            }
+          }
         } else if (typeof data === 'object' && data !== null) {
-          this.inMemoryOpportunities = new Map(Object.entries(data));
+          for (const [k, o] of Object.entries(data)) {
+            const opp = o as any;
+            if (opp) {
+              if (opp.telegramDeliveryInFlight) {
+                opp.telegramDeliveryInFlight = false;
+                opp.telegramDeliveryInFlightTime = undefined;
+              }
+              this.inMemoryOpportunities.set(k, opp);
+            }
+          }
         }
       }
 
@@ -315,6 +338,24 @@ export class PersistentStorage {
         const chatData = JSON.parse(raw);
         if (chatData?.chatId) {
           this.inMemoryTelegramChatId = String(chatData.chatId);
+        }
+      }
+
+      if (fs.existsSync(SNAPSHOTS_FILE)) {
+        const raw = fs.readFileSync(SNAPSHOTS_FILE, 'utf-8');
+        const data = JSON.parse(raw);
+        if (data && typeof data === 'object') {
+          for (const [k, v] of Object.entries(data)) {
+            this.inMemoryFactorSnapshots.set(k, v);
+          }
+        }
+      }
+
+      if (fs.existsSync(EXPERIENCES_FILE)) {
+        const raw = fs.readFileSync(EXPERIENCES_FILE, 'utf-8');
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          this.inMemoryExperienceRecords = list;
         }
       }
     } catch (e: any) {
@@ -514,7 +555,13 @@ export class PersistentStorage {
         this.inMemoryOpportunities.clear();
         for (const r of res.data) {
           const opp = r.raw_data || r;
-          if (opp.id) this.inMemoryOpportunities.set(opp.id, opp);
+          if (opp.id) {
+            if (opp.telegramDeliveryInFlight) {
+              opp.telegramDeliveryInFlight = false;
+              opp.telegramDeliveryInFlightTime = undefined;
+            }
+            this.inMemoryOpportunities.set(opp.id, opp);
+          }
         }
       } else if (res && res.data?.length === 0 && this.inMemoryOpportunities.size > 0) {
         for (const opp of this.inMemoryOpportunities.values()) {
@@ -568,6 +615,78 @@ export class PersistentStorage {
           await executeSupabaseQuery(
             (c) => c.from('terminal_setups').upsert({ id: key.replace(/\//g, '_'), setup_key: key }),
             'initSupabaseData:seed_terminal'
+          );
+        }
+      }
+    } catch (e: any) {
+      // Non-blocking
+    }
+
+    // 10. Experience Records
+    try {
+      if (!isSupabaseAvailable()) return;
+      const res = await executeSupabaseQuery(
+        (c) =>
+          c
+            .from('experience_records')
+            .select('*')
+            .order('completed_at', { ascending: false })
+            .limit(1000),
+        'initSupabaseData:experience_records'
+      );
+      if (res && Array.isArray(res.data) && res.data.length > 0) {
+        // Merge Supabase records with in-memory records (from local disk) avoiding duplicates
+        const existingMap = new Map<string, any>();
+        // First index local disk records
+        for (const localRec of this.inMemoryExperienceRecords) {
+          if (localRec && localRec.id) {
+            existingMap.set(localRec.id, localRec);
+          }
+        }
+        // Merge/update with Supabase records (authoritative)
+        for (const row of res.data) {
+          const parsed = row.raw_data || {
+            id: row.id,
+            signalId: row.signal_id,
+            tradeId: row.trade_id || undefined,
+            combinationKey: row.combination_key,
+            factors: row.factors,
+            direction: row.direction,
+            setupFamily: row.setup_family,
+            outcome: row.outcome,
+            realizedPnl: typeof row.realized_pnl === 'number' ? row.realized_pnl : parseFloat(row.realized_pnl) || 0,
+            rr: typeof row.rr === 'number' ? row.rr : (row.rr ? parseFloat(row.rr) : undefined),
+            completedAt: typeof row.completed_at === 'number' ? row.completed_at : Number(row.completed_at) || 0,
+          };
+          if (parsed && parsed.id) {
+            existingMap.set(parsed.id, parsed);
+          }
+        }
+        // Update in-memory records sorted by completedAt ascending
+        this.inMemoryExperienceRecords = Array.from(existingMap.values())
+          .sort((a, b) => (a.completedAt || 0) - (b.completedAt || 0))
+          .slice(-1000);
+      } else if (res && res.data?.length === 0 && this.inMemoryExperienceRecords.length > 0) {
+        // Seed Supabase with local records if Supabase table is empty
+        for (const rec of this.inMemoryExperienceRecords) {
+          if (!isSupabaseAvailable()) break;
+          await executeSupabaseQuery(
+            (c) =>
+              c.from('experience_records').upsert({
+                id: rec.id,
+                signal_id: rec.signalId,
+                trade_id: rec.tradeId || null,
+                combination_key: rec.combinationKey,
+                factors: rec.factors,
+                direction: rec.direction,
+                setup_family: rec.setupFamily,
+                outcome: rec.outcome,
+                realized_pnl: rec.realizedPnl,
+                rr: rec.rr || null,
+                completed_at: rec.completedAt,
+                raw_data: rec,
+              }),
+            'initSupabaseData:seed_experience_record'
           );
         }
       }
@@ -763,6 +882,8 @@ export class PersistentStorage {
       );
       fs.writeFileSync(TERMINAL_FILE, JSON.stringify(Array.from(this.inMemoryTerminalSetups), null, 2), 'utf-8');
       fs.writeFileSync(OPPS_FILE, JSON.stringify(Object.fromEntries(this.inMemoryOpportunities), null, 2), 'utf-8');
+      fs.writeFileSync(SNAPSHOTS_FILE, JSON.stringify(Object.fromEntries(this.inMemoryFactorSnapshots), null, 2), 'utf-8');
+      fs.writeFileSync(EXPERIENCES_FILE, JSON.stringify(this.inMemoryExperienceRecords, null, 2), 'utf-8');
       if (this.inMemoryTelegramChatId) {
         fs.writeFileSync(
           TELEGRAM_CHAT_FILE,
@@ -1314,6 +1435,15 @@ export class PersistentStorage {
       );
 
       this.syncJsonBackups();
+
+      // Dispatch to registered outcome listeners (e.g. feedback memory engine)
+      for (const listener of this.outcomeListeners) {
+        try {
+          listener(record, updatedTrade);
+        } catch (lErr) {
+          console.warn('[Storage] Outcome listener error (non-blocking):', lErr);
+        }
+      }
 
       // Dispatch completed trade outcome notification
       telegramService.sendOutcomeNotification(record, updatedTrade).catch((err) => {
@@ -1885,11 +2015,26 @@ export class PersistentStorage {
 
   public getOpportunity(id: string): TradeOpportunity | null {
     if (!id) return null;
-    return this.inMemoryOpportunities.get(id) || null;
+    const opp = this.inMemoryOpportunities.get(id);
+    if (!opp) return null;
+    // 60-second TTL fallback for in-flight locks
+    if (opp.telegramDeliveryInFlight && opp.telegramDeliveryInFlightTime && Date.now() - opp.telegramDeliveryInFlightTime > 60000) {
+      opp.telegramDeliveryInFlight = false;
+      opp.telegramDeliveryInFlightTime = undefined;
+    }
+    return opp;
   }
 
   public getOpportunities(): TradeOpportunity[] {
-    return Array.from(this.inMemoryOpportunities.values());
+    const list = Array.from(this.inMemoryOpportunities.values());
+    const now = Date.now();
+    for (const opp of list) {
+      if (opp.telegramDeliveryInFlight && opp.telegramDeliveryInFlightTime && now - opp.telegramDeliveryInFlightTime > 60000) {
+        opp.telegramDeliveryInFlight = false;
+        opp.telegramDeliveryInFlightTime = undefined;
+      }
+    }
+    return list;
   }
 
   public markSignalOrOpportunityNotEntered(signalOrOppId: string): {
@@ -2077,6 +2222,62 @@ export class PersistentStorage {
       console.error('[Storage] Error during resetTradingState:', error);
       throw error;
     }
+  }
+
+  // =========================================================================
+  // Experience Memory & Factor Snapshots Persistence
+  // =========================================================================
+  public onOutcomeRecorded(listener: (record: TradeOutcomeRecord, trade?: TradeLedgerItem) => void): void {
+    this.outcomeListeners.push(listener);
+  }
+
+  public saveFactorSnapshot(snapshot: any): void {
+    if (!snapshot || !snapshot.signalId) return;
+    this.inMemoryFactorSnapshots.set(snapshot.signalId, snapshot);
+    this.syncJsonBackups();
+  }
+
+  public getFactorSnapshot(signalId: string): any | null {
+    if (!signalId) return null;
+    return this.inMemoryFactorSnapshots.get(signalId) || null;
+  }
+
+  public saveExperienceRecord(record: any): void {
+    if (!record || !record.id) return;
+    const idx = this.inMemoryExperienceRecords.findIndex(
+      (r) => r.id === record.id || (r.signalId === record.signalId && r.completedAt === record.completedAt)
+    );
+    if (idx >= 0) {
+      this.inMemoryExperienceRecords[idx] = record;
+    } else {
+      this.inMemoryExperienceRecords.push(record);
+    }
+    if (this.inMemoryExperienceRecords.length > 1000) {
+      this.inMemoryExperienceRecords = this.inMemoryExperienceRecords.slice(-1000);
+    }
+    this.safeSupabase(
+      (c) =>
+        c.from('experience_records').upsert({
+          id: record.id,
+          signal_id: record.signalId,
+          trade_id: record.tradeId || null,
+          combination_key: record.combinationKey,
+          factors: record.factors,
+          direction: record.direction,
+          setup_family: record.setupFamily,
+          outcome: record.outcome,
+          realized_pnl: record.realizedPnl,
+          rr: record.rr || null,
+          completed_at: record.completedAt,
+          raw_data: record,
+        }),
+      'saveExperienceRecord'
+    );
+    this.syncJsonBackups();
+  }
+
+  public getCompletedExperienceRecords(): any[] {
+    return [...this.inMemoryExperienceRecords];
   }
 }
 

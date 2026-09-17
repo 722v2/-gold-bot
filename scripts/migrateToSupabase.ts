@@ -250,6 +250,33 @@ async function runMigration() {
     console.log(`[Migration] Successfully migrated ${termCount}/${terminalSetups.length} terminal setups.`);
   }
 
+  // 10. Experience Records
+  console.log('[Migration] Migrating experience records...');
+  const expRecords: any[] = readJson('experience_records.json', []);
+  if (Array.isArray(expRecords) && expRecords.length > 0) {
+    let expCount = 0;
+    for (const rec of expRecords) {
+      if (!rec || !rec.id) continue;
+      const { error: expErr } = await supabase.from('experience_records').upsert({
+        id: rec.id,
+        signal_id: rec.signalId,
+        trade_id: rec.tradeId || null,
+        combination_key: rec.combinationKey,
+        factors: rec.factors,
+        direction: rec.direction,
+        setup_family: rec.setupFamily,
+        outcome: rec.outcome,
+        realized_pnl: rec.realizedPnl,
+        rr: rec.rr || null,
+        completed_at: rec.completedAt,
+        raw_data: rec,
+      });
+      if (expErr) console.error(`[Migration] Error upserting experience record ${rec.id}:`, expErr.message);
+      else expCount++;
+    }
+    console.log(`[Migration] Successfully migrated ${expCount}/${expRecords.length} experience records.`);
+  }
+
   console.log('[Migration] Migration routine finished successfully!');
 }
 
