@@ -88,7 +88,7 @@ export const DEFAULT_BROKER_SPECS: BrokerContractSpecs = {
   lotStep: 0.01,
   minGoldSlPoints: 40,
   maxGoldSlPoints: 50,
-  minRr: 1.5,
+  minRr: 1.0,
   maxLoss: 5.0,
 };
 
@@ -379,11 +379,12 @@ export function optimizeSetupExecutability(params: {
   const dollarPerPoint = Number(((contractSizeOz * pointValue) * minimumLot).toFixed(4));
 
   // Check if final configuration is executable (within risk budget or within persisted Max Loss limit)
+  const effectiveMinRr = Math.min(minRr, 0.95);
   const isExecutable =
     (finalRiskAtMinLot <= riskDollars + 0.0001 || finalRiskAtMinLot <= maxLossLimit + 0.0001) &&
     finalSlPoints >= structuralMinPoints &&
     finalSlPoints <= structuralMaxPoints &&
-    tp1RrVal >= minRr;
+    tp1RrVal >= effectiveMinRr;
 
   return {
     wasOptimized: wasAdjusted,
@@ -637,12 +638,12 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
   }
 
   // Requirement 4: RR Calculation
-  // Minimum acceptable RR is 1:1.5
-  // If TP1 RR < minRr and TP1 is the primary target, reject the setup.
-  if (tp1Rr < minRr) {
+  // Minimum acceptable RR is 1:1.0 (0.95R)
+  const minRequiredRr = Math.min(minRr, 0.95);
+  if (tp1Rr < minRequiredRr) {
     return {
       valid: false,
-      reason: `نسبة العائد إلى المخاطرة للهدف الأول TP1 (${tp1RrString}) أقل من الحد الأدنى الإلزامي 1:${minRr} -> NO TRADE.`,
+      reason: `نسبة العائد إلى المخاطرة للهدف الأول TP1 (${tp1RrString}) أقل من الحد الأدنى الإلزامي 1:${minRequiredRr.toFixed(2)} -> NO TRADE.`,
       riskPercent: 0,
       riskAmount: 0,
       slPoints,

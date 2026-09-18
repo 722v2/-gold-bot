@@ -371,8 +371,9 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       structuralTargetHint,
     });
 
-    if (!tpResult.valid || tpResult.tp1Rr < minRr) {
-      return null; // Failed minimum RR 1.5R constraint
+    const minAcceptableRr = 0.95; // Allow natural market targets starting from ~1.0R
+    if (!tpResult.valid || tpResult.tp1Rr < minAcceptableRr) {
+      return null;
     }
 
     // 3. Phase 3: TP Path Clearance & Obstacle Runway Assessment

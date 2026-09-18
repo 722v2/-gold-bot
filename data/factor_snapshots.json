@@ -481,5 +481,47 @@
     },
     "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=UPTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Range Breakout & Expansion (Bearish Volatility Expansion)|volatility=HIGH|zone=DISCOUNT",
     "createdAt": 1789741646803
+  },
+  "sig_1789746048525_lbu4u": {
+    "signalId": "sig_1789746048525_lbu4u",
+    "setupFamily": "Double Top Reversal (M-Formation)",
+    "direction": "SELL",
+    "factors": {
+      "setupFamily": "Double Top Reversal (M-Formation)",
+      "direction": "SELL",
+      "htfStructure": "UPTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND",
+      "liquidity": "NONE",
+      "orderBlock": "BEARISH_OB",
+      "fvg": "BEARISH_FVG",
+      "zone": "DISCOUNT",
+      "rsi": "NEUTRAL",
+      "macd": "BULLISH",
+      "volatility": "HIGH"
+    },
+    "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=UPTREND|liquidity=NONE|m15Structure=BEARISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Double Top Reversal (M-Formation)|volatility=HIGH|zone=DISCOUNT",
+    "createdAt": 1789746048525
+  },
+  "sig_1789747548514_nzxq2": {
+    "signalId": "sig_1789747548514_nzxq2",
+    "setupFamily": "Bare Resistance Rejection",
+    "direction": "SELL",
+    "factors": {
+      "setupFamily": "Bare Resistance Rejection",
+      "direction": "SELL",
+      "htfStructure": "UPTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND",
+      "liquidity": "NONE",
+      "orderBlock": "BULLISH_OB",
+      "fvg": "BEARISH_FVG",
+      "zone": "DISCOUNT",
+      "rsi": "NEUTRAL",
+      "macd": "BULLISH",
+      "volatility": "HIGH"
+    },
+    "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=UPTREND|liquidity=NONE|m15Structure=BEARISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Bare Resistance Rejection|volatility=HIGH|zone=DISCOUNT",
+    "createdAt": 1789747548514
   }
 }

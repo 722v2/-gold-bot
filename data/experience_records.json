@@ -506,5 +506,57 @@
     "realizedPnl": -4,
     "setupFamily": "Bare Support Rejection",
     "combinationKey": "direction=BUY|fvg=BEARISH_FVG|htfStructure=UPTREND|liquidity=NONE|m15Structure=BULLISH|macd=NEUTRAL|marketRegime=NORMAL_RANGE|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Bare Support Rejection|volatility=HIGH|zone=EQUILIBRIUM"
+  },
+  {
+    "id": "exp_sig_1789747584675_0amsf_1789748311934",
+    "rr": 1.6,
+    "factors": {
+      "fvg": "BEARISH_FVG",
+      "rsi": "NEUTRAL",
+      "macd": "BULLISH",
+      "zone": "DISCOUNT",
+      "direction": "SELL",
+      "liquidity": "NONE",
+      "orderBlock": "BULLISH_OB",
+      "volatility": "HIGH",
+      "setupFamily": "Bare Resistance Rejection",
+      "htfStructure": "UPTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND"
+    },
+    "outcome": "LOSS",
+    "tradeId": "sig_1789747584675_0amsf",
+    "signalId": "sig_1789747584675_0amsf",
+    "direction": "SELL",
+    "completedAt": 1789748311934,
+    "realizedPnl": -4.5,
+    "setupFamily": "Bare Resistance Rejection",
+    "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=UPTREND|liquidity=NONE|m15Structure=BEARISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Bare Resistance Rejection|volatility=HIGH|zone=DISCOUNT"
+  },
+  {
+    "id": "exp_sig_1789758627499_n3epo_1789761403432",
+    "rr": 1.89,
+    "factors": {
+      "fvg": "BEARISH_FVG",
+      "rsi": "NEUTRAL",
+      "macd": "BEARISH",
+      "zone": "PREMIUM",
+      "direction": "SELL",
+      "liquidity": "NONE",
+      "orderBlock": "BULLISH_OB",
+      "volatility": "HIGH",
+      "setupFamily": "Double Top Reversal (M-Formation)",
+      "htfStructure": "UPTREND",
+      "m15Structure": "BULLISH",
+      "marketRegime": "STRONG_TREND"
+    },
+    "outcome": "WIN",
+    "tradeId": "sig_1789758627499_n3epo",
+    "signalId": "sig_1789758627499_n3epo",
+    "direction": "SELL",
+    "completedAt": 1789761403432,
+    "realizedPnl": 9.5,
+    "setupFamily": "Double Top Reversal (M-Formation)",
+    "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=UPTREND|liquidity=NONE|m15Structure=BULLISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Double Top Reversal (M-Formation)|volatility=HIGH|zone=PREMIUM"
   }
 ]

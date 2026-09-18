@@ -133,68 +133,59 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
     };
   }
 
-  // 2. Scan for Opposing Structural Barriers BEFORE minRr target
-  const opposingBarriers: { price: number; name: string }[] = [];
+  // 2. Scan for Opposing Structural Barriers ahead of entry and include as candidates
+  const candidateLevels: StructuralLevel[] = [];
   if (isBuy) {
     if (indicators15m.orderBlock?.type === 'BEARISH' && indicators15m.orderBlock.low > entry) {
-      opposingBarriers.push({ price: indicators15m.orderBlock.low, name: '15M Bearish Order Block' });
+      const dist = Number((indicators15m.orderBlock.low - entry).toFixed(2));
+      const rr = Number((dist / slDistance).toFixed(2));
+      candidateLevels.push({
+        price: Number(indicators15m.orderBlock.low.toFixed(2)),
+        type: '15M_OB',
+        priority: 2,
+        name: '15M Bearish Order Block Barrier',
+        distance: dist,
+        rr,
+      });
     }
     if (indicators15m.fvg?.type === 'BEARISH' && indicators15m.fvg.bottom > entry) {
-      opposingBarriers.push({ price: indicators15m.fvg.bottom, name: '15M Bearish FVG' });
+      const dist = Number((indicators15m.fvg.bottom - entry).toFixed(2));
+      const rr = Number((dist / slDistance).toFixed(2));
+      candidateLevels.push({
+        price: Number(indicators15m.fvg.bottom.toFixed(2)),
+        type: '15M_FVG',
+        priority: 3,
+        name: '15M Bearish FVG Barrier',
+        distance: dist,
+        rr,
+      });
     }
   } else {
     if (indicators15m.orderBlock?.type === 'BULLISH' && indicators15m.orderBlock.high < entry) {
-      opposingBarriers.push({ price: indicators15m.orderBlock.high, name: '15M Bullish Order Block' });
+      const dist = Number((entry - indicators15m.orderBlock.high).toFixed(2));
+      const rr = Number((dist / slDistance).toFixed(2));
+      candidateLevels.push({
+        price: Number(indicators15m.orderBlock.high.toFixed(2)),
+        type: '15M_OB',
+        priority: 2,
+        name: '15M Bullish Order Block Barrier',
+        distance: dist,
+        rr,
+      });
     }
     if (indicators15m.fvg?.type === 'BULLISH' && indicators15m.fvg.top < entry) {
-      opposingBarriers.push({ price: indicators15m.fvg.top, name: '15M Bullish FVG' });
+      const dist = Number((entry - indicators15m.fvg.top).toFixed(2));
+      const rr = Number((dist / slDistance).toFixed(2));
+      candidateLevels.push({
+        price: Number(indicators15m.fvg.top.toFixed(2)),
+        type: '15M_FVG',
+        priority: 3,
+        name: '15M Bullish FVG Barrier',
+        distance: dist,
+        rr,
+      });
     }
   }
-
-  const criticalOpposingBarrier = opposingBarriers.find((b) => {
-    const dist = Math.abs(b.price - entry);
-    return dist < minRr * slDistance;
-  });
-
-  if (criticalOpposingBarrier) {
-    const barrierDist = Math.abs(criticalOpposingBarrier.price - entry);
-    const barrierRr = Number((barrierDist / slDistance).toFixed(2));
-    return {
-      valid: false,
-      tp1: entry,
-      tp2: entry,
-      slDistance,
-      slPoints,
-      tp1Distance: barrierDist,
-      tp1Points: Number((barrierDist / 0.1).toFixed(1)),
-      tp1Rr: barrierRr,
-      tp1RrString: `1:${barrierRr.toFixed(2)}`,
-      tp2Distance: 0,
-      tp2Points: 0,
-      tp2Rr: 0,
-      tp2RrString: '1:0',
-      tp1TargetName: 'Opposing Barrier Blocked',
-      tp2TargetName: 'None',
-      tpSelectionReason: `حاجز هيكلي معاكس (${criticalOpposingBarrier.name}) يقع قبل تحقيق هدف ${minRr}R (يبعد $${barrierDist.toFixed(2)}) -> NO TRADE`,
-      structuralTargetUsed: criticalOpposingBarrier.name,
-      passedVolatilityCheck: false,
-      atrAtEntry,
-      noFutureDataUsed: true,
-      opposingBarrierDetected: true,
-      opposingBarrierReason: `حاجز هيكلي معاكس (${criticalOpposingBarrier.name}) يمنع السعر من الوصول إلى هدف ${minRr}R بأمان.`,
-      rejectionReason: `وجود حاجز معاكس (${criticalOpposingBarrier.name}) يقل عن ${minRr}R -> NO TRADE.`,
-      rawStructuralTarget: criticalOpposingBarrier.price,
-      finalTp1: entry,
-      targetSourceType: 'OPPOSING_BARRIER',
-      targetDistance: barrierDist,
-      actualRr: barrierRr,
-      isModified: false,
-      modificationReason: `Opposing barrier blocked trade before ${minRr}R`,
-    };
-  }
-
-  // 3. Extract Genuine Market Structure Targets strictly in trade direction (NO LOOKAHEAD)
-  const candidateLevels: StructuralLevel[] = [];
 
   // A. 5M & 15M Swing Pivots (Priority 1)
   if (isBuy) {
@@ -604,17 +595,17 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
     return distDiff;
   });
 
-  // 5. Select TP1: The NEAREST valid structural target meeting >= minRr within volatility bounds.
-  // If the nearest target does not satisfy MIN_RR, evaluate subsequent targets in distance order.
+  // 5. Select TP1: The NEAREST valid structural target in the trade direction (R:R >= 0.95R)
+  const minTargetRr = 0.95; // Allow natural realistic market targets starting from ~1.0R
   const maxAllowedDistance = Math.max(15.0, 3.5 * atr1h);
   const validTp1Candidates = candidateLevels.filter(
-    (c) => c.rr >= minRr && c.distance <= maxAllowedDistance
+    (c) => c.rr >= minTargetRr && c.distance <= maxAllowedDistance
   );
 
   if (validTp1Candidates.length === 0) {
     const nearestCandidate = candidateLevels[0];
     const rejectionReason = nearestCandidate
-      ? `أقرب هدف هيكلي (${nearestCandidate.name}) يحقق 1:${nearestCandidate.rr.toFixed(2)} فقط (< 1:${minRr}) ولا يوجد هدف هيكلي لاحق يحقق النسبة المطلوبة.`
+      ? `أقرب هدف هيكلي (${nearestCandidate.name}) يحقق 1:${nearestCandidate.rr.toFixed(2)} فقط (< 1:1.00) ولا يوجد هدف هيكلي لاحق يحقق النسبة المطلوبة.`
       : 'غياب الأهداف الفنية والامتدادية في اتجاه الصفقة.';
     return {
       valid: false,
@@ -632,7 +623,7 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
       tp2RrString: '1:0',
       tp1TargetName: nearestCandidate?.name || 'None',
       tp2TargetName: 'None',
-      tpSelectionReason: `لا يوجد أي هدف هيكلي متاح يحقق الحد الأدنى 1:${minRr} ضمن نطاق التقلب -> NO TRADE`,
+      tpSelectionReason: `لا يوجد أي هدف هيكلي متاح يحقق الحد الأدنى لنسبة العائد (1:1.00) ضمن نطاق التقلب -> NO TRADE`,
       structuralTargetUsed: nearestCandidate?.name || 'None',
       passedVolatilityCheck: false,
       atrAtEntry,
@@ -644,7 +635,7 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
       targetDistance: nearestCandidate?.distance || 0,
       actualRr: nearestCandidate?.rr || 0,
       isModified: false,
-      modificationReason: `No valid structural target meets MIN_RR (>= ${minRr}R) within volatility boundary`,
+      modificationReason: 'No valid structural target meets MIN_RR (>= 1.00R) within volatility boundary',
     };
   }
 
@@ -658,7 +649,7 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
 
   // 6. Select TP2: Next genuine structural candidate farther than TP1
   const furtherCandidates = candidateLevels.filter(
-    (c) => c.distance > tp1Distance + 0.3 * slDistance && Math.abs(c.price - tp1Price) >= 0.5 && c.rr >= minRr
+    (c) => c.distance > tp1Distance + 0.3 * slDistance && Math.abs(c.price - tp1Price) >= 0.5 && c.rr >= minTargetRr
   );
 
   const selectedTp2 = furtherCandidates.length > 0 ? furtherCandidates[0] : selectedTp1;
