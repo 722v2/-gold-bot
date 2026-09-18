@@ -476,7 +476,7 @@ export interface TradeLedgerItem {
   lotSize?: number;
   confidence: number;
   setup: string;
-  result: 'OPEN' | 'WIN' | 'LOSS' | 'CANCELLED' | 'VOID' | 'EXPIRED' | 'NOT_ENTERED';
+  result: 'OPEN' | 'WIN' | 'LOSS' | 'BREAK_EVEN' | 'CANCELLED' | 'VOID' | 'EXPIRED' | 'NOT_ENTERED';
   isActive?: boolean;
   pl: number; // Stored numeric P&L (realized if closed, 0 if open)
   realizedPnl?: number; // Authoritative realized P&L ($)

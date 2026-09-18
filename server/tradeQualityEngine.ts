@@ -414,12 +414,13 @@ export function assessPullbackQuality(
   let avgPullbackBody = 0;
 
   for (const c of pullbackCandles) {
-    const isBull = c.close >= c.open;
+    const isBull = c.close > c.open;
+    const isBear = c.close < c.open;
     const body = Math.abs(c.close - c.open);
     const range = Math.max(0.01, c.high - c.low);
     avgPullbackBody += body;
 
-    const isCounterTrend = direction === 'BUY' ? !isBull : isBull;
+    const isCounterTrend = direction === 'BUY' ? isBear : isBull;
     if (isCounterTrend && body > range * 0.65 && body > indicators5m.atr14 * 0.8) {
       counterTrendImpulseCount += 1;
     } else {
@@ -601,23 +602,24 @@ export function assessPriceActionTrigger(
     };
   }
 
-  const isBull = last5m.close >= last5m.open;
+  const isBull = last5m.close > last5m.open;
+  const isBear = last5m.close < last5m.open;
   const body = Math.abs(last5m.close - last5m.open);
   const totalRange = Math.max(0.01, last5m.high - last5m.low);
   const upperWick = last5m.high - Math.max(last5m.open, last5m.close);
   const lowerWick = Math.min(last5m.open, last5m.close) - last5m.low;
 
-  // 1. Rejection Wick
+  // 1. Rejection Wick (Dominant wick relative to body, range, and opposing wick)
   let rejectionRatio = 0;
   if (direction === 'BUY') {
     rejectionRatio = lowerWick / totalRange;
-    if (lowerWick > body * 1.3 && lowerWick > totalRange * 0.40) {
+    if (lowerWick > body * 1.3 && lowerWick > totalRange * 0.40 && lowerWick > upperWick * 1.4) {
       allTriggers.push('REJECTION_WICK');
       confirmationScore += 12;
     }
   } else {
     rejectionRatio = upperWick / totalRange;
-    if (upperWick > body * 1.3 && upperWick > totalRange * 0.40) {
+    if (upperWick > body * 1.3 && upperWick > totalRange * 0.40 && upperWick > lowerWick * 1.4) {
       allTriggers.push('REJECTION_WICK');
       confirmationScore += 12;
     }
@@ -634,7 +636,7 @@ export function assessPriceActionTrigger(
       confirmationScore += 8;
     }
   } else {
-    if (!isBull && body > totalRange * 0.60) {
+    if (isBear && body > totalRange * 0.60) {
       allTriggers.push('ENGULFING');
       confirmationScore += 10;
     }
@@ -645,7 +647,7 @@ export function assessPriceActionTrigger(
   }
 
   // 3. Displacement Candle (large body > 1.4x ATR or > 1.4x previous body)
-  if (body > (indicators5m.atr14 || 2.0) * 0.8 && ((direction === 'BUY' && isBull) || (direction === 'SELL' && !isBull))) {
+  if (body > (indicators5m?.atr14 || 2.0) * 0.8 && ((direction === 'BUY' && isBull) || (direction === 'SELL' && isBear))) {
     allTriggers.push('DISPLACEMENT_CANDLE');
     confirmationScore += 8;
   }
@@ -1546,24 +1548,27 @@ export function checkStructuralSameSetupIdentity(
     }
   }
 
-  if (!currentActive || !currentActive.signal || currentActive.signal === 'NO TRADE' || !candidateSignal.signal || candidateSignal.signal === 'NO TRADE') {
+  const candSignalStr = candidateSignal.signal || (candidateSignal as any).direction;
+  const activeSignalStr = currentActive?.signal || (currentActive as any)?.direction;
+
+  if (!currentActive || !activeSignalStr || activeSignalStr === 'NO TRADE' || !candSignalStr || candSignalStr === 'NO TRADE') {
     return { isDuplicate: false, isReentry: false, status: 'QUALIFIED_SIGNAL' };
   }
 
   activeSignal = currentActive;
 
   // Check if both signals are in the SAME direction
-  const activeIsBuy = (activeSignal.signal || (activeSignal as any).direction || '').toUpperCase().includes('BUY');
+  const activeIsBuy = (activeSignalStr || '').toUpperCase().includes('BUY');
   if (activeIsBuy !== candIsBuy) {
     return { isDuplicate: false, isReentry: false, status: 'QUALIFIED_SIGNAL' };
   }
 
-  const activeStrategyFamily = (activeSignal.strategyFamily as string) || inferStrategyFamily(activeSignal.setup);
-  const candidateStrategyFamily = (candidateSignal.strategyFamily as string) || inferStrategyFamily(candidateSignal.setup);
-  const sameStrategyFamily = activeStrategyFamily === candidateStrategyFamily || activeSignal.setup === candidateSignal.setup;
+  const activeStrategyFamily = (activeSignal.strategyFamily as string) || inferStrategyFamily(activeSignal.setup || (activeSignal as any).setupName);
+  const candidateStrategyFamily = (candidateSignal.strategyFamily as string) || inferStrategyFamily(candidateSignal.setup || (candidateSignal as any).setupName);
+  const sameStrategyFamily = activeStrategyFamily === candidateStrategyFamily || (activeSignal.setup && candidateSignal.setup && activeSignal.setup === candidateSignal.setup) || ((activeSignal as any).setupName && (candidateSignal as any).setupName && (activeSignal as any).setupName === (candidateSignal as any).setupName);
 
-  const activeSetup = (activeSignal.setup || '').toLowerCase();
-  const candSetup = (candidateSignal.setup || '').toLowerCase();
+  const activeSetup = (activeSignal.setup || (activeSignal as any).setupName || '').toLowerCase();
+  const candSetup = (candidateSignal.setup || (candidateSignal as any).setupName || '').toLowerCase();
 
   const isS10Active = activeStrategyFamily === 'DOUBLE_TOP_BOTTOM' || activeSetup.includes('double top') || activeSetup.includes('double bottom') || activeSetup.includes('m-formation') || activeSetup.includes('w-formation');
   const isS10Cand = candidateStrategyFamily === 'DOUBLE_TOP_BOTTOM' || candSetup.includes('double top') || candSetup.includes('double bottom') || candSetup.includes('m-formation') || candSetup.includes('w-formation');
@@ -1637,14 +1642,17 @@ export function checkStructuralSameSetupIdentity(
     };
   }
 
-  if (activeSignal.setup === candidateSignal.setup && entryDistance <= tolerance) {
+  const activeSetupName = activeSignal.setup || (activeSignal as any).setupName;
+  const candSetupName = candidateSignal.setup || (candidateSignal as any).setupName;
+
+  if (activeSetupName === candSetupName && entryDistance <= tolerance) {
     details.duplicateReason = 'DUPLICATE_ACTIVE';
     return {
       isDuplicate: true,
       isReentry: false,
       status: 'DUPLICATE_ACTIVE',
       details,
-      reason: `تم رصد نفس الصفقة النشطة (${activeSignal.setup}) بفارق سعر دخول ضئيل ($${entryDistance}). تم منع تكرار الإشارة.`,
+      reason: `تم رصد نفس الصفقة النشطة (${activeSetupName}) بفارق سعر دخول ضئيل ($${entryDistance}). تم منع تكرار الإشارة.`,
     };
   }
 
@@ -1828,4 +1836,197 @@ export function resolveFinalSignalConflict(
 
   return { winningCandidate: winner, suppressedCandidates: clusterSuppressed };
 }
+
+/**
+ * Deterministic Candidate Technical Validation Gate
+ * 
+ * Validates any candidate (deterministic or AI-generated) against the full suite of
+ * technical quality gates: SL distance, TP path runway, pullback quality, anti-chase timing,
+ * price action trigger confirmation, and active-trade opposition.
+ */
+export function validateTradeSignalCandidate(
+  cand: {
+    direction: 'BUY' | 'SELL';
+    entry: number;
+    stopLoss: number;
+    tp1: number;
+    tp2?: number;
+    setupName?: string;
+    strategyFamily?: StrategyFamily;
+    confidence?: number;
+  },
+  context: {
+    currentPrice: number;
+    candles5m: Candle[];
+    candles15m: Candle[];
+    candles1h: Candle[];
+    candles1m?: Candle[];
+    indicators5m: TechnicalIndicators;
+    indicators15m: TechnicalIndicators;
+    indicators1h: TechnicalIndicators;
+    brokerSpecs?: Partial<any>;
+    activeTradeDirection?: 'BUY' | 'SELL' | null;
+  }
+): {
+  isValid: boolean;
+  rejectionReason?: string;
+  pullbackQuality?: PullbackQuality;
+  timing?: EntryTiming;
+  runway?: TpPathRunway;
+  triggerType?: PriceActionTriggerType;
+  qualityScore?: number;
+} {
+  const { direction, entry, stopLoss, tp1, tp2, setupName, strategyFamily } = cand;
+  const { currentPrice, candles5m, candles15m, candles1h, candles1m, indicators5m, indicators15m, indicators1h, brokerSpecs, activeTradeDirection } = context;
+
+  // 0. Insufficient candle data check (minimum 15 candles required for 14-period ATR/RSI and multi-timeframe structure)
+  if (
+    !candles5m || !Array.isArray(candles5m) || candles5m.length < 15 ||
+    !candles15m || !Array.isArray(candles15m) || candles15m.length < 15 ||
+    !candles1h || !Array.isArray(candles1h) || candles1h.length < 15
+  ) {
+    return {
+      isValid: false,
+      rejectionReason: 'INSUFFICIENT_MARKET_DATA: Insufficient candle history across required timeframes (minimum 15 candles each)',
+    };
+  }
+
+  // 1. Basic Direction and SL/TP Geometry
+  if (direction !== 'BUY' && direction !== 'SELL') {
+    return { isValid: false, rejectionReason: 'INVALID_DIRECTION: Direction must be strictly BUY or SELL' };
+  }
+
+  const isBuy = direction === 'BUY';
+  if (isBuy && entry <= stopLoss) {
+    return { isValid: false, rejectionReason: 'INVALID_GEOMETRY: BUY entry must be strictly greater than stop loss' };
+  }
+  if (!isBuy && entry >= stopLoss) {
+    return { isValid: false, rejectionReason: 'INVALID_GEOMETRY: SELL entry must be strictly less than stop loss' };
+  }
+
+  if (isBuy && tp1 <= entry) {
+    return { isValid: false, rejectionReason: 'INVALID_GEOMETRY: BUY TP1 must be strictly greater than entry' };
+  }
+  if (!isBuy && tp1 >= entry) {
+    return { isValid: false, rejectionReason: 'INVALID_GEOMETRY: SELL TP1 must be strictly less than entry' };
+  }
+  if (tp2 !== undefined && tp2 !== null && !isNaN(tp2)) {
+    if (isBuy && tp2 <= tp1) {
+      return { isValid: false, rejectionReason: 'INVALID_GEOMETRY: BUY TP2 must be strictly greater than TP1' };
+    }
+    if (!isBuy && tp2 >= tp1) {
+      return { isValid: false, rejectionReason: 'INVALID_GEOMETRY: SELL TP2 must be strictly less than TP1' };
+    }
+  }
+
+  const slDistance = Math.abs(entry - stopLoss);
+  const slPoints = Math.round(slDistance / 0.1);
+  const minSlPoints = brokerSpecs?.minSlPoints ?? 35;
+  const maxSlPoints = brokerSpecs?.maxSlPoints ?? 65;
+
+  if (slPoints < minSlPoints || slPoints > maxSlPoints) {
+    return { isValid: false, rejectionReason: `INVALID_SL_DISTANCE: Stop loss distance (${slPoints} pts) outside allowed range [${minSlPoints}, ${maxSlPoints}] pts` };
+  }
+
+  const tp1Distance = Math.abs(tp1 - entry);
+  const rrToTp1 = slDistance > 0 ? tp1Distance / slDistance : 0;
+  if (rrToTp1 < 0.999) {
+    return { isValid: false, rejectionReason: `INSUFFICIENT_RR: R:R to TP1 (${rrToTp1.toFixed(2)}R) is below minimum required 1.0R` };
+  }
+
+  // 2. Active In-Flight Trade Opposition Gate
+  if (activeTradeDirection && activeTradeDirection !== direction) {
+    return { isValid: false, rejectionReason: `OPPOSING_ACTIVE_BLOCKED: Candidate ${direction} opposes active in-flight ${activeTradeDirection} trade` };
+  }
+
+  const family = strategyFamily || inferStrategyFamily(setupName || 'Market Structure');
+
+  // 3. Entry Timing & Anti-Chase Assessment (Check before evaluating TP runway)
+  const timingAssessment = assessEntryTimingAndAntiChase(
+    direction,
+    family,
+    currentPrice,
+    entry,
+    candles5m || [],
+    indicators5m,
+    indicators15m?.marketRegime || 'UNCLEAR'
+  );
+
+  if (timingAssessment.timing === 'CHASED') {
+    return {
+      isValid: false,
+      rejectionReason: `CHASED_ENTRY: Entry is overextended beyond acceptable POI tolerance (${timingAssessment.reason})`,
+      timing: timingAssessment.timing,
+    };
+  }
+
+  // 4. TP Runway Assessment
+  const runwayAssessment = assessTpPathRunway(
+    direction,
+    entry,
+    tp1,
+    tp2,
+    candles15m || [],
+    candles1h || [],
+    indicators15m,
+    indicators1h
+  );
+
+  if (runwayAssessment.runway === 'BLOCKED') {
+    return {
+      isValid: false,
+      rejectionReason: `BLOCKED_TP_RUNWAY: TP path is blocked by opposing structural barrier (${runwayAssessment.description})`,
+      runway: runwayAssessment.runway,
+    };
+  }
+
+  // 5. Pullback Quality Assessment
+  const pullbackAssessment = assessPullbackQuality(
+    direction,
+    candles5m || [],
+    indicators5m,
+    indicators15m?.marketRegime || 'UNCLEAR'
+  );
+
+  if (
+    pullbackAssessment.quality === 'INVALID' &&
+    family !== 'LIQUIDITY_SWEEP' &&
+    family !== 'RANGE_SFP_REVERSAL' &&
+    family !== 'COUNTERTREND_SCALP' &&
+    family !== 'DOUBLE_TOP_BOTTOM' &&
+    family !== 'BARE_SR' &&
+    family !== 'STRUCTURE_ENGULFING'
+  ) {
+    return {
+      isValid: false,
+      rejectionReason: `INVALID_PULLBACK: Counter-trend impulse violates pullback structure (${pullbackAssessment.reasons.join(', ')})`,
+      pullbackQuality: pullbackAssessment.quality,
+    };
+  }
+
+  // 6. Price Action Trigger Assessment
+  const triggerAssessment = assessPriceActionTrigger(
+    direction,
+    candles5m || [],
+    candles1m || [],
+    indicators5m
+  );
+
+  if (triggerAssessment.confirmationScore < 8) {
+    return {
+      isValid: false,
+      rejectionReason: `MISSING_PRICE_ACTION_TRIGGER: Insufficient price action confirmation trigger in recent candles`,
+      triggerType: triggerAssessment.primaryTrigger,
+    };
+  }
+
+  return {
+    isValid: true,
+    pullbackQuality: pullbackAssessment.quality,
+    timing: timingAssessment.timing,
+    runway: runwayAssessment.runway,
+    triggerType: triggerAssessment.primaryTrigger,
+  };
+}
+
 

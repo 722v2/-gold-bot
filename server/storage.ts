@@ -78,7 +78,7 @@ export interface TradeOutcomeRecord {
   stopLoss?: number;
   tp1?: number;
   tp2?: number;
-  outcome: 'WIN' | 'LOSS';
+  outcome: 'WIN' | 'LOSS' | 'BREAK_EVEN' | 'NOT_ENTERED';
   timestamp: number;
   isoTime?: string;
   chatId?: string;
@@ -157,6 +157,7 @@ export class PersistentStorage {
   private inMemoryLifecycles: CandidateLifecycleRecord[] = [];
   private inMemoryOpportunities: Map<string, TradeOpportunity> = new Map();
   private inMemoryTerminalSetups: Set<string> = new Set();
+  public inMemoryTelegramDispatches: Set<string> = new Set();
   private inMemoryTelegramChatId: string | null = null;
   private inMemoryFactorSnapshots: Map<string, any> = new Map();
   private inMemoryExperienceRecords: any[] = [];
@@ -192,6 +193,10 @@ export class PersistentStorage {
         (t) => !String(t.id).startsWith('test-trade-') && !String(t.id).startsWith('phantom-trade-')
       );
     }
+  }
+
+  public isTestingMode(): boolean {
+    return this.isTesting;
   }
 
   public restoreTestSnapshot(
@@ -760,7 +765,7 @@ export class PersistentStorage {
       date: row.date || '',
       isoTime: row.iso_time || '',
       asset: row.asset || 'XAU/USD',
-      direction: row.direction || 'BUY',
+      direction: row.direction || (Number(row.entry || 0) > Number(row.sl || 0) && Number(row.sl || 0) > 0 ? 'BUY' : 'SELL'),
       entry: Number(row.entry || 0),
       sl: Number(row.sl || 0),
       slPoints: Number(row.sl_points || 0),
@@ -1086,7 +1091,9 @@ export class PersistentStorage {
         timeframe: opp.timeframe,
         setup: opp.setupName,
         mainReasons: ['Rebuilt from opportunity snapshot'],
-        invalidation: `Close candle below ${opp.stopLoss}`,
+        invalidation: opp.direction === 'BUY'
+          ? `Close candle below ${opp.stopLoss}`
+          : `Close candle above ${opp.stopLoss}`,
       };
       if (!this.inMemorySignals.some((s) => s.id === rebuiltSignal.id)) {
         this.inMemorySignals.unshift(rebuiltSignal);
@@ -1225,6 +1232,10 @@ export class PersistentStorage {
     return this.getTradeLedger(limit);
   }
 
+  public getActiveTrades(): TradeLedgerItem[] {
+    return this.inMemoryTrades.filter((t) => t.isActive === true || t.result === 'OPEN');
+  }
+
   public getTrade(id: string): TradeLedgerItem | undefined {
     return this.inMemoryTrades.find((t) => t.id === id);
   }
@@ -1274,7 +1285,7 @@ export class PersistentStorage {
             }),
             isoTime: new Date(sig.timestamp || Date.now()).toISOString(),
             asset: sig.asset || 'XAU/USD',
-            direction: (sig.direction || sig.signal || record.direction || 'BUY') as any,
+            direction: (sig.direction || sig.signal || record.direction || (Number(sig.entry || record.entry || 0) > Number(sig.stopLoss || sig.sl || record.stopLoss || 0) && Number(sig.stopLoss || sig.sl || record.stopLoss || 0) > 0 ? 'BUY' : 'SELL')) as any,
             entry: Number(sig.entry || record.entry || 0),
             sl: Number(sig.stopLoss || sig.sl || record.stopLoss || 0),
             slPoints: sig.slPoints || Math.round(Math.abs(Number(sig.entry || 0) - Number(sig.stopLoss || sig.sl || 0)) / 0.1),
@@ -1331,6 +1342,18 @@ export class PersistentStorage {
         finalRealizedPnl = -Math.abs(finalRealizedPnl);
       }
 
+      // Requirement 13: Standardize outcome based on realized PnL
+      if (record.outcome !== 'NOT_ENTERED') {
+        if (finalRealizedPnl > 0.001) {
+          record.outcome = 'WIN';
+        } else if (finalRealizedPnl < -0.001) {
+          record.outcome = 'LOSS';
+        } else {
+          record.outcome = 'BREAK_EVEN';
+          finalRealizedPnl = 0;
+        }
+      }
+
       record.realizedPnl = finalRealizedPnl;
       record.pl = finalRealizedPnl;
       const source = record.source || 'MANUAL';
@@ -1344,12 +1367,12 @@ export class PersistentStorage {
             isDuplicate: true,
             outcome: existing,
             trade: tradeToUpdate,
-            message: `تم توثيق نتيجة هذه الصفقة مسبقاً (${existing.outcome === 'WIN' ? '🟢 رابحة' : '🔴 خاسرة'}) بقيمة $${finalRealizedPnl}.`,
+            message: `تم توثيق نتيجة هذه الصفقة مسبقاً (${existing.outcome === 'WIN' ? '🟢 رابحة' : existing.outcome === 'BREAK_EVEN' ? '⚪ تعادل' : '🔴 خاسرة'}) بقيمة $${finalRealizedPnl}.`,
           };
         }
       }
 
-      if (tradeToUpdate.result === 'WIN' || tradeToUpdate.result === 'LOSS') {
+      if (tradeToUpdate.result === 'WIN' || tradeToUpdate.result === 'LOSS' || tradeToUpdate.result === 'BREAK_EVEN') {
         const existingTradePnl = typeof tradeToUpdate.realizedPnl === 'number' ? tradeToUpdate.realizedPnl : tradeToUpdate.pl || 0;
         if (tradeToUpdate.result === record.outcome && existingTradePnl === finalRealizedPnl && source !== 'MT5') {
           return {
@@ -1357,7 +1380,7 @@ export class PersistentStorage {
             isDuplicate: true,
             outcome: { ...record, outcome: tradeToUpdate.result, realizedPnl: existingTradePnl },
             trade: tradeToUpdate,
-            message: `تم توثيق نتيجة هذه الصفقة مسبقاً (${tradeToUpdate.result === 'WIN' ? '🟢 رابحة' : '🔴 خاسرة'}) بقيمة $${finalRealizedPnl}.`,
+            message: `تم توثيق نتيجة هذه الصفقة مسبقاً (${tradeToUpdate.result === 'WIN' ? '🟢 رابحة' : tradeToUpdate.result === 'BREAK_EVEN' ? '⚪ تعادل' : '🔴 خاسرة'}) بقيمة $${finalRealizedPnl}.`,
           };
         }
       }
@@ -1374,6 +1397,7 @@ export class PersistentStorage {
       }
 
       const isWin = record.outcome === 'WIN';
+      const isBreakEven = record.outcome === 'BREAK_EVEN';
       const lotSize = tradeToUpdate.lotSize || signalData?.recommendedLotSize || (signalData as any)?.lotSize || 0.01;
       const entryPrice = Number(record.entry || tradeToUpdate.entry || signalData?.entry || 0);
       const tp1Price = Number(record.tp1 || tradeToUpdate.tp1 || signalData?.tp1 || 0);
@@ -1385,7 +1409,7 @@ export class PersistentStorage {
       const previousPnl =
         typeof tradeToUpdate.realizedPnl === 'number'
           ? tradeToUpdate.realizedPnl
-          : tradeToUpdate.result === 'WIN' || tradeToUpdate.result === 'LOSS'
+          : tradeToUpdate.result === 'WIN' || tradeToUpdate.result === 'LOSS' || tradeToUpdate.result === 'BREAK_EVEN'
           ? tradeToUpdate.pl || 0
           : 0;
 
@@ -1402,9 +1426,16 @@ export class PersistentStorage {
       tradeToUpdate.theoreticalTp1Profit = theoreticalTp1Profit;
       tradeToUpdate.theoreticalTp2Profit = theoreticalTp2Profit;
       tradeToUpdate.exitPrice =
-        record.exitPrice !== undefined ? record.exitPrice : isWin ? tradeToUpdate.tp1 || record.tp1 : tradeToUpdate.sl || record.stopLoss;
+        record.exitPrice !== undefined
+          ? record.exitPrice
+          : isWin
+          ? tradeToUpdate.tp1 || record.tp1
+          : isBreakEven
+          ? tradeToUpdate.entry || record.entry
+          : tradeToUpdate.sl || record.stopLoss;
       tradeToUpdate.exitTime = new Date(record.timestamp || Date.now()).toISOString();
-      tradeToUpdate.notes = `${tradeToUpdate.notes ? tradeToUpdate.notes + ' | ' : ''}النتيجة: ${isWin ? '🟢 رابحة' : '🔴 خاسرة'} [P&L: ${
+      const outcomeNote = isWin ? '🟢 رابحة' : isBreakEven ? '⚪ تعادل (Break-Even)' : '🔴 خاسرة';
+      tradeToUpdate.notes = `${tradeToUpdate.notes ? tradeToUpdate.notes + ' | ' : ''}النتيجة: ${outcomeNote} [P&L: ${
         finalRealizedPnl >= 0 ? '+' : ''
       }$${finalRealizedPnl.toFixed(2)}] (${source})`;
       tradeToUpdate.isActive = false;
@@ -1514,7 +1545,7 @@ export class PersistentStorage {
       const record: TradeOutcomeRecord = {
         signalId: params.signalOrTradeId,
         tradeId: params.signalOrTradeId,
-        direction: params.direction || 'BUY NOW',
+        direction: params.direction || (params.entryPrice && params.exitPrice && params.exitPrice > params.entryPrice ? 'BUY NOW' : 'SELL NOW'),
         orderType: 'MARKET',
         entry: params.entryPrice || 0,
         stopLoss: 0,
@@ -1547,7 +1578,7 @@ export class PersistentStorage {
   // Stats & Dashboard
   // =========================================================================
   public getDashboardStats(): DashboardStatsResult {
-    const closedTrades = this.inMemoryTrades.filter((t) => t.result === 'WIN' || t.result === 'LOSS');
+    const closedTrades = this.inMemoryTrades.filter((t) => t.result === 'WIN' || t.result === 'LOSS' || t.result === 'BREAK_EVEN');
     const wins = closedTrades.filter((t) => t.result === 'WIN').length;
     const losses = closedTrades.filter((t) => t.result === 'LOSS').length;
     const totalClosed = wins + losses;
@@ -1593,7 +1624,8 @@ export class PersistentStorage {
     const tradesCount = todayTrades.length;
     const wins = todayTrades.filter((t) => t.result === 'WIN').length;
     const losses = todayTrades.filter((t) => t.result === 'LOSS').length;
-    const winRate = tradesCount > 0 ? Number(((wins / tradesCount) * 100).toFixed(1)) : 0;
+    const decidedCount = wins + losses;
+    const winRate = decidedCount > 0 ? Number(((wins / decidedCount) * 100).toFixed(1)) : 0;
     const totalPl = Number(todayTrades.reduce((acc, t) => acc + (t.pl || 0), 0).toFixed(2));
     const totalRiskPercentUsed = Number(todayTrades.reduce((acc, t) => acc + (t.riskPercent || 0), 0).toFixed(1));
 
@@ -1784,6 +1816,23 @@ export class PersistentStorage {
   public isTerminalSetup(key: string): boolean {
     if (!key) return false;
     return this.inMemoryTerminalSetups.has(key);
+  }
+
+  // =========================================================================
+  // Telegram Dispatches Dedup
+  // =========================================================================
+  public saveTelegramDispatch(key: string): void {
+    if (!key) return;
+    this.inMemoryTelegramDispatches.add(key);
+  }
+
+  public isTelegramDispatched(key: string): boolean {
+    if (!key) return false;
+    return this.inMemoryTelegramDispatches.has(key);
+  }
+
+  public getTelegramDispatches(): string[] {
+    return Array.from(this.inMemoryTelegramDispatches);
   }
 
   public getScannerStatus() {
@@ -2094,7 +2143,7 @@ export class PersistentStorage {
     const outcomeRecord: TradeOutcomeRecord = {
       signalId: signalOrOppId,
       tradeId: signalOrOppId,
-      direction: updatedSignal?.signal || 'BUY NOW',
+      direction: updatedSignal?.signal || (updatedSignal && updatedSignal.entry > updatedSignal.stopLoss ? 'BUY NOW' : 'SELL NOW'),
       orderType: 'NOT_ENTERED',
       entry: updatedSignal?.entry || 0,
       stopLoss: updatedSignal?.stopLoss || 0,
@@ -2165,14 +2214,15 @@ export class PersistentStorage {
       // 2. Reset opportunities
       this.inMemoryOpportunities.clear();
 
-      // 3. Reset terminal setups
+      // 3. Reset terminal setups & telegram dispatches
       this.inMemoryTerminalSetups.clear();
+      this.inMemoryTelegramDispatches.clear();
 
       // 4. Reset lifecycles
       this.inMemoryLifecycles = [];
 
-      // 5. Preserving completed/realized trades in ledger (WIN/LOSS)
-      const completedTrades = this.inMemoryTrades.filter((t) => t.result === 'WIN' || t.result === 'LOSS');
+      // 5. Preserving completed/realized trades in ledger (WIN/LOSS/BREAK_EVEN)
+      const completedTrades = this.inMemoryTrades.filter((t) => t.result === 'WIN' || t.result === 'LOSS' || t.result === 'BREAK_EVEN');
       this.inMemoryTrades = completedTrades;
 
       // Recalculate current balance based on preserved completed trades

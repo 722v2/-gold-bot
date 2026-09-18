@@ -20,6 +20,23 @@ export interface PendingPnlRequest {
   requestedAt: number;
 }
 
+export interface QueuedTelegramNotification {
+  notificationId: string;
+  tradeId?: string;
+  event: string;
+  chatId: string;
+  message: string;
+  replyMarkup?: any;
+  status: 'PENDING' | 'SENT' | 'FAILED';
+  attempts: number;
+  maxAttempts: number;
+  nextRetryAt: number;
+  telegramMessageId?: number;
+  lastError?: string;
+  createdAt: number;
+  sentAt?: number;
+}
+
 export class TelegramService {
   private botToken: string | null = null;
   private privateChatId: string | null = null;
@@ -28,12 +45,15 @@ export class TelegramService {
   private configPath = path.join(process.cwd(), 'data', 'telegram_private_chat.json');
   private messageMappingPath = path.join(process.cwd(), 'data', 'telegram_signal_messages.json');
   private pendingPnlPath = path.join(process.cwd(), 'data', 'telegram_pending_pnl.json');
+  private retryQueuePath = path.join(process.cwd(), 'data', 'telegram_retry_queue.json');
   private isRunning = false;
   private isInitializing = false;
   private abortController: AbortController | null = null;
   private lastUpdateId = 0;
   private signalMessageIds: Record<string, number> = {};
   private pendingPnlRequests: Map<string, PendingPnlRequest> = new Map();
+  private notificationQueue: Map<string, QueuedTelegramNotification> = new Map();
+  private retryTimer: NodeJS.Timeout | null = null;
   private rateLimitedUntil = 0;
   private hasLoggedRateLimit = false;
   private lastActiveSignalUpdate = new Map<string, number>();
@@ -44,6 +64,8 @@ export class TelegramService {
     this.loadRegisteredChat();
     this.loadMessageMapping();
     this.loadPendingPnlRequests();
+    this.loadNotificationQueue();
+    this.startRetryLoop();
   }
 
   /**
@@ -199,6 +221,222 @@ export class TelegramService {
     } catch (err) {
       console.error('[Telegram] Error saving message mapping:', err);
     }
+  }
+
+  /**
+   * Load stored persistent retry queue from disk
+   */
+  private loadNotificationQueue(): void {
+    try {
+      if (fs.existsSync(this.retryQueuePath)) {
+        const data = JSON.parse(fs.readFileSync(this.retryQueuePath, 'utf8'));
+        if (Array.isArray(data)) {
+          for (const item of data) {
+            if (item && item.notificationId) {
+              this.notificationQueue.set(item.notificationId, item);
+            }
+          }
+          console.log(`[Telegram] Loaded ${this.notificationQueue.size} items from persistent notification queue.`);
+        }
+      }
+    } catch (err) {
+      console.error('[Telegram] Error loading notification queue:', err);
+    }
+  }
+
+  /**
+   * Save persistent retry queue to disk safely
+   */
+  private saveNotificationQueue(): void {
+    try {
+      const dir = path.dirname(this.retryQueuePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      const array = Array.from(this.notificationQueue.values());
+      // Prune successfully sent items older than 48 hours to bound memory/disk
+      const cutoff = Date.now() - 48 * 3600 * 1000;
+      const filtered = array.filter(item => item.status === 'PENDING' || (item.createdAt || 0) > cutoff);
+      fs.writeFileSync(this.retryQueuePath, JSON.stringify(filtered, null, 2), 'utf8');
+    } catch (err) {
+      console.error('[Telegram] Error saving notification queue:', err);
+    }
+  }
+
+  /**
+   * Start background retry loop for reliable notification delivery
+   */
+  private startRetryLoop(): void {
+    if (this.retryTimer) return;
+    this.retryTimer = setInterval(() => {
+      this.processRetryQueue().catch((err) => {
+        console.error('[Telegram] Error in background retry queue worker:', err);
+      });
+    }, 3000);
+    if (this.retryTimer.unref) {
+      this.retryTimer.unref();
+    }
+  }
+
+  /**
+   * Background processor for pending retries with exponential backoff & rate-limit awareness
+   */
+  public async processRetryQueue(): Promise<void> {
+    if (this.isRateLimited()) {
+      return;
+    }
+
+    const token = this.getBotToken();
+    if (!token) return;
+
+    const now = Date.now();
+    let queueModified = false;
+
+    for (const [id, item] of this.notificationQueue.entries()) {
+      if (item.status !== 'PENDING') continue;
+      if (now < item.nextRetryAt) continue;
+
+      if (item.attempts >= item.maxAttempts) {
+        item.status = 'FAILED';
+        item.lastError = item.lastError || 'Max retry attempts exceeded';
+        queueModified = true;
+        console.warn(`[Telegram Queue] Notification ${id} marked FAILED after ${item.attempts} attempts.`);
+        continue;
+      }
+
+      const chatId = item.chatId || this.getPrivateChatId();
+      if (!chatId) continue;
+
+      item.attempts += 1;
+      const sentMsg = await this.sendMessageDirectly(chatId, item.message, item.replyMarkup);
+      if (sentMsg && sentMsg.message_id) {
+        item.status = 'SENT';
+        item.sentAt = Date.now();
+        item.telegramMessageId = sentMsg.message_id;
+        queueModified = true;
+        console.log(`[Telegram Queue] Notification ${id} delivered successfully on attempt ${item.attempts}.`);
+      } else {
+        const backoffMs = this.isRateLimited()
+          ? Math.max(3000, this.rateLimitedUntil - Date.now())
+          : Math.min(60000, 2000 * Math.pow(2, item.attempts - 1));
+        item.nextRetryAt = Date.now() + backoffMs;
+        item.lastError = this.lastSendError || 'Transient failure';
+        queueModified = true;
+        console.warn(`[Telegram Queue] Notification ${id} attempt ${item.attempts} failed. Next retry in ${Math.round(backoffMs / 1000)}s.`);
+      }
+    }
+
+    if (queueModified) {
+      this.saveNotificationQueue();
+    }
+  }
+
+  /**
+   * Dispatches a notification through the idempotent persistent retry queue
+   */
+  public async dispatchReliableNotification(options: {
+    notificationId: string;
+    tradeId?: string;
+    event: string;
+    message: string;
+    replyMarkup?: any;
+    maxAttempts?: number;
+  }): Promise<{ success: boolean; telegramMessageId?: number; queued?: boolean }> {
+    const { notificationId, tradeId, event, message, replyMarkup, maxAttempts = 10 } = options;
+
+    // 1. Check for idempotent deduplication: if already SENT, do not re-send!
+    const existing = this.notificationQueue.get(notificationId);
+    if (existing && existing.status === 'SENT') {
+      console.log(`[Telegram Queue] Idempotent duplicate prevented for notification ${notificationId}. Already sent (Msg ID: ${existing.telegramMessageId}).`);
+      return { success: true, telegramMessageId: existing.telegramMessageId };
+    }
+
+    const chatId = this.getPrivateChatId();
+    if (!chatId) {
+      // Queue as pending until chat is registered
+      const queuedItem: QueuedTelegramNotification = {
+        notificationId,
+        tradeId,
+        event,
+        chatId: '',
+        message,
+        replyMarkup,
+        status: 'PENDING',
+        attempts: 0,
+        maxAttempts,
+        nextRetryAt: Date.now() + 5000,
+        createdAt: Date.now(),
+        lastError: 'NOT_REGISTERED: Waiting for private chat registration',
+      };
+      this.notificationQueue.set(notificationId, queuedItem);
+      this.saveNotificationQueue();
+      return { success: false, queued: true };
+    }
+
+    // 2. Attempt immediate delivery if not rate limited
+    if (!this.isRateLimited()) {
+      const sentMsg = await this.sendMessageDirectly(chatId, message, replyMarkup);
+      if (sentMsg && sentMsg.message_id) {
+        const sentItem: QueuedTelegramNotification = {
+          notificationId,
+          tradeId,
+          event,
+          chatId,
+          message,
+          replyMarkup,
+          status: 'SENT',
+          attempts: 1,
+          maxAttempts,
+          nextRetryAt: 0,
+          telegramMessageId: sentMsg.message_id,
+          createdAt: Date.now(),
+          sentAt: Date.now(),
+        };
+        this.notificationQueue.set(notificationId, sentItem);
+        this.saveNotificationQueue();
+        return { success: true, telegramMessageId: sentMsg.message_id };
+      }
+    }
+
+    // 3. If immediate send failed or rate-limited -> enqueue with exponential backoff
+    const attempts = (existing?.attempts || 0) + 1;
+    const backoffMs = this.isRateLimited()
+      ? Math.max(3000, this.rateLimitedUntil - Date.now())
+      : Math.min(60000, 2000 * Math.pow(2, attempts - 1));
+
+    const pendingItem: QueuedTelegramNotification = {
+      notificationId,
+      tradeId,
+      event,
+      chatId,
+      message,
+      replyMarkup,
+      status: 'PENDING',
+      attempts,
+      maxAttempts,
+      nextRetryAt: Date.now() + backoffMs,
+      createdAt: existing?.createdAt || Date.now(),
+      lastError: this.lastSendError || (this.isRateLimited() ? 'Rate limited (429)' : 'Outbound failure'),
+    };
+    this.notificationQueue.set(notificationId, pendingItem);
+    this.saveNotificationQueue();
+
+    return { success: false, queued: true };
+  }
+
+  /**
+   * Get internal notification queue items (for diagnostics and testing)
+   */
+  public getNotificationQueue(): QueuedTelegramNotification[] {
+    return Array.from(this.notificationQueue.values());
+  }
+
+  /**
+   * Clear retry queue (for test cleanup)
+   */
+  public clearRetryQueue(): void {
+    this.notificationQueue.clear();
+    this.saveNotificationQueue();
   }
 
   /**
@@ -1121,21 +1359,37 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
       ]
     };
 
-    const sentMessage = await this.sendMessageDirectly(chatId, text, replyMarkup);
-    if (sentMessage && sentMessage.message_id) {
-      this.signalMessageIds[signal.id] = sentMessage.message_id;
+    const notificationId = `signal_${signal.id}`;
+    const result = await this.dispatchReliableNotification({
+      notificationId,
+      tradeId: signal.id,
+      event: 'SIGNAL_NEW',
+      message: text,
+      replyMarkup,
+    });
+
+    if (result.telegramMessageId) {
+      this.signalMessageIds[signal.id] = result.telegramMessageId;
       this.saveMessageMapping();
     }
-    return !!sentMessage;
+    return result.success;
   }
 
   /**
    * Formats and delivers continuous trade management notifications (Phase 4)
    */
-  public async sendManagementNotification(formattedMessage: string): Promise<boolean> {
-    const chatId = this.getPrivateChatId();
-    if (!chatId) return false;
-    return this.sendMessageDirectly(chatId, formattedMessage);
+  public async sendManagementNotification(
+    formattedMessage: string,
+    options?: { notificationId?: string; tradeId?: string; event?: string }
+  ): Promise<boolean> {
+    const notificationId = options?.notificationId || `mgmt_${options?.tradeId || 'general'}_${Date.now()}`;
+    const result = await this.dispatchReliableNotification({
+      notificationId,
+      tradeId: options?.tradeId,
+      event: options?.event || 'TRADE_MANAGEMENT',
+      message: formattedMessage,
+    });
+    return result.success;
   }
 
   /**
@@ -1151,13 +1405,27 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
   /**
    * Formats and delivers completed trade outcome alerts
    */
-  public async sendOutcomeNotification(outcome: any, trade: any): Promise<boolean> {
+  public async sendOutcomeNotification(
+    outcome: any,
+    trade: any,
+    options?: { notificationId?: string }
+  ): Promise<boolean> {
     const chatId = this.getPrivateChatId();
     if (!chatId) return false;
 
+    // Remove inline outcome buttons on the original signal message to prevent late manual callbacks
+    const signalId = outcome.signalId || trade?.signalId || trade?.id || outcome.tradeId;
+    if (signalId && this.signalMessageIds[signalId]) {
+      const origMsgId = this.signalMessageIds[signalId];
+      this.removeInlineKeyboard(chatId, origMsgId).catch(() => {});
+      delete this.signalMessageIds[signalId];
+      this.saveMessageMapping();
+    }
+
     const isWin = outcome.outcome === 'WIN';
-    const outcomeEmoji = isWin ? '🟢' : '🔴';
-    const outcomeText = isWin ? 'صفقة رابحة (WIN)' : 'صفقة خاسرة (LOSS)';
+    const isBreakEven = outcome.outcome === 'BREAK_EVEN';
+    const outcomeEmoji = isWin ? '🟢' : isBreakEven ? '⚪' : '🔴';
+    const outcomeText = isWin ? 'صفقة رابحة (WIN)' : isBreakEven ? 'نقطة الدخول / تعادل (BREAK EVEN)' : 'صفقة خاسرة (LOSS)';
     const pnlSign = outcome.realizedPnl >= 0 ? '+' : '';
 
     const text = `
@@ -1165,15 +1433,22 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
 
 📊 <b>الأصل:</b> XAU/USD (الذهب)
 🎯 <b>النتيجة:</b> ${outcomeText}
-💰 <b>الربح/الخسارة المحققة:</b> ${pnlSign}$${Number(outcome.realizedPnl).toFixed(2)}
-📈 <b>سعر الدخول:</b> $${Number(outcome.entry || trade.entry || 0).toFixed(2)}
-📉 <b>سعر الخروج:</b> $${Number(outcome.exitPrice || trade.exitPrice || 0).toFixed(2)}
-ℹ️ <b>سبب الإغلاق:</b> ${outcome.closeReason || 'تصفية يدوية أو نظام الوقف'}
+💰 <b>الربح/الخسارة المحققة:</b> ${pnlSign}$${Number(outcome.realizedPnl || 0).toFixed(2)}
+📈 <b>سعر الدخول:</b> $${Number(outcome.entry || trade?.entry || 0).toFixed(2)}
+📉 <b>سعر الخروج:</b> $${Number(outcome.exitPrice || trade?.exitPrice || 0).toFixed(2)}
+ℹ️ <b>سبب الإغلاق:</b> ${outcome.closeReason || trade?.closeReason || 'تصفية يدوية أو نظام الوقف'}
 
 ⏱ <i>الوقت: ${new Date().toLocaleTimeString('ar-EG')}</i>
     `.trim();
 
-    return this.sendMessageDirectly(chatId, text);
+    const notificationId = options?.notificationId || `outcome_${signalId || trade?.id || 'trade'}_${outcome.outcome}_${Date.now()}`;
+    const result = await this.dispatchReliableNotification({
+      notificationId,
+      tradeId: trade?.id || signalId,
+      event: 'OUTCOME_CLOSE',
+      message: text,
+    });
+    return result.success;
   }
 
   /**

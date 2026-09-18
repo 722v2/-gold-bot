@@ -1001,7 +1001,29 @@ export async function runTradeManagementTests(): Promise<{ allPassed: boolean; r
   // TEST 15: realizedPnl remains separate from theoretical RR
   // --------------------------------------------------------------------------
   try {
-    const tradeId = 'test-accounting-separation';
+    const tradeId = `test-accounting-separation-${Date.now()}`;
+    // Ensure the trade is present in the trade ledger before recording outcome
+    storage.saveTrade({
+      id: tradeId,
+      tradeNumber: 999,
+      date: 'Today',
+      asset: 'XAU/USD',
+      direction: 'SELL NOW',
+      entry: 4296.49,
+      sl: 4300.49,
+      slPoints: 40,
+      tp1: 4278.29,
+      tp2: 4276.25,
+      rr: '1:4',
+      riskPercent: 1.0,
+      riskAmount: 4.0,
+      confidence: 85,
+      setup: 'Test Accounting Setup',
+      result: 'OPEN',
+      pl: 0,
+      balanceAfterTrade: 100,
+    });
+
     const record = {
       signalId: tradeId,
       tradeId,

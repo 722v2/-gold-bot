@@ -145,6 +145,8 @@ export async function runEndToEndStressTest(): Promise<{
       partialClosed: false,
     };
 
+    storage.saveTrade(buyTrade);
+
     // Step 1: Reach TP1
     const priceAtTp1 = 4290.5;
     const c5m_tp1 = generateSyntheticCandles(priceAtTp1, 'UP', 20);
@@ -930,6 +932,29 @@ export async function runEndToEndStressTest(): Promise<{
 
     const uniqueId = `pnl_test_${runId}_${Math.random().toString(36).substring(2, 6)}`;
     const balBefore = storage.getCurrentBalance();
+
+    storage.saveTrade({
+      id: uniqueId,
+      tradeNumber: 8888,
+      date: new Date().toLocaleDateString('ar-EG'),
+      isoTime: new Date().toISOString(),
+      asset: 'XAU/USD',
+      direction: 'BUY NOW',
+      entry: 4284.0,
+      sl: 4280.0,
+      tp1: 4290.0,
+      tp2: 4296.0,
+      rr: '1:1.5',
+      riskPercent: 1.5,
+      riskAmount: 4.0,
+      lotSize: 0.01,
+      confidence: 80,
+      setup: 'Test S8 Setup',
+      result: 'OPEN',
+      balanceAfterTrade: balBefore,
+      isActive: true,
+      pl: 0,
+    });
 
     const recordLoss: TradeOutcomeRecord = {
       signalId: uniqueId,

@@ -13,6 +13,7 @@ import { storage } from './storage.js';
 import { generateMultiStrategyCandidates, SetupCandidate } from './strategyEngine.js';
 import { BrokerContractSpecs, DEFAULT_BROKER_SPECS, evaluateTradeRisk } from './riskManager.js';
 import { telegramService } from './telegram.js';
+import { globalLifecycleManager } from './tradeQualityEngine.js';
 
 export interface TradeHealthMetrics {
   tradeId: string;
@@ -57,8 +58,28 @@ export class TradeManagementEngine {
   }>();
   private tradeLastNotifiedState = new Map<string, TradeManagementState>();
   private tradeLastNotifiedLevel = new Map<string, number>();
+  private inFlightTradeIds = new Set<string>();
+  private totalClosedCount = 0;
 
   constructor() {}
+
+  public isInFlight(tradeId: string): boolean {
+    return this.inFlightTradeIds.has(tradeId);
+  }
+
+  public acquireInFlight(tradeId: string): boolean {
+    if (this.inFlightTradeIds.has(tradeId)) return false;
+    this.inFlightTradeIds.add(tradeId);
+    return true;
+  }
+
+  public releaseInFlight(tradeId: string): void {
+    this.inFlightTradeIds.delete(tradeId);
+  }
+
+  public getTotalClosedCount(): number {
+    return this.totalClosedCount;
+  }
 
   /**
    * Evaluates all open active trades in the ledger.
@@ -66,17 +87,17 @@ export class TradeManagementEngine {
    */
   public async evaluateActiveTrades(
     currentPrice: number,
-    candles1h: Candle[],
-    candles15m: Candle[],
-    candles5m: Candle[],
-    candles1m: Candle[],
-    ind1h: TechnicalIndicators,
-    ind15m: TechnicalIndicators,
-    ind5m: TechnicalIndicators,
-    activeCapital: number,
+    candles1h: Candle[] = [],
+    candles15m: Candle[] = [],
+    candles5m: Candle[] = [],
+    candles1m: Candle[] = [],
+    ind1h?: TechnicalIndicators,
+    ind15m?: TechnicalIndicators,
+    ind5m?: TechnicalIndicators,
+    activeCapital?: number,
     settings: AppSettings = DEFAULT_APP_SETTINGS
   ): Promise<TradeManagementEvaluationResult[]> {
-    if (!settings.enableTradeManagement) {
+    if (settings.enableTradeManagement === false) {
       return [];
     }
 
@@ -88,9 +109,19 @@ export class TradeManagementEngine {
       return [];
     }
 
+    const resolvedCapital =
+      activeCapital !== undefined && activeCapital > 0
+        ? activeCapital
+        : (storage.getSettings().manualCapital || 100);
+
     const results: TradeManagementEvaluationResult[] = [];
 
     for (const trade of openTrades) {
+      // Idempotency: skip if currently in-flight
+      if (this.inFlightTradeIds.has(trade.id)) continue;
+      // Verify current state is still OPEN
+      if (trade.result !== 'OPEN') continue;
+
       try {
         const evalResult = await this.evaluateSingleTrade(
           trade,
@@ -99,10 +130,10 @@ export class TradeManagementEngine {
           candles15m,
           candles5m,
           candles1m,
-          ind1h,
-          ind15m,
-          ind5m,
-          activeCapital,
+          ind1h as any,
+          ind15m as any,
+          ind5m as any,
+          resolvedCapital,
           settings
         );
 
@@ -136,8 +167,8 @@ export class TradeManagementEngine {
   ): Promise<TradeManagementEvaluationResult> {
     const isBuy = trade.direction.toUpperCase().includes('BUY');
     const direction: 'BUY' | 'SELL' = isBuy ? 'BUY' : 'SELL';
-    let entry = Number(trade.entry);
-    let sl = Number(trade.sl);
+    let entry = Number(trade.entry !== undefined ? trade.entry : (trade as any).entryPrice);
+    let sl = Number(trade.sl !== undefined ? trade.sl : (trade as any).stopLoss);
     let tp1 = Number(trade.tp1);
     let tp2 = Number(trade.tp2 || trade.tp1);
     const lotSize = trade.lotSize || 0.01;
@@ -208,6 +239,180 @@ export class TradeManagementEngine {
         safetyRejectionReason: 'DATA_INCOMPLETE: Trade is missing entry, SL, or TP1',
         isDuplicateNotification: true,
       };
+    }
+
+    // Safety against extreme legacy/test anomalies (>30% price deviation)
+    const priceDeviationPct = Math.abs(currentPrice - entry) / currentPrice;
+    if (priceDeviationPct > 0.30 && entry > 0) {
+      console.warn(
+        `[TradeManagementEngine] Anomalous trade detected: ID ${trade.id}, Entry $${entry} vs Market $${currentPrice}. Marking VOID.`
+      );
+      this.inFlightTradeIds.add(trade.id);
+      try {
+        storage.closeTrade(
+          trade.id,
+          'VOID',
+          0,
+          entry,
+          `Auto-voided by TradeManagementEngine: Entry price ($${entry}) differs anomalously (>30%) from market ($${currentPrice})`
+        );
+        trade.managementState = 'CLOSED';
+        trade.isActive = false;
+        this.totalClosedCount++;
+      } finally {
+        this.inFlightTradeIds.delete(trade.id);
+      }
+      return {
+        tradeId: trade.id,
+        state: 'CLOSED',
+        action: {
+          actionType: 'HOLD',
+          tradeId: trade.id,
+          direction,
+          currentPrice,
+          entryPrice: entry,
+          oldSL: sl,
+          oldTP1: tp1,
+          oldTP2: tp2,
+          floatingPnl: 0,
+          currentR: 0,
+          managementState: 'CLOSED',
+          reason: 'Trade auto-voided due to anomalous price deviation (>30%).',
+          confidence: 100,
+          timestamp: Date.now(),
+          source: 'DETERMINISTIC',
+          requiresConfirmation: false,
+        },
+        health: {
+          tradeId: trade.id,
+          direction,
+          currentPrice,
+          entryPrice: entry,
+          slPrice: sl,
+          tp1Price: tp1,
+          tp2Price: tp2,
+          lotSize,
+          floatingPnl: 0,
+          currentR: 0,
+          distanceToSlPoints: 0,
+          distanceToTp1Points: 0,
+          distanceToTp2Points: 0,
+          tp1ProgressPct: 0,
+          tp2ProgressPct: 0,
+          regimeAlignment: 'NEUTRAL',
+          structureHealth: 'RANGING',
+          pullbackQuality: 'HEALTHY',
+          oppositePressureScore: 0,
+          reversalLevel: 0,
+          isOriginalThesisValid: false,
+          notes: ['Trade voided due to >30% price deviation anomaly'],
+        },
+        safetyPassed: true,
+        isDuplicateNotification: true,
+      };
+    }
+
+    // Terminal Exit Evaluation: Stop Loss and TP2
+    let exitTrigger: 'TP2' | 'SL' | null = null;
+    let exitPrice = currentPrice;
+
+    if (isBuy) {
+      if (sl > 0 && currentPrice <= sl) {
+        exitTrigger = 'SL';
+        exitPrice = sl;
+      } else if (tp2 > 0 && currentPrice >= tp2) {
+        exitTrigger = 'TP2';
+        exitPrice = tp2;
+      }
+    } else {
+      if (sl > 0 && currentPrice >= sl) {
+        exitTrigger = 'SL';
+        exitPrice = sl;
+      } else if (tp2 > 0 && currentPrice <= tp2) {
+        exitTrigger = 'TP2';
+        exitPrice = tp2;
+      }
+    }
+
+    if (exitTrigger) {
+      this.inFlightTradeIds.add(trade.id);
+      try {
+        const isWin = exitTrigger === 'TP2';
+        const priceDiff = isBuy ? (exitPrice - entry) : (entry - exitPrice);
+        let realizedPl = Number((priceDiff * contractSize * lotSize).toFixed(2));
+
+        if (!isWin && realizedPl > 0) realizedPl = -Math.abs(realizedPl);
+        if (isWin && realizedPl < 0) realizedPl = Math.abs(realizedPl);
+
+        const resultType = isWin ? 'WIN' : 'LOSS';
+        const noteSuffix = `Closed via Unified TradeManagementEngine [Trigger: ${exitTrigger} @ $${exitPrice.toFixed(2)}]`;
+
+        console.log(
+          `[TradeManagementEngine] Auto-closing trade ${trade.id} -> ${resultType} (Exit: $${exitPrice}, P/L: $${realizedPl})`
+        );
+        trade.managementState = 'CLOSED';
+        trade.isActive = false;
+        storage.closeTrade(trade.id, resultType, realizedPl, exitPrice, noteSuffix);
+        if (resultType === 'LOSS') {
+          globalLifecycleManager.markSetupFailed(trade, 'Trade hit Stop Loss in Unified TradeManagementEngine');
+        } else if (resultType === 'WIN') {
+          globalLifecycleManager.markSetupCompleted(trade, 'Trade reached TP2 target in Unified TradeManagementEngine');
+        }
+        this.totalClosedCount++;
+
+        return {
+          tradeId: trade.id,
+          state: 'CLOSED',
+          action: {
+            actionType: 'HOLD',
+            tradeId: trade.id,
+            direction,
+            currentPrice,
+            entryPrice: entry,
+            oldSL: sl,
+            oldTP1: tp1,
+            oldTP2: tp2,
+            floatingPnl: realizedPl,
+            currentR: isWin ? 2.0 : -1.0,
+            managementState: 'CLOSED',
+            reason: `Trade exited at ${exitTrigger} ($${exitPrice.toFixed(2)}). Realized P/L: $${realizedPl}.`,
+            confidence: 100,
+            timestamp: Date.now(),
+            source: 'DETERMINISTIC',
+            requiresConfirmation: false,
+          },
+          health: {
+            tradeId: trade.id,
+            direction,
+            currentPrice,
+            entryPrice: entry,
+            slPrice: sl,
+            tp1Price: tp1,
+            tp2Price: tp2,
+            lotSize,
+            floatingPnl: realizedPl,
+            currentR: isWin ? 2.0 : -1.0,
+            distanceToSlPoints: 0,
+            distanceToTp1Points: 0,
+            distanceToTp2Points: 0,
+            tp1ProgressPct: isWin ? 100 : 0,
+            tp2ProgressPct: isWin ? 100 : 0,
+            regimeAlignment: isWin ? 'STRONG_ALIGNMENT' : 'OPPOSING',
+            structureHealth: isWin ? 'BULLISH_CONTINUATION' : 'WEAKENING',
+            pullbackQuality: 'HEALTHY',
+            oppositePressureScore: isWin ? 0 : 100,
+            reversalLevel: isWin ? 0 : 3,
+            isOriginalThesisValid: isWin,
+            notes: [`Trade closed via ${exitTrigger}`],
+          },
+          safetyPassed: true,
+          isDuplicateNotification: true,
+        };
+      } catch (err) {
+        console.error(`[TradeManagementEngine] Error closing trade ${trade.id}:`, err);
+      } finally {
+        this.inFlightTradeIds.delete(trade.id);
+      }
     }
 
     // 1. Calculate Core Health Metrics
@@ -315,16 +520,20 @@ export class TradeManagementEngine {
     candles1h: Candle[],
     candles15m: Candle[],
     candles5m: Candle[],
-    ind1h: TechnicalIndicators,
-    ind15m: TechnicalIndicators,
-    ind5m: TechnicalIndicators
+    ind1h?: TechnicalIndicators,
+    ind15m?: TechnicalIndicators,
+    ind5m?: TechnicalIndicators
   ): TradeHealthMetrics {
     const isBuy = direction === 'BUY';
     const notes: string[] = [];
 
+    const ind1hSafe = ind1h || ({} as Partial<TechnicalIndicators>);
+    const ind15mSafe = ind15m || ({} as Partial<TechnicalIndicators>);
+    const ind5mSafe = ind5m || ({} as Partial<TechnicalIndicators>);
+
     // Check 1H Regime alignment
-    const emaFast1h = ind1h.ema20 || currentPrice;
-    const emaSlow1h = ind1h.ema50 || currentPrice;
+    const emaFast1h = ind1hSafe.ema20 || currentPrice;
+    const emaSlow1h = ind1hSafe.ema50 || currentPrice;
     const is1hBullish = emaFast1h > emaSlow1h && currentPrice > emaSlow1h;
     const is1hBearish = emaFast1h < emaSlow1h && currentPrice < emaSlow1h;
 
@@ -340,8 +549,8 @@ export class TradeManagementEngine {
     }
 
     // Check 15M & 5M Swings & Structure
-    const recent5m = candles5m.slice(-15);
-    const recent15m = candles15m.slice(-15);
+    const recent5m = (candles5m || []).slice(-15);
+    const recent15m = (candles15m || []).slice(-15);
 
     let structureHealth: TradeHealthMetrics['structureHealth'] = 'RANGING';
     let oppositePressure = 0;
@@ -355,10 +564,10 @@ export class TradeManagementEngine {
 
       if (isBuy) {
         // Bullish continuation check
-        if ((cCurrent.close >= cPrev1.close || ind15m.structure === 'BULLISH') && (ind5m.rsi14 || 50) >= 50) {
+        if ((cCurrent.close >= cPrev1.close || ind15mSafe.structure === 'BULLISH') && (ind5mSafe.rsi14 || 50) >= 50) {
           structureHealth = 'BULLISH_CONTINUATION';
           notes.push('5M/15M Bullish expansion continuing');
-        } else if (cCurrent.close < cPrev2.low && (ind5m.rsi14 || 50) < 45) {
+        } else if (cCurrent.close < cPrev2.low && (ind5mSafe.rsi14 || 50) < 45) {
           // Counter pressure
           oppositePressure += 35;
           structureHealth = 'WEAKENING';
@@ -366,10 +575,10 @@ export class TradeManagementEngine {
         }
       } else {
         // Bearish continuation check
-        if ((cCurrent.close <= cPrev1.close || ind15m.structure === 'BEARISH') && (ind5m.rsi14 || 50) <= 50) {
+        if ((cCurrent.close <= cPrev1.close || ind15mSafe.structure === 'BEARISH') && (ind5mSafe.rsi14 || 50) <= 50) {
           structureHealth = 'BEARISH_CONTINUATION';
           notes.push('5M/15M Bearish expansion continuing');
-        } else if (cCurrent.close > cPrev2.high && (ind5m.rsi14 || 50) > 55) {
+        } else if (cCurrent.close > cPrev2.high && (ind5mSafe.rsi14 || 50) > 55) {
           // Counter pressure
           oppositePressure += 35;
           structureHealth = 'WEAKENING';
@@ -844,8 +1053,29 @@ export class TradeManagementEngine {
       needsLedgerSave = true;
     }
 
-    if (needsLedgerSave) {
-      storage.saveTrade(trade);
+    if (action.actionType === 'EARLY_EXIT' && trade.isActive !== false) {
+      this.inFlightTradeIds.add(trade.id);
+      try {
+        const isBuy = (trade.direction || '').toUpperCase().includes('BUY');
+        const entry = Number(trade.entry || 0);
+        const exitPrice = Number(action.currentPrice || entry);
+        const lotSize = Number(trade.lotSize || 0.01);
+        const contractSize = trade.asset === 'BTC/USD' ? 1 : 100;
+        const priceDiff = isBuy ? (exitPrice - entry) : (entry - exitPrice);
+        const realizedPl = Number((priceDiff * contractSize * lotSize).toFixed(2));
+        const resultType: 'WIN' | 'LOSS' = realizedPl >= 0 ? 'WIN' : 'LOSS';
+        const noteSuffix = `Early Exit closed via TradeManagementEngine [Confirmed Structural Reversal @ $${exitPrice.toFixed(2)}]`;
+
+        trade.managementState = 'CLOSED';
+        trade.isActive = false;
+        trade.result = resultType;
+        storage.closeTrade(trade.id, resultType, realizedPl, exitPrice, noteSuffix);
+        globalLifecycleManager.markSetupFailed(trade, 'Trade closed early due to confirmed structural reversal');
+        this.totalClosedCount++;
+        needsLedgerSave = false;
+      } finally {
+        this.inFlightTradeIds.delete(trade.id);
+      }
     }
 
     // Track notification state for deduplication
@@ -861,6 +1091,24 @@ export class TradeManagementEngine {
         level: targetLevel,
         timestamp: Date.now(),
       });
+
+      if (!trade.notifiedStates) {
+        trade.notifiedStates = [];
+      }
+      const stateStr = String(action.managementState);
+      if (!trade.notifiedStates.includes(stateStr as any)) {
+        trade.notifiedStates.push(stateStr as any);
+        needsLedgerSave = true;
+      }
+
+      // Dispatch management alert via Telegram asynchronously
+      this.sendManagementNotification(action, trade, evalResult.health).catch((err) => {
+        console.error(`[TradeManagementEngine] Telegram dispatch error for trade ${trade.id}:`, err);
+      });
+    }
+
+    if (needsLedgerSave) {
+      storage.saveTrade(trade);
     }
   }
 
@@ -1089,8 +1337,13 @@ ${bodyText}
 ⏱ <i>الوقت: ${new Date().toLocaleTimeString('ar-EG')} | نظام الإدارة المتقدمة Phase 4</i>
 `.trim();
 
-    // Dispatch notification to private Telegram chat
-    telegramService.sendManagementNotification(formattedMessage).catch((err) => {
+    // Dispatch notification to private Telegram chat via reliable idempotent queue
+    const notificationId = `mgmt_${trade.id}_${action.actionType}_${action.managementState || 'STATE'}_${trade.notifiedStates?.length || 1}`;
+    telegramService.sendManagementNotification(formattedMessage, {
+      notificationId,
+      tradeId: trade.id,
+      event: action.actionType,
+    }).catch((err) => {
       console.error('[TradeManagementEngine] Telegram management alert dispatch error:', err);
     });
 

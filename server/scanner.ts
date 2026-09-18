@@ -387,7 +387,9 @@ class LiveMarketScanner {
               timeframe: legitimateOpp.timeframe,
               setup: legitimateOpp.setupName,
               mainReasons: ['Restored from persistent storage with active open trade'],
-              invalidation: `Close candle below ${legitimateOpp.stopLoss}`,
+              invalidation: legitimateOpp.direction === 'BUY'
+                ? `Close candle below ${legitimateOpp.stopLoss}`
+                : `Close candle above ${legitimateOpp.stopLoss}`,
             };
           }
           this.config.activeSetupName = this.activeSignal.setup;
@@ -398,11 +400,15 @@ class LiveMarketScanner {
         } else {
           // If open trade exists in ledger but no opportunity was matched, build activeSignal from the open trade
           const primaryOpenTrade = openTrades[0];
+          const restoredDir = primaryOpenTrade.direction
+            ? (String(primaryOpenTrade.direction).toUpperCase().includes('BUY') ? 'BUY NOW' : 'SELL NOW')
+            : (Number(primaryOpenTrade.entry) > Number(primaryOpenTrade.sl) ? 'BUY NOW' : 'SELL NOW');
+
           this.activeSignal = {
             id: primaryOpenTrade.id,
             timestamp: primaryOpenTrade.isoTime ? new Date(primaryOpenTrade.isoTime).getTime() : Date.now(),
             asset: (primaryOpenTrade.asset as any) || asset,
-            signal: (primaryOpenTrade.direction || 'BUY NOW') as any,
+            signal: restoredDir as any,
             currentPrice,
             entry: Number(primaryOpenTrade.entry),
             stopLoss: Number(primaryOpenTrade.sl),
@@ -427,7 +433,9 @@ class LiveMarketScanner {
             timeframe: '15M / 5M',
             setup: primaryOpenTrade.setup || 'Active Trade',
             mainReasons: ['Restored from authoritative open trade in ledger'],
-            invalidation: `Close candle beyond ${primaryOpenTrade.sl}`,
+            invalidation: (restoredDir === 'BUY NOW'
+              ? `Close candle below ${primaryOpenTrade.sl}`
+              : `Close candle above ${primaryOpenTrade.sl}`),
           };
           this.config.activeSetupName = this.activeSignal.setup;
           this.config.lastSignal = this.activeSignal;
@@ -920,12 +928,13 @@ class LiveMarketScanner {
             const orderRiskPct = signal.riskPercent || 15;
             if (todayStats.tradesCount < 3 && (todayStats.totalRiskPercentUsed + orderRiskPct) <= 30.0) {
               const lot = signal.standardLot ?? signal.recommendedLotSize ?? 0.01;
-              let resolvedAction: 'BUY' | 'SELL' | 'BUY_LIMIT' | 'SELL_LIMIT' = 'BUY';
+              let resolvedAction: 'BUY' | 'SELL' | 'BUY_LIMIT' | 'SELL_LIMIT';
               const sUpper = signal.signal.toUpperCase();
               if (sUpper.includes('BUY LIMIT')) resolvedAction = 'BUY_LIMIT';
               else if (sUpper.includes('SELL LIMIT')) resolvedAction = 'SELL_LIMIT';
+              else if (sUpper.includes('BUY')) resolvedAction = 'BUY';
               else if (sUpper.includes('SELL')) resolvedAction = 'SELL';
-              else resolvedAction = 'BUY';
+              else resolvedAction = signal.entry > signal.stopLoss ? 'BUY' : 'SELL';
 
               mt5Bridge.executeOrder({
                 symbol: (signal.asset || 'XAUUSD').replace('/', ''),

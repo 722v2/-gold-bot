@@ -122,7 +122,8 @@ export interface MultiStrategyEngineResult {
  * Helper to calculate candle metrics
  */
 function analyzeCandle(c: Candle) {
-  const isBull = c.close >= c.open;
+  const isBull = c.close > c.open;
+  const isBear = c.close < c.open;
   const body = Math.abs(c.close - c.open);
   const totalRange = Math.max(0.01, c.high - c.low);
   const upperWick = c.high - Math.max(c.open, c.close);
@@ -130,9 +131,10 @@ function analyzeCandle(c: Candle) {
   const isTopRejection = upperWick > body * 1.3 && upperWick > totalRange * 0.4;
   const isBottomRejection = lowerWick > body * 1.3 && lowerWick > totalRange * 0.4;
   const isEngulfingBull = isBull && body > totalRange * 0.6;
-  const isEngulfingBear = !isBull && body > totalRange * 0.6;
+  const isEngulfingBear = isBear && body > totalRange * 0.6;
   return {
     isBull,
+    isBear,
     body,
     totalRange,
     upperWick,
@@ -158,6 +160,13 @@ function calculateFibLevels(high: number, low: number) {
     fib705: low + diff * 0.705, // OTE level
     fib786: low + diff * 0.786,
     fib100: high,
+    // Symmetrical directional OTE bounds:
+    // Bullish Retracement (Pullback from High into Discount): 61.8% - 78.6% retracement down from high
+    bullishOteLow: low + diff * (1 - 0.786),
+    bullishOteHigh: low + diff * (1 - 0.618),
+    // Bearish Retracement (Pullback from Low into Premium): 61.8% - 78.6% retracement up from low
+    bearishOteLow: low + diff * 0.618,
+    bearishOteHigh: low + diff * 0.786,
   };
 }
 
@@ -672,7 +681,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     // Bearish OB Retest (Supply Zone) - Gated: Blocked in STRONG_UPTREND / WEAK_UPTREND
     const bearishOb = ob15m?.type === 'BEARISH' ? ob15m : ob5m?.type === 'BEARISH' ? ob5m : null;
     if (!isUptrendRegime && bearishOb && currentPrice <= bearishOb.high + 0.5 && currentPrice >= bearishOb.low - 1.2) {
-      if (c5mMetrics.isTopRejection || !c5mMetrics.isBull || prev5mMetrics.isTopRejection) {
+      if (c5mMetrics.isTopRejection || c5mMetrics.isBear || prev5mMetrics.isTopRejection) {
         const cand = evaluateCandidate(
           'ORDER_BLOCK',
           'Bearish Order Block Retest & Reaction',
@@ -726,7 +735,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       }
     // Bearish FVG - Gated: Blocked in STRONG_UPTREND / WEAK_UPTREND
     } else if (!isUptrendRegime && fvg && fvg.type === 'BEARISH' && currentPrice <= fvg.top + 0.5 && currentPrice >= fvg.bottom - 0.8) {
-      if (c5mMetrics.isTopRejection || !c5mMetrics.isBull) {
+      if (c5mMetrics.isTopRejection || c5mMetrics.isBear) {
         const cand = evaluateCandidate(
           'FVG_IMBALANCE',
           'Bearish Fair Value Gap (FVG) Mitigation',
@@ -807,7 +816,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   // =========================================================================
   // STRATEGY 5: FIBONACCI OTE (61.8% - 78.6%) IN PREMIUM / DISCOUNT
   // =========================================================================
-  if (!isDowntrendRegime && m15Zone === 'DISCOUNT' && currentPrice >= fib15m.fib618 - 1.0 && currentPrice <= fib15m.fib786 + 1.0) {
+  if (!isDowntrendRegime && m15Zone === 'DISCOUNT' && currentPrice >= fib15m.bullishOteLow - 1.0 && currentPrice <= fib15m.bullishOteHigh + 1.0) {
     if (c5mMetrics.isBottomRejection || c5mMetrics.isBull) {
       const cand = evaluateCandidate(
         'FIBONACCI_OTE',
@@ -829,8 +838,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       );
       if (cand) candidates.push(cand);
     }
-  } else if (!isUptrendRegime && m15Zone === 'PREMIUM' && currentPrice <= fib15m.fib786 + 1.0 && currentPrice >= fib15m.fib618 - 1.0) {
-    if (c5mMetrics.isTopRejection || !c5mMetrics.isBull) {
+  } else if (!isUptrendRegime && m15Zone === 'PREMIUM' && currentPrice >= fib15m.bearishOteLow - 1.0 && currentPrice <= fib15m.bearishOteHigh + 1.0) {
+    if (c5mMetrics.isTopRejection || c5mMetrics.isBear) {
       const cand = evaluateCandidate(
         'FIBONACCI_OTE',
         'Fibonacci Optimal Trade Entry (OTE 61.8% - 78.6% Premium)',
@@ -904,7 +913,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       Math.abs(currentPrice - indicators5m.vwap) <= atr5m * 1.5 ||
       currentPrice >= indicators5m.ema20 - atr5m * 1.0;
 
-    if (isPullbackToEma && (c5mMetrics.isTopRejection || !c5mMetrics.isBull || currentPrice <= indicators5m.ema20)) {
+    if (isPullbackToEma && (c5mMetrics.isTopRejection || c5mMetrics.isBear || currentPrice <= indicators5m.ema20)) {
       const pullbackSl = Math.max(last5m.high, prev5m.high);
       const cand = evaluateCandidate(
         'MARKET_STRUCTURE',
@@ -996,7 +1005,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
 
     const hasBearishRejection =
       c5mMetrics.isTopRejection ||
-      !c5mMetrics.isBull ||
+      c5mMetrics.isBear ||
       prev5mMetrics.isTopRejection ||
       last5m.close < prev5m.close ||
       indicators5m.rsi14 >= 52;
@@ -1126,7 +1135,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   // Decisive close BELOW range low, solid candle body, no excessive lower wick rejection
   const isDecisiveBearClose =
     last5m.close < rangeLowBoundary &&
-    !c5mMetrics.isBull &&
+    c5mMetrics.isBear &&
     c5mMetrics.body >= c5mMetrics.totalRange * 0.40 &&
     c5mMetrics.lowerWick <= c5mMetrics.totalRange * 0.45;
 

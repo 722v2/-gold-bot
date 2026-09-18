@@ -136,16 +136,35 @@ export function calculateVWAP(candles: Candle[]): number {
 
 // Detect Price Action, SMC/ICT structure, Swing Points, OB, and FVG
 export function analyzeTechnicals(candles: Candle[]): TechnicalIndicators {
+  if (!candles || !Array.isArray(candles) || candles.length === 0) {
+    return {
+      ema20: 0,
+      ema50: 0,
+      ema200: 0,
+      vwap: 0,
+      rsi14: 50,
+      macd: { macd: 0, signal: 0, histogram: 0 },
+      atr14: 0,
+      bollingerBands: { upper: 0, middle: 0, lower: 0 },
+      swingHigh: 0,
+      swingLow: 0,
+      support: 0,
+      resistance: 0,
+      structure: 'RANGING',
+      marketRegime: 'UNCLEAR',
+    };
+  }
+
   const closes = candles.map((c) => c.close);
-  const latestClose = closes[closes.length - 1];
+  const latestClose = closes[closes.length - 1] || 0;
   
   const ema20Arr = calculateEMA(closes, 20);
   const ema50Arr = calculateEMA(closes, 50);
   const ema200Arr = calculateEMA(closes, 200);
   
-  const ema20 = Number((ema20Arr[ema20Arr.length - 1] || latestClose).toFixed(2));
-  const ema50 = Number((ema50Arr[ema50Arr.length - 1] || latestClose).toFixed(2));
-  const ema200 = Number((ema200Arr[ema200Arr.length - 1] || latestClose).toFixed(2));
+  const ema20 = Number(((ema20Arr.length > 0 ? ema20Arr[ema20Arr.length - 1] : latestClose) || latestClose).toFixed(2));
+  const ema50 = Number(((ema50Arr.length > 0 ? ema50Arr[ema50Arr.length - 1] : latestClose) || latestClose).toFixed(2));
+  const ema200 = Number(((ema200Arr.length > 0 ? ema200Arr[ema200Arr.length - 1] : latestClose) || latestClose).toFixed(2));
   
   const rsi14 = calculateRSI(closes, 14);
   const macd = calculateMACD(closes);

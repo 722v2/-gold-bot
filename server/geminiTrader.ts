@@ -4,6 +4,7 @@ import { BrokerContractSpecs, evaluateTradeRisk } from './riskManager.js';
 import { calculateDynamicTakeProfits } from './tpEngine.js';
 import { generateMultiStrategyCandidates } from './strategyEngine.js';
 import { experienceMemoryEngine } from './experienceMemory.js';
+import { validateTradeSignalCandidate, inferStrategyFamily } from './tradeQualityEngine.js';
 
 let nvidiaClient: OpenAI | null = null;
 let lastTestedApiKey: string | null = null;
@@ -157,6 +158,7 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
     candles1m: input.recent1mCandles || [],
     losingStreak: input.losingStreak,
     brokerSpecs: input.brokerSpecs,
+    activeTradeDirection: input.activeTradeDirection,
   });
 
   // 1. Check if in 429 rate-limit cooldown
@@ -335,19 +337,110 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
     }
 
     const decision = String(parsed.signal).toUpperCase() as SignalDecision;
-    const finalSignal = buildFinalSignal({
-      decision: ['BUY NOW', 'SELL NOW', 'BUY LIMIT', 'SELL LIMIT', 'NO TRADE'].includes(decision) ? decision : 'NO TRADE',
-      entry: Number(parsed.entry || currentPrice),
-      stopLoss: Number(parsed.stopLoss || currentPrice),
-      tp1: Number(parsed.tp1 || currentPrice),
-      tp2: Number(parsed.tp2 || currentPrice),
-      confidence: Math.min(100, Math.max(0, Number(parsed.confidence || 75))),
-      timeframe: parsed.timeframe || '15M / 5M',
-      setup: parsed.setup || 'Market Structure Setup',
-      mainReasons: Array.isArray(parsed.mainReasons) && parsed.mainReasons.length > 0 ? parsed.mainReasons : ['تأكيد الهيكل الفني وسلوك السعر.'],
-      invalidation: parsed.invalidation || `كسر منطقة وقف الخسارة`,
-      noTradeReason: parsed.noTradeReason
-    }, input);
+    const isAiTrade = ['BUY NOW', 'SELL NOW', 'BUY LIMIT', 'SELL LIMIT'].includes(decision);
+    let finalSignal: TradeSignal;
+
+    if (isAiTrade) {
+      const aiDirection: 'BUY' | 'SELL' = decision.includes('BUY') ? 'BUY' : 'SELL';
+      const aiEntry = Number(parsed.entry || currentPrice);
+      const aiSl = Number(parsed.stopLoss || (aiDirection === 'BUY' ? aiEntry - 4.5 : aiEntry + 4.5));
+      const aiTp1 = Number(parsed.tp1 || (aiDirection === 'BUY' ? aiEntry + 7.0 : aiEntry - 7.0));
+      const aiTp2 = parsed.tp2 ? Number(parsed.tp2) : undefined;
+      const aiSetup = parsed.setup || 'AI Market Structure Setup';
+      const aiFamily = inferStrategyFamily(aiSetup);
+
+      // Enforce strict deterministic technical validation on AI candidate
+      const valResult = validateTradeSignalCandidate(
+        {
+          direction: aiDirection,
+          entry: aiEntry,
+          stopLoss: aiSl,
+          tp1: aiTp1,
+          tp2: aiTp2,
+          setupName: aiSetup,
+          strategyFamily: aiFamily,
+          confidence: Number(parsed.confidence || 75),
+        },
+        {
+          currentPrice,
+          candles5m: input.recent5mCandles || [],
+          candles15m: input.candles15m || [],
+          candles1h: input.candles1h || [],
+          candles1m: input.recent1mCandles || [],
+          indicators5m: input.indicators5m,
+          indicators15m: input.indicators15m,
+          indicators1h: input.indicators1h,
+          brokerSpecs: input.brokerSpecs,
+          activeTradeDirection: input.activeTradeDirection,
+        }
+      );
+
+      if (!valResult.isValid) {
+        console.warn(`[NVIDIA AI] AI candidate rejected by deterministic technical validation: ${valResult.rejectionReason}`);
+        
+        // Prefer highest-quality deterministic candidate that already passed validation
+        const validFallback = candidatesContext.selectedCandidate || candidatesContext.allCandidates.find(c => c.direction === 'BUY' || c.direction === 'SELL');
+        if (validFallback) {
+          console.log(`[NVIDIA AI] Substituting rejected AI candidate with top qualified deterministic candidate (${validFallback.setupName || 'Qualified Deterministic Setup'})`);
+          finalSignal = buildFinalSignal({
+            decision: validFallback.direction === 'BUY' ? 'BUY NOW' : 'SELL NOW',
+            entry: validFallback.entry,
+            stopLoss: validFallback.stopLoss,
+            tp1: validFallback.tp1,
+            tp2: validFallback.tp2,
+            confidence: validFallback.confidence,
+            timeframe: validFallback.timeframe || '15M / 5M',
+            setup: validFallback.setupName || 'Deterministic Structural Setup',
+            mainReasons: validFallback.mainReasons || ['نموذج هيكلي مؤكد حسابياً عبر محرك الإشارات الحتمي.'],
+            invalidation: validFallback.invalidation || (validFallback.direction === 'BUY' ? `Close candle below ${validFallback.stopLoss}` : `Close candle above ${validFallback.stopLoss}`),
+          }, input);
+        } else {
+          console.log(`[NVIDIA AI] No qualified deterministic candidate available. Returning NO TRADE.`);
+          finalSignal = buildFinalSignal({
+            decision: 'NO TRADE',
+            entry: currentPrice,
+            stopLoss: currentPrice,
+            tp1: currentPrice,
+            tp2: currentPrice,
+            confidence: 0,
+            timeframe: '15M / 5M',
+            setup: 'No Valid Setup',
+            mainReasons: [],
+            invalidation: 'N/A',
+            noTradeReason: `تم رفض مقترح الذكاء الاصطناعي برمجياً لعدم اكتمال الشروط الفنية الحتمية: ${valResult.rejectionReason}`
+          }, input);
+        }
+      } else {
+        // AI Candidate passed deterministic validation
+        finalSignal = buildFinalSignal({
+          decision,
+          entry: aiEntry,
+          stopLoss: aiSl,
+          tp1: aiTp1,
+          tp2: aiTp2 || aiTp1,
+          confidence: Math.min(100, Math.max(0, Number(parsed.confidence || 75))),
+          timeframe: parsed.timeframe || '15M / 5M',
+          setup: aiSetup,
+          mainReasons: Array.isArray(parsed.mainReasons) && parsed.mainReasons.length > 0 ? parsed.mainReasons : ['تأكيد الهيكل الفني وسلوك السعر.'],
+          invalidation: parsed.invalidation || (aiDirection === 'BUY' ? `Close candle below ${aiSl}` : `Close candle above ${aiSl}`),
+          noTradeReason: parsed.noTradeReason
+        }, input);
+      }
+    } else {
+      finalSignal = buildFinalSignal({
+        decision: 'NO TRADE',
+        entry: currentPrice,
+        stopLoss: currentPrice,
+        tp1: currentPrice,
+        tp2: currentPrice,
+        confidence: Math.min(100, Math.max(0, Number(parsed.confidence || 0))),
+        timeframe: parsed.timeframe || '15M / 5M',
+        setup: 'No Setup',
+        mainReasons: [],
+        invalidation: 'N/A',
+        noTradeReason: parsed.noTradeReason || 'عدم وجود فرصة واضحة بنسبة عائد تفوق 1:1.5R مع وقف خسارة مناسب.'
+      }, input);
+    }
 
     lastAnalyzed5mTimestamp = latest5mTime;
     lastAnalyzedPrice = currentPrice;

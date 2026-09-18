@@ -78,7 +78,29 @@ async function executeFullAuditValidation() {
   console.log('\n--- SECTION 2: OUTCOME RECORDING & IDEMPOTENCY ---');
 
   // Verify Idempotency on outcomes
-  const outcomeTradeId = 'audit_out_idempotency_1';
+  const outcomeTradeId = `audit_out_idempotency_${Date.now()}`;
+  storage.saveTrade({
+    id: outcomeTradeId,
+    tradeNumber: 9991,
+    date: 'Today',
+    asset: 'XAU/USD',
+    direction: 'BUY NOW',
+    entry: 4280.00,
+    sl: 4275.00,
+    tp1: 4290.00,
+    tp2: 4295.00,
+    rr: '1:2.0',
+    riskPercent: 1.0,
+    riskAmount: 5.0,
+    lotSize: 0.01,
+    confidence: 85,
+    setup: 'Idempotency Test Setup',
+    result: 'OPEN',
+    isActive: true,
+    pl: 0,
+    balanceAfterTrade: 100,
+  });
+
   const outcome1 = storage.recordTradeOutcome({
     signalId: outcomeTradeId,
     tradeId: outcomeTradeId,

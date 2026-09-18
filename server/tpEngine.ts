@@ -427,7 +427,7 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
         rr,
       });
     }
-    if (indicators15m.bollingerBands.upper > entry) {
+    if (indicators15m?.bollingerBands?.upper && indicators15m.bollingerBands.upper > entry) {
       const dist = Number((indicators15m.bollingerBands.upper - entry).toFixed(2));
       const rr = Number((dist / slDistance).toFixed(2));
       candidateLevels.push({
@@ -452,7 +452,7 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
         rr,
       });
     }
-    if (indicators15m.bollingerBands.lower < entry) {
+    if (indicators15m?.bollingerBands?.lower && indicators15m.bollingerBands.lower < entry) {
       const dist = Number((entry - indicators15m.bollingerBands.lower).toFixed(2));
       const rr = Number((dist / slDistance).toFixed(2));
       candidateLevels.push({
