@@ -321,18 +321,9 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     const slPoints = Number((slDistance / 0.1).toFixed(1));
 
     // SL constraint check: Must be technically meaningful (35 to 65 points on Gold)
+    // If the structurally correct SL cannot satisfy the broker/risk constraints, reject the setup rather than distorting the SL
     if (slPoints < minSlPoints || slPoints > maxSlPoints) {
-      if (slPoints < minSlPoints) {
-        stopLoss = direction === 'BUY'
-          ? Number((entry - (minSlPoints * 0.1)).toFixed(2))
-          : Number((entry + (minSlPoints * 0.1)).toFixed(2));
-      } else if (slPoints > maxSlPoints && slPoints <= 85) {
-        stopLoss = direction === 'BUY'
-          ? Number((entry - (maxSlPoints * 0.1)).toFixed(2))
-          : Number((entry + (maxSlPoints * 0.1)).toFixed(2));
-      } else {
-        return null; // SL is outside valid scalping boundaries
-      }
+      return null; // Reject setup rather than artificially moving SL
     }
 
     const finalSlDistance = Math.abs(entry - stopLoss);

@@ -252,8 +252,8 @@ async function runAllProductionVerifications() {
   );
 
   // 4. Missing Price Action Trigger (Neutral small candle with centered body and no rejection wick)
-  const neutralCandles: Candle[] = Array(10).fill(null).map((_, i) => ({
-    timestamp: Date.now() - (10 - i) * 60000,
+  const neutralCandles: Candle[] = Array(20).fill(null).map((_, i) => ({
+    timestamp: Date.now() - (20 - i) * 60000,
     open: 2500.0,
     high: 2500.25,
     low: 2499.75,

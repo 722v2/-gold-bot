@@ -639,7 +639,9 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
     };
   }
 
-  const selectedTp1 = validTp1Candidates[0];
+  // Prefer genuine structural targets (swings, liquidity pools, OB, FVG) over synthetic projections
+  const validStructuralTp1 = validTp1Candidates.filter((c) => c.priority <= 4);
+  const selectedTp1 = validStructuralTp1.length > 0 ? validStructuralTp1[0] : validTp1Candidates[0];
   const rawStructuralTarget = selectedTp1.price;
   const tp1Price = Number(selectedTp1.price.toFixed(2));
   const tp1Distance = Number(Math.abs(tp1Price - entry).toFixed(2));
@@ -648,11 +650,22 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
   const tp1RrString = `1:${tp1Rr.toFixed(2)}`;
 
   // 6. Select TP2: Next genuine structural candidate farther than TP1
+  // Prioritize genuine structural levels (swings, liquidity pools, OB, FVG) over synthetic ATR/Fib projections
+  const furtherStructural = candidateLevels.filter(
+    (c) =>
+      c.priority <= 4 &&
+      c.distance > tp1Distance + 0.3 * slDistance &&
+      Math.abs(c.price - tp1Price) >= 0.5 &&
+      c.rr >= minTargetRr
+  );
+
   const furtherCandidates = candidateLevels.filter(
     (c) => c.distance > tp1Distance + 0.3 * slDistance && Math.abs(c.price - tp1Price) >= 0.5 && c.rr >= minTargetRr
   );
 
-  const selectedTp2 = furtherCandidates.length > 0 ? furtherCandidates[0] : selectedTp1;
+  const selectedTp2 = furtherStructural.length > 0
+    ? furtherStructural[0]
+    : (furtherCandidates.length > 0 ? furtherCandidates[0] : selectedTp1);
   const tp2Price = Number(selectedTp2.price.toFixed(2));
   const tp2Distance = Number(Math.abs(tp2Price - entry).toFixed(2));
   const tp2Points = Number((tp2Distance / 0.1).toFixed(1));
