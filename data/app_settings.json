@@ -1,6 +1,6 @@
 {
   "capitalSource": "MANUAL",
-  "manualCapital": 25,
+  "manualCapital": 100,
   "riskPerTrade": 18,
   "maxRiskPerTrade": 30,
   "minTp1RR": 1.5,

@@ -143,6 +143,7 @@ const TELEGRAM_CHAT_FILE = path.join(DATA_DIR, 'telegram_private_chat.json');
 const BACKTEST_FILE = path.join(DATA_DIR, 'backtest_history.json');
 const SNAPSHOTS_FILE = path.join(DATA_DIR, 'factor_snapshots.json');
 const EXPERIENCES_FILE = path.join(DATA_DIR, 'experience_records.json');
+const TELEGRAM_DISPATCHES_FILE = path.join(DATA_DIR, 'telegram_dispatches.json');
 
 const MAX_SCANS_TO_KEEP = 100;
 const MAX_SIGNALS_TO_KEEP = 50;
@@ -192,6 +193,7 @@ export class PersistentStorage {
       this.inMemoryTrades = this.inMemoryTrades.filter(
         (t) => !String(t.id).startsWith('test-trade-') && !String(t.id).startsWith('phantom-trade-')
       );
+      this.inMemoryTelegramDispatches.clear();
     }
   }
 
@@ -361,6 +363,15 @@ export class PersistentStorage {
         const list = JSON.parse(raw);
         if (Array.isArray(list)) {
           this.inMemoryExperienceRecords = list;
+        }
+      }
+
+      if (fs.existsSync(TELEGRAM_DISPATCHES_FILE)) {
+        const raw = fs.readFileSync(TELEGRAM_DISPATCHES_FILE, 'utf-8');
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          this.inMemoryTelegramDispatches = new Set(list);
+          console.log(`[Storage] Loaded ${this.inMemoryTelegramDispatches.size} persisted Telegram dispatch IDs.`);
         }
       }
     } catch (e: any) {
@@ -1476,8 +1487,12 @@ export class PersistentStorage {
         }
       }
 
-      // Dispatch completed trade outcome notification
-      telegramService.sendOutcomeNotification(record, updatedTrade).catch((err) => {
+      // Dispatch completed trade outcome notification with canonical ID and explicit event timestamp
+      const outcomeNotificationId = `close_${record.tradeId || record.signalId}`;
+      telegramService.sendOutcomeNotification(record, updatedTrade, {
+        notificationId: outcomeNotificationId,
+        eventTimestamp: record.timestamp || Date.now(),
+      }).catch((err) => {
         console.error('[Storage] Telegram outcome alert dispatch error:', err);
       });
 
@@ -1824,6 +1839,20 @@ export class PersistentStorage {
   public saveTelegramDispatch(key: string): void {
     if (!key) return;
     this.inMemoryTelegramDispatches.add(key);
+    this.persistTelegramDispatches();
+  }
+
+  private persistTelegramDispatches(): void {
+    if (!this.shouldPersist()) return;
+    try {
+      fs.writeFileSync(
+        TELEGRAM_DISPATCHES_FILE,
+        JSON.stringify(Array.from(this.inMemoryTelegramDispatches), null, 2),
+        'utf-8'
+      );
+    } catch (e) {
+      console.error('[Storage] Error persisting telegram dispatches:', e);
+    }
   }
 
   public isTelegramDispatched(key: string): boolean {
@@ -1898,7 +1927,11 @@ export class PersistentStorage {
             source: 'SYSTEM',
           };
 
-          telegramService.sendOutcomeNotification(outcomeRecord, this.inMemoryTrades[idx]).catch((err) => {
+          const closeNotificationId = `close_${trade.id}`;
+          telegramService.sendOutcomeNotification(outcomeRecord, this.inMemoryTrades[idx], {
+            notificationId: closeNotificationId,
+            eventTimestamp: outcomeRecord.timestamp,
+          }).catch((err) => {
             console.error('[Storage] Telegram outcome alert dispatch error from closeTrade:', err);
           });
         }

@@ -1338,11 +1338,28 @@ ${bodyText}
 `.trim();
 
     // Dispatch notification to private Telegram chat via reliable idempotent queue
-    const notificationId = `mgmt_${trade.id}_${action.actionType}_${action.managementState || 'STATE'}_${trade.notifiedStates?.length || 1}`;
+    let actionKey = 'mgmt';
+    if (action.actionType === 'PARTIAL_CLOSE_TP1') {
+      actionKey = 'tp1';
+    } else if (action.actionType === 'UPDATE_SL' && (action.managementState === 'BE_LOCKED' || String(action.reason).includes('Break-Even'))) {
+      actionKey = 'be';
+    } else if (action.actionType === 'EARLY_EXIT') {
+      actionKey = 'early_exit';
+    } else if (action.actionType === 'REVERSAL_WATCH') {
+      actionKey = 'reversal';
+    } else if (action.actionType === 'UPDATE_TP2') {
+      actionKey = 'tp2';
+    }
+
+    const notificationId = action.actionType === 'EARLY_EXIT'
+      ? `early_exit_${trade.id}`
+      : `mgmt_${actionKey}_${trade.id}`;
+
     telegramService.sendManagementNotification(formattedMessage, {
       notificationId,
       tradeId: trade.id,
       event: action.actionType,
+      eventTimestamp: action.timestamp || Date.now(),
     }).catch((err) => {
       console.error('[TradeManagementEngine] Telegram management alert dispatch error:', err);
     });

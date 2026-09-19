@@ -35,7 +35,7 @@
       "combinationKey": "direction=BUY|fvg=BEARISH_FVG|htfStructure=UPTREND|liquidity=NONE|m15Structure=BULLISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Double Bottom Reversal (W-Formation)|volatility=HIGH|zone=PREMIUM"
     },
     "strategyFamily": "UNKNOWN",
-    "lastUpdatedTime": 1789821467558,
+    "lastUpdatedTime": 1789821477578,
     "firstObservedTime": 1789729100624
   },
   "opp_bearish_engulfing_reversal_at_key_structure_SELL_4375": {

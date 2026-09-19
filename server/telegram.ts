@@ -5,6 +5,22 @@ import { storage } from './storage.js';
 const GLOBAL_TELEGRAM_SERVICE_KEY = Symbol.for('__GOLD_AI_TELEGRAM_SERVICE__');
 const GLOBAL_TELEGRAM_POLLING_RUNNING = Symbol.for('__GOLD_AI_TELEGRAM_POLLING_RUNNING__');
 
+export let applicationStartedAt: number = Date.now();
+
+export function getApplicationStartedAt(): number {
+  return applicationStartedAt;
+}
+
+export function setApplicationStartedAt(timestamp: number): void {
+  applicationStartedAt = timestamp;
+  const svc = (globalThis as any)[GLOBAL_TELEGRAM_SERVICE_KEY];
+  if (svc && typeof svc.setApplicationStartedAt === 'function') {
+    svc.setApplicationStartedAt(timestamp);
+  } else {
+    console.log(`[TELEGRAM] Application event boundary initialized: ${applicationStartedAt}`);
+  }
+}
+
 export interface TelegramStatus {
   registered: boolean;
   chatId: string | null;
@@ -27,7 +43,7 @@ export interface QueuedTelegramNotification {
   chatId: string;
   message: string;
   replyMarkup?: any;
-  status: 'PENDING' | 'SENT' | 'FAILED';
+  status: 'PENDING' | 'SENT' | 'FAILED' | 'SUPPRESSED';
   attempts: number;
   maxAttempts: number;
   nextRetryAt: number;
@@ -57,8 +73,10 @@ export class TelegramService {
   private rateLimitedUntil = 0;
   private hasLoggedRateLimit = false;
   private lastActiveSignalUpdate = new Map<string, number>();
+  private applicationStartedAt: number = applicationStartedAt;
 
   constructor() {
+    console.log(`[TELEGRAM] Application event boundary initialized: ${this.applicationStartedAt}`);
     this.botToken = this.getBotToken();
     this.botId = this.getBotIdFromToken(this.botToken);
     this.loadRegisteredChat();
@@ -66,6 +84,16 @@ export class TelegramService {
     this.loadPendingPnlRequests();
     this.loadNotificationQueue();
     this.startRetryLoop();
+  }
+
+  public setApplicationStartedAt(ts: number): void {
+    this.applicationStartedAt = ts;
+    applicationStartedAt = ts;
+    console.log(`[TELEGRAM] Application event boundary initialized: ${this.applicationStartedAt}`);
+  }
+
+  public getApplicationStartedAt(): number {
+    return this.applicationStartedAt;
   }
 
   /**
@@ -223,6 +251,27 @@ export class TelegramService {
     }
   }
 
+  private safelySaveTelegramDispatch(key: string): void {
+    try {
+      if (typeof storage !== 'undefined' && storage && typeof storage.saveTelegramDispatch === 'function') {
+        storage.saveTelegramDispatch(key);
+      }
+    } catch {
+      // safe guard against circular import during early bootstrap
+    }
+  }
+
+  private safelyIsTelegramDispatched(key: string): boolean {
+    try {
+      if (typeof storage !== 'undefined' && storage && typeof storage.isTelegramDispatched === 'function') {
+        return storage.isTelegramDispatched(key);
+      }
+    } catch {
+      // safe guard
+    }
+    return false;
+  }
+
   /**
    * Load stored persistent retry queue from disk
    */
@@ -231,10 +280,43 @@ export class TelegramService {
       if (fs.existsSync(this.retryQueuePath)) {
         const data = JSON.parse(fs.readFileSync(this.retryQueuePath, 'utf8'));
         if (Array.isArray(data)) {
+          let suppressedCount = 0;
           for (const item of data) {
-            if (item && item.notificationId) {
+            if (!item || !item.notificationId) continue;
+
+            // 1. Preserve all SENT items for persistent idempotency
+            if (item.status === 'SENT') {
               this.notificationQueue.set(item.notificationId, item);
+              this.safelySaveTelegramDispatch(item.notificationId);
+              continue;
             }
+
+            // 2. Check if item is historical (created before applicationStartedAt) or experimental/test
+            const isTestTrade = !!(item.tradeId && (
+              item.tradeId.startsWith('test_') ||
+              item.tradeId.startsWith('phantom-') ||
+              item.tradeId.startsWith('mock_') ||
+              item.tradeId.startsWith('adversarial_') ||
+              item.event === 'ADVERSARIAL_TEST_EVENT' ||
+              item.event === 'PRODUCTION_VERIFY_SIGNAL'
+            ));
+
+            const isHistorical = (item.createdAt || 0) < this.applicationStartedAt;
+
+            if (isTestTrade || isHistorical) {
+              console.log(`[TELEGRAM] Historical event suppressed:\nnotificationId=${item.notificationId}\neventTimestamp=${item.createdAt || 0}\napplicationStartedAt=${this.applicationStartedAt}`);
+              item.status = 'SUPPRESSED';
+              item.lastError = 'Historical/experimental event suppressed by startup boundary';
+              this.notificationQueue.set(item.notificationId, item);
+              suppressedCount++;
+              continue;
+            }
+
+            this.notificationQueue.set(item.notificationId, item);
+          }
+          if (suppressedCount > 0) {
+            console.log(`[Telegram] Suppressed ${suppressedCount} historical/experimental pending queue items on startup.`);
+            this.saveNotificationQueue();
           }
           console.log(`[Telegram] Loaded ${this.notificationQueue.size} items from persistent notification queue.`);
         }
@@ -296,6 +378,15 @@ export class TelegramService {
       if (item.status !== 'PENDING') continue;
       if (now < item.nextRetryAt) continue;
 
+      // Double-guard: check if created before applicationStartedAt
+      if (item.createdAt < this.applicationStartedAt) {
+        console.log(`[TELEGRAM] Historical event suppressed:\nnotificationId=${id}\neventTimestamp=${item.createdAt}\napplicationStartedAt=${this.applicationStartedAt}`);
+        item.status = 'SUPPRESSED';
+        item.lastError = 'Historical event suppressed by startup boundary';
+        queueModified = true;
+        continue;
+      }
+
       if (item.attempts >= item.maxAttempts) {
         item.status = 'FAILED';
         item.lastError = item.lastError || 'Max retry attempts exceeded';
@@ -341,15 +432,44 @@ export class TelegramService {
     message: string;
     replyMarkup?: any;
     maxAttempts?: number;
-  }): Promise<{ success: boolean; telegramMessageId?: number; queued?: boolean }> {
+    eventTimestamp?: number;
+  }): Promise<{ success: boolean; telegramMessageId?: number; queued?: boolean; suppressed?: boolean }> {
     const { notificationId, tradeId, event, message, replyMarkup, maxAttempts = 10 } = options;
+    const eventTimestamp = options.eventTimestamp ?? Date.now();
 
-    // 1. Check for idempotent deduplication: if already SENT, do not re-send!
-    const existing = this.notificationQueue.get(notificationId);
-    if (existing && existing.status === 'SENT') {
-      console.log(`[Telegram Queue] Idempotent duplicate prevented for notification ${notificationId}. Already sent (Msg ID: ${existing.telegramMessageId}).`);
-      return { success: true, telegramMessageId: existing.telegramMessageId };
+    // 1. STARTUP BOUNDARY CHECK:
+    // If the event timestamp is prior to the application start time,
+    // this is a historical event (restored from DB/storage/reconciliation). Suppress it!
+    if (eventTimestamp < this.applicationStartedAt) {
+      console.log(`[TELEGRAM] Historical event suppressed:\nnotificationId=${notificationId}\neventTimestamp=${eventTimestamp}\napplicationStartedAt=${this.applicationStartedAt}`);
+      return { success: false, suppressed: true };
     }
+
+    // 2. CHECK PERSISTENT DEDUPLICATION:
+    // If already marked as SENT in notificationQueue or in storage.isTelegramDispatched, prevent duplicate!
+    const existing = this.notificationQueue.get(notificationId);
+    if ((existing && existing.status === 'SENT') || this.safelyIsTelegramDispatched(notificationId)) {
+      console.log(`[Telegram Queue] Idempotent duplicate prevented for notification ${notificationId}. Already sent.`);
+      return { success: true, telegramMessageId: existing?.telegramMessageId };
+    }
+
+    // 3. EXPERIMENTAL / TEST TRADE SUPPRESSION
+    // Prevent experimental and test trades from sending notifications
+    if (tradeId && (
+      tradeId.startsWith('test_') ||
+      tradeId.startsWith('phantom-') ||
+      tradeId.startsWith('mock_') ||
+      tradeId.startsWith('adversarial_') ||
+      event === 'ADVERSARIAL_TEST_EVENT' ||
+      event === 'PRODUCTION_VERIFY_SIGNAL'
+    )) {
+      console.log(`[TELEGRAM] Historical event suppressed:\nnotificationId=${notificationId}\neventTimestamp=${eventTimestamp}\napplicationStartedAt=${this.applicationStartedAt}`);
+      return { success: false, suppressed: true };
+    }
+
+    // Genuinely new event
+    console.log(`[TELEGRAM] New event dispatched:\nnotificationId=${notificationId}`);
+    this.safelySaveTelegramDispatch(notificationId);
 
     const chatId = this.getPrivateChatId();
     if (!chatId) {
@@ -365,7 +485,7 @@ export class TelegramService {
         attempts: 0,
         maxAttempts,
         nextRetryAt: Date.now() + 5000,
-        createdAt: Date.now(),
+        createdAt: eventTimestamp,
         lastError: 'NOT_REGISTERED: Waiting for private chat registration',
       };
       this.notificationQueue.set(notificationId, queuedItem);
@@ -373,7 +493,7 @@ export class TelegramService {
       return { success: false, queued: true };
     }
 
-    // 2. Attempt immediate delivery if not rate limited
+    // Attempt immediate delivery if not rate limited
     if (!this.isRateLimited()) {
       const sentMsg = await this.sendMessageDirectly(chatId, message, replyMarkup);
       if (sentMsg && sentMsg.message_id) {
@@ -389,16 +509,17 @@ export class TelegramService {
           maxAttempts,
           nextRetryAt: 0,
           telegramMessageId: sentMsg.message_id,
-          createdAt: Date.now(),
+          createdAt: eventTimestamp,
           sentAt: Date.now(),
         };
         this.notificationQueue.set(notificationId, sentItem);
         this.saveNotificationQueue();
+        storage.saveTelegramDispatch(notificationId);
         return { success: true, telegramMessageId: sentMsg.message_id };
       }
     }
 
-    // 3. If immediate send failed or rate-limited -> enqueue with exponential backoff
+    // If immediate send failed or rate-limited -> enqueue with exponential backoff
     const attempts = (existing?.attempts || 0) + 1;
     const backoffMs = this.isRateLimited()
       ? Math.max(3000, this.rateLimitedUntil - Date.now())
@@ -415,7 +536,7 @@ export class TelegramService {
       attempts,
       maxAttempts,
       nextRetryAt: Date.now() + backoffMs,
-      createdAt: existing?.createdAt || Date.now(),
+      createdAt: existing?.createdAt || eventTimestamp,
       lastError: this.lastSendError || (this.isRateLimited() ? 'Rate limited (429)' : 'Outbound failure'),
     };
     this.notificationQueue.set(notificationId, pendingItem);
@@ -1360,12 +1481,14 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
     };
 
     const notificationId = `signal_${signal.id}`;
+    const eventTimestamp = signal.timestamp || signal.createdAt || Date.now();
     const result = await this.dispatchReliableNotification({
       notificationId,
       tradeId: signal.id,
       event: 'SIGNAL_NEW',
       message: text,
       replyMarkup,
+      eventTimestamp,
     });
 
     if (result.telegramMessageId) {
@@ -1380,14 +1503,16 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
    */
   public async sendManagementNotification(
     formattedMessage: string,
-    options?: { notificationId?: string; tradeId?: string; event?: string }
+    options?: { notificationId?: string; tradeId?: string; event?: string; eventTimestamp?: number }
   ): Promise<boolean> {
-    const notificationId = options?.notificationId || `mgmt_${options?.tradeId || 'general'}_${Date.now()}`;
+    const tradeId = options?.tradeId || 'general';
+    const notificationId = options?.notificationId || `mgmt_${tradeId}_${options?.event || 'general'}`;
     const result = await this.dispatchReliableNotification({
       notificationId,
       tradeId: options?.tradeId,
       event: options?.event || 'TRADE_MANAGEMENT',
       message: formattedMessage,
+      eventTimestamp: options?.eventTimestamp || Date.now(),
     });
     return result.success;
   }
@@ -1408,13 +1533,14 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
   public async sendOutcomeNotification(
     outcome: any,
     trade: any,
-    options?: { notificationId?: string }
+    options?: { notificationId?: string; eventTimestamp?: number }
   ): Promise<boolean> {
     const chatId = this.getPrivateChatId();
     if (!chatId) return false;
 
     // Remove inline outcome buttons on the original signal message to prevent late manual callbacks
     const signalId = outcome.signalId || trade?.signalId || trade?.id || outcome.tradeId;
+    const tradeId = trade?.id || outcome.tradeId || signalId || 'trade';
     if (signalId && this.signalMessageIds[signalId]) {
       const origMsgId = this.signalMessageIds[signalId];
       this.removeInlineKeyboard(chatId, origMsgId).catch(() => {});
@@ -1441,12 +1567,15 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
 ⏱ <i>الوقت: ${new Date().toLocaleTimeString('ar-EG')}</i>
     `.trim();
 
-    const notificationId = options?.notificationId || `outcome_${signalId || trade?.id || 'trade'}_${outcome.outcome}_${Date.now()}`;
+    const notificationId = options?.notificationId || `close_${tradeId}`;
+    const eventTimestamp = options?.eventTimestamp || outcome.timestamp || (trade?.exitTime ? new Date(trade.exitTime).getTime() : Date.now());
+
     const result = await this.dispatchReliableNotification({
       notificationId,
-      tradeId: trade?.id || signalId,
+      tradeId,
       event: 'OUTCOME_CLOSE',
       message: text,
+      eventTimestamp,
     });
     return result.success;
   }

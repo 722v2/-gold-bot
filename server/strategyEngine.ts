@@ -362,8 +362,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       structuralTargetHint,
     });
 
-    const minAcceptableRr = 0.95; // Allow natural market targets starting from ~1.0R
-    if (!tpResult.valid || tpResult.tp1Rr < minAcceptableRr) {
+    if (!tpResult.valid) {
       return null;
     }
 

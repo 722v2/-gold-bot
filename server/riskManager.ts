@@ -638,12 +638,13 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
   }
 
   // Requirement 4: RR Calculation
-  // Minimum acceptable RR is 1:1.0 (0.95R)
+  // Minimum acceptable RR is natural 1.0R execution viability (with 0.95R broker spread tolerance)
+  // R:R is an output metric, not an artificial target-selection requirement.
   const minRequiredRr = Math.min(minRr, 0.95);
   if (tp1Rr < minRequiredRr) {
     return {
       valid: false,
-      reason: `نسبة العائد إلى المخاطرة للهدف الأول TP1 (${tp1RrString}) أقل من الحد الأدنى الإلزامي 1:${minRequiredRr.toFixed(2)} -> NO TRADE.`,
+      reason: `نسبة العائد إلى المخاطرة للهدف الأول TP1 (${tp1RrString}) أقل من الحد الأدنى للتنفيذ 1:${minRequiredRr.toFixed(2)} -> NO TRADE.`,
       riskPercent: 0,
       riskAmount: 0,
       slPoints,
@@ -666,10 +667,11 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
     };
   }
 
-  if (tp2 && tp2Rr < minRr) {
+  // Target 2 Geometric Consistency: If TP2 is provided, it must be at least as far as TP1
+  if (tp2 && tp2 > 0 && tp2Distance < tp1Distance) {
     return {
       valid: false,
-      reason: `نسبة العائد إلى المخاطرة للهدف الثاني TP2 (${tp2RrString}) أقل من 1:${minRr} -> NO TRADE.`,
+      reason: `الهدف الثاني TP2 (${tp2RrString}) أقرب من الهدف الأول TP1 (${tp1RrString}) -> هندسة أهداف غير متسقة.`,
       riskPercent: 0,
       riskAmount: 0,
       slPoints,
