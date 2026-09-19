@@ -26,28 +26,28 @@
   },
   {
     "id": "exp_sig_temp_0_2000000",
-    "signalId": "sig_temp_0",
-    "tradeId": "t_temp_0",
-    "combinationKey": "ORDER_BLOCK|BUY|UPTREND|BULLISH",
     "factors": {
-      "setupFamily": "ORDER_BLOCK",
-      "direction": "BUY",
-      "htfStructure": "UPTREND",
-      "m15Structure": "BULLISH",
-      "marketRegime": "STRONG_TREND",
-      "liquidity": "SWEEP_SELL_SIDE",
-      "orderBlock": "BULLISH_OB",
       "fvg": "NONE",
-      "zone": "DISCOUNT",
       "rsi": "NEUTRAL",
       "macd": "BULLISH",
-      "volatility": "NORMAL"
+      "zone": "DISCOUNT",
+      "direction": "BUY",
+      "liquidity": "SWEEP_SELL_SIDE",
+      "orderBlock": "BULLISH_OB",
+      "volatility": "NORMAL",
+      "setupFamily": "ORDER_BLOCK",
+      "htfStructure": "UPTREND",
+      "m15Structure": "BULLISH",
+      "marketRegime": "STRONG_TREND"
     },
-    "direction": "BUY",
-    "setupFamily": "ORDER_BLOCK",
     "outcome": "WIN",
+    "tradeId": "t_temp_0",
+    "signalId": "sig_temp_0",
+    "direction": "BUY",
+    "completedAt": 2000000,
     "realizedPnl": 15,
-    "completedAt": 2000000
+    "setupFamily": "ORDER_BLOCK",
+    "combinationKey": "ORDER_BLOCK|BUY|UPTREND|BULLISH"
   },
   {
     "id": "exp_sig_temp_1_2000100",

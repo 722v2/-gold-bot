@@ -10,43 +10,43 @@
     "maxAttempts": 10,
     "nextRetryAt": 0,
     "telegramMessageId": 1000,
-    "createdAt": 1789824263291,
-    "sentAt": 1789824253350
+    "createdAt": 1789824621883,
+    "sentAt": 1789824611943
   },
   {
     "notificationId": "close_active_trade_restored_001",
     "tradeId": "active_trade_restored_001",
     "event": "OUTCOME_CLOSE",
     "chatId": "test_chat_999888",
-    "message": "<b>🔴 توثيق نتيجة صفقة من Gold AI!</b>\n\n📊 <b>الأصل:</b> XAU/USD (الذهب)\n🎯 <b>النتيجة:</b> صفقة خاسرة (LOSS)\n💰 <b>الربح/الخسارة المحققة:</b> $-10.00\n📈 <b>سعر الدخول:</b> $2650.00\n📉 <b>سعر الخروج:</b> $2640.00\nℹ️ <b>سبب الإغلاق:</b> Stop Loss Hit at 2640.00\n\n⏱ <i>الوقت: ١:٢٤:١٣ م</i>",
+    "message": "<b>🔴 توثيق نتيجة صفقة من Gold AI!</b>\n\n📊 <b>الأصل:</b> XAU/USD (الذهب)\n🎯 <b>النتيجة:</b> صفقة خاسرة (LOSS)\n💰 <b>الربح/الخسارة المحققة:</b> $-10.00\n📈 <b>سعر الدخول:</b> $2650.00\n📉 <b>سعر الخروج:</b> $2640.00\nℹ️ <b>سبب الإغلاق:</b> Stop Loss Hit at 2640.00\n\n⏱ <i>الوقت: ١:٣٠:١١ م</i>",
     "status": "SENT",
     "attempts": 1,
     "maxAttempts": 10,
     "nextRetryAt": 0,
     "telegramMessageId": 1001,
-    "createdAt": 1789824273291,
-    "sentAt": 1789824253351
+    "createdAt": 1789824631883,
+    "sentAt": 1789824611944
   },
   {
-    "notificationId": "signal_sig_genuinely_new_1789824253291",
-    "tradeId": "sig_genuinely_new_1789824253291",
+    "notificationId": "signal_sig_genuinely_new_1789824611883",
+    "tradeId": "sig_genuinely_new_1789824611883",
     "event": "SIGNAL_NEW",
     "chatId": "test_chat_999888",
-    "message": "<b>🔔 إشارة تداول جديدة من Gold AI Scanner!</b>\n\n🟢 <b>الصفقة المقترحة:</b> شراء الآن (BUY NOW)\n📊 <b>الأصل:</b> XAU/USD (الذهب)\n📈 <b>سعر الدخول:</b> $2675.50\n🛑 <b>وقف الخسارة (SL):</b> $2665.50 (100 نقطة)\n🎯 <b>الهدف الأول (TP1):</b> $2685.50\n🎯 <b>الهدف الثاني (TP2):</b> $2695.50\n⚖️ <b>المخاطرة:</b> 15% ($1.50)\n🧠 <b>نسبة الثقة:</b> 90%\n🛠️ <b>النموذج الفني:</b> Bullish Continuation\n\n⏱ <i>الوقت: ١:٢٤:١٣ م</i>",
+    "message": "<b>🔔 إشارة تداول جديدة من Gold AI Scanner!</b>\n\n🟢 <b>الصفقة المقترحة:</b> شراء الآن (BUY NOW)\n📊 <b>الأصل:</b> XAU/USD (الذهب)\n📈 <b>سعر الدخول:</b> $2675.50\n🛑 <b>وقف الخسارة (SL):</b> $2665.50 (100 نقطة)\n🎯 <b>الهدف الأول (TP1):</b> $2685.50\n🎯 <b>الهدف الثاني (TP2):</b> $2695.50\n⚖️ <b>المخاطرة:</b> 15% ($1.50)\n🧠 <b>نسبة الثقة:</b> 90%\n🛠️ <b>النموذج الفني:</b> Bullish Continuation\n\n⏱ <i>الوقت: ١:٣٠:١١ م</i>",
     "replyMarkup": {
       "inline_keyboard": [
         [
           {
             "text": "🟢 WIN",
-            "callback_data": "win:sig_genuinely_new_1789824253291"
+            "callback_data": "win:sig_genuinely_new_1789824611883"
           },
           {
             "text": "🔴 LOSS",
-            "callback_data": "loss:sig_genuinely_new_1789824253291"
+            "callback_data": "loss:sig_genuinely_new_1789824611883"
           },
           {
             "text": "⚪ NOT ENTERED",
-            "callback_data": "not_entered:sig_genuinely_new_1789824253291"
+            "callback_data": "not_entered:sig_genuinely_new_1789824611883"
           }
         ]
       ]
@@ -56,8 +56,8 @@
     "maxAttempts": 10,
     "nextRetryAt": 0,
     "telegramMessageId": 1002,
-    "createdAt": 1789824283291,
-    "sentAt": 1789824253352
+    "createdAt": 1789824641883,
+    "sentAt": 1789824611945
   },
   {
     "notificationId": "old_sent_signal_111",
@@ -69,8 +69,8 @@
     "attempts": 1,
     "maxAttempts": 10,
     "nextRetryAt": 0,
-    "createdAt": 1789824153291,
-    "sentAt": 1789824154291
+    "createdAt": 1789824511883,
+    "sentAt": 1789824512883
   },
   {
     "notificationId": "historical_pending_222",
@@ -81,8 +81,20 @@
     "status": "SUPPRESSED",
     "attempts": 0,
     "maxAttempts": 10,
-    "nextRetryAt": 1789824203291,
-    "createdAt": 1789824203291,
-    "lastError": "Historical event suppressed by startup boundary"
+    "nextRetryAt": 1789824561883,
+    "createdAt": 1789824561883,
+    "lastError": "Historical/experimental event suppressed by startup boundary"
+  },
+  {
+    "notificationId": "notif_test_1789824621723",
+    "event": "PRODUCTION_VERIFY_SIGNAL",
+    "chatId": "1189889156",
+    "message": "Test notification from production verification suite",
+    "status": "PENDING",
+    "attempts": 1,
+    "maxAttempts": 5,
+    "nextRetryAt": 1789824623724,
+    "createdAt": 1789824621723,
+    "lastError": "TELEGRAM_BOT_TOKEN is not configured."
   }
 ]
