@@ -202,6 +202,16 @@ async function runDirectionalSymmetryTests() {
       { timestamp: 2000, open: 2636, high: 2638, low: 2635, close: 2635.5, volume: 100 }, // top rejection/bear
     ];
 
+    const baseCandles15mBuy: Candle[] = [
+      { timestamp: 900000, open: 2635, high: 2640, low: 2626, close: 2631, volume: 500 },
+      { timestamp: 1800000, open: 2631, high: 2633, low: 2628, close: 2630, volume: 500 },
+    ];
+
+    const baseCandles15mSell: Candle[] = [
+      { timestamp: 900000, open: 2631, high: 2640, low: 2626, close: 2635, volume: 500 },
+      { timestamp: 1800000, open: 2635, high: 2638, low: 2633, close: 2636, volume: 500 },
+    ];
+
     const buyInd15m: TechnicalIndicators = {
       atr14: 2.0,
       swingHigh: 2640,
@@ -230,7 +240,7 @@ async function runDirectionalSymmetryTests() {
       indicators15m: buyInd15m,
       indicators5m: dummyInd,
       candles1h: [],
-      candles15m: [],
+      candles15m: baseCandles15mBuy,
       candles5m: baseCandles5mBuy,
     });
 
@@ -242,7 +252,7 @@ async function runDirectionalSymmetryTests() {
       indicators15m: sellInd15m,
       indicators5m: dummyInd,
       candles1h: [],
-      candles15m: [],
+      candles15m: baseCandles15mSell,
       candles5m: baseCandles5mSell,
     });
 

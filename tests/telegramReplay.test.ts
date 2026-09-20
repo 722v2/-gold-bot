@@ -330,8 +330,8 @@ test('Telegram Deploy Replay Prevention Suite (10-Point Verification)', async (t
       status: 'PENDING',
       attempts: 0,
       maxAttempts: 10,
-      nextRetryAt: deployTime - 50000,
-      createdAt: deployTime - 50000, // Prior to deployTime!
+      nextRetryAt: Date.now() - 45 * 60 * 1000,
+      createdAt: Date.now() - 45 * 60 * 1000, // Truly historical (> 30m actionability window)
     });
 
     // Run the retry loop processor

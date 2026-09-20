@@ -7,6 +7,45 @@ const GLOBAL_TELEGRAM_POLLING_RUNNING = Symbol.for('__GOLD_AI_TELEGRAM_POLLING_R
 
 export let applicationStartedAt: number = Date.now();
 
+/**
+ * Actionability & Staleness Windows for Gold (XAUUSD) Trading Alerts:
+ * 
+ * In intraday XAUUSD trading on M5/M15/M1 charts:
+ * 1. Trade Signals (SIGNAL_NEW):
+ *    - Valid for up to 15 minutes (900,000 ms), representing 1 x 15M candle or 3 x 5M candles.
+ *    - Beyond 15 minutes, price has likely moved significantly from the designated entry price,
+ *      so delivering a stale entry alert could lead to hazardous late execution.
+ * 2. Active Trade Management & Lifecycle Events (TP1, Breakeven, Early Exit, Trade Close):
+ *    - Valid for up to 30 minutes (1,800,000 ms).
+ *    - These are informative lifecycle updates essential for the user's ledger and trade awareness.
+ * 
+ * Persistent Retry Queue Behavior on Restart:
+ * - A pending notification created within its actionability window MUST survive server restarts
+ *   and continue retrying until delivered or expired.
+ * - Truly historical notifications (exceeding their actionability window) are suppressed.
+ * - Notifications already marked as SENT remain recorded for deduplication and are NEVER resent.
+ */
+export const TELEGRAM_SIGNAL_ACTIONABILITY_MS = 15 * 60 * 1000; // 15 minutes for trade entry signals
+export const TELEGRAM_MGMT_ACTIONABILITY_MS = 30 * 60 * 1000;   // 30 minutes for trade management / exits
+export const TELEGRAM_DEFAULT_ACTIONABILITY_MS = 15 * 60 * 1000;
+
+export function isNotificationActionable(createdAt: number, event?: string): boolean {
+  if (!createdAt || isNaN(createdAt) || createdAt <= 0) return false;
+  const ageMs = Date.now() - createdAt;
+  const maxAgeMs = (event && (
+    event.includes('TP1') ||
+    event.includes('BREAK_EVEN') ||
+    event.includes('MANAGEMENT') ||
+    event.includes('EARLY_EXIT') ||
+    event.includes('CLOSE') ||
+    event.includes('OUTCOME')
+  ))
+    ? TELEGRAM_MGMT_ACTIONABILITY_MS
+    : TELEGRAM_SIGNAL_ACTIONABILITY_MS;
+
+  return ageMs <= maxAgeMs;
+}
+
 export function getApplicationStartedAt(): number {
   return applicationStartedAt;
 }
@@ -291,7 +330,7 @@ export class TelegramService {
               continue;
             }
 
-            // 2. Check if item is historical (created before applicationStartedAt) or experimental/test
+            // 2. Check if item is experimental/test trade
             const isTestTrade = !!(item.tradeId && (
               item.tradeId.startsWith('test_') ||
               item.tradeId.startsWith('phantom-') ||
@@ -301,17 +340,28 @@ export class TelegramService {
               item.event === 'PRODUCTION_VERIFY_SIGNAL'
             ));
 
-            const isHistorical = (item.createdAt || 0) < this.applicationStartedAt;
-
-            if (isTestTrade || isHistorical) {
+            if (isTestTrade) {
               console.log(`[TELEGRAM] Historical event suppressed:\nnotificationId=${item.notificationId}\neventTimestamp=${item.createdAt || 0}\napplicationStartedAt=${this.applicationStartedAt}`);
               item.status = 'SUPPRESSED';
-              item.lastError = 'Historical/experimental event suppressed by startup boundary';
+              item.lastError = 'Experimental/test event suppressed';
               this.notificationQueue.set(item.notificationId, item);
               suppressedCount++;
               continue;
             }
 
+            // 3. Check staleness against XAUUSD actionability window (survives restart if still actionable)
+            const isActionable = isNotificationActionable(item.createdAt || 0, item.event);
+
+            if (!isActionable) {
+              console.log(`[TELEGRAM] Historical event suppressed:\nnotificationId=${item.notificationId}\neventTimestamp=${item.createdAt || 0}\napplicationStartedAt=${this.applicationStartedAt}`);
+              item.status = 'SUPPRESSED';
+              item.lastError = 'Historical event suppressed: exceeded actionability window';
+              this.notificationQueue.set(item.notificationId, item);
+              suppressedCount++;
+              continue;
+            }
+
+            console.log(`[Telegram] Restored actionable pending notification on restart: ${item.notificationId} (age: ${Math.round((Date.now() - (item.createdAt || 0)) / 1000)}s)`);
             this.notificationQueue.set(item.notificationId, item);
           }
           if (suppressedCount > 0) {
@@ -378,11 +428,11 @@ export class TelegramService {
       if (item.status !== 'PENDING') continue;
       if (now < item.nextRetryAt) continue;
 
-      // Double-guard: check if created before applicationStartedAt
-      if (item.createdAt < this.applicationStartedAt) {
+      // Actionability check: suppress if pending notification has aged past actionability window
+      if (!isNotificationActionable(item.createdAt || 0, item.event)) {
         console.log(`[TELEGRAM] Historical event suppressed:\nnotificationId=${id}\neventTimestamp=${item.createdAt}\napplicationStartedAt=${this.applicationStartedAt}`);
         item.status = 'SUPPRESSED';
-        item.lastError = 'Historical event suppressed by startup boundary';
+        item.lastError = 'Pending notification exceeded maximum actionability window';
         queueModified = true;
         continue;
       }
@@ -404,6 +454,7 @@ export class TelegramService {
         item.status = 'SENT';
         item.sentAt = Date.now();
         item.telegramMessageId = sentMsg.message_id;
+        this.safelySaveTelegramDispatch(id);
         queueModified = true;
         console.log(`[Telegram Queue] Notification ${id} delivered successfully on attempt ${item.attempts}.`);
       } else {

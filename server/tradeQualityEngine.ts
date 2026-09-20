@@ -649,13 +649,20 @@ export function assessEntryTimingAndAntiChase(
   }
 
   // FIX 4: Spread impact on entry quality
-  if (currentSpread !== undefined && currentSpread > 0) {
-    const spreadPts = currentSpread / 0.1;
-    if (spreadPts > 12.0 || currentSpread / atr > 0.45) {
+  if (currentSpread !== undefined) {
+    if (isNaN(currentSpread) || currentSpread <= 0) {
       timing = 'CHASED';
       isChasing = true;
-      timingPenalty = Math.max(timingPenalty, 35);
-      reason = `SPREAD_EXCESSIVE: Spread (${spreadPts.toFixed(1)} pts) degrades structural entry quality beyond acceptable limit`;
+      timingPenalty = Math.max(timingPenalty, 40);
+      reason = 'SPREAD_INVALID: Spread value is non-positive or invalid';
+    } else {
+      const spreadPts = currentSpread / 0.1;
+      if (spreadPts > 12.0 || currentSpread / atr > 0.45) {
+        timing = 'CHASED';
+        isChasing = true;
+        timingPenalty = Math.max(timingPenalty, 35);
+        reason = `SPREAD_EXCESSIVE: Spread (${spreadPts.toFixed(1)} pts) degrades structural entry quality beyond acceptable limit`;
+      }
     }
   }
 
@@ -2070,6 +2077,15 @@ export function validateTradeSignalCandidate(
   }
 
   // FIX 4: Spread-aware Entry Quality (Check before active gate or timing)
+  if (currentSpread !== undefined) {
+    if (isNaN(currentSpread) || currentSpread <= 0) {
+      return {
+        isValid: false,
+        rejectionReason: 'SPREAD_INVALID: Live market spread is non-positive or invalid',
+      };
+    }
+  }
+
   const effSpread = currentSpread ?? (brokerSpecs as any)?.spread;
   if (effSpread !== undefined && effSpread !== null && effSpread > 0) {
     const spreadPoints = Number((effSpread / 0.1).toFixed(1));

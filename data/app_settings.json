@@ -1,9 +1,9 @@
 {
   "capitalSource": "MANUAL",
-  "manualCapital": 25,
+  "manualCapital": 100,
   "riskPerTrade": 18,
   "maxRiskPerTrade": 30,
-  "minTp1RR": 1.5,
+  "minTp1RR": 1,
   "targetTp2RR": 3,
   "minimumConfidence": 75,
   "executionMode": "DEMO",

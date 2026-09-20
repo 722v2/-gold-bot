@@ -108,6 +108,7 @@ export interface MultiStrategyEngineInput {
   losingStreak?: number;
   brokerSpecs?: Partial<BrokerContractSpecs>;
   activeTradeDirection?: 'BUY' | 'SELL' | null;
+  currentSpread?: number;
 }
 
 export interface MultiStrategyEngineResult {
@@ -173,6 +174,9 @@ function calculateFibLevels(high: number, low: number) {
 
 /**
  * Detects session extremes (Asian, London, NY approximations) from candles
+ * TODO: Future Session Context Enhancement:
+ * - Implement exact UTC session time windows (Asian Range 00:00-08:00 UTC, London Open 07:00-10:00 UTC, NY Open 12:00-15:00 UTC, London Close 15:00-17:00 UTC)
+ * - Provide session-specific high/low liquidity levels and Killzone expansion metrics without changing core strategy execution logic.
  */
 function extractSessionExtremes(candles: Candle[]) {
   if (candles.length === 0) return { sessionHigh: 0, sessionLow: 0 };
@@ -536,7 +540,9 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
         bottom: poiBottom,
         poiPrice: poiRef,
         type: poiType,
-      }
+      },
+      input.candles1m || [],
+      input.currentSpread
     );
 
     if (timingAssessment.timing === 'CHASED' || (timingAssessment.isChasing && timingAssessment.distanceFromPoiAtr > 2.0)) {

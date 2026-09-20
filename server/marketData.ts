@@ -225,6 +225,91 @@ export async function fetchCurrentPrice(asset: AssetType = 'XAU/USD'): Promise<n
  * - Use tickVolume instead of real volume where volume is unavailable
  * - Reverses/sorts to chronological order (oldest to newest) for indicators
  */
+/**
+ * Validates candle data integrity for live scanner and analysis pipelines.
+ * Ensures:
+ * - Minimum required candle count
+ * - Valid timestamps > 0 and chronological ordering
+ * - Valid positive numerical OHLC prices
+ * - Consistent candle geometry: high >= max(open, close, low) and low <= min(open, close, high)
+ * - Non-negative volume
+ * - Deduplication of adjacent identical timestamps
+ */
+export function validateAndSanitizeCandles(
+  candles: Candle[],
+  timeframe: string,
+  minRequiredBars: number = 15
+): { isValid: boolean; error?: string; sanitizedCandles: Candle[] } {
+  if (!Array.isArray(candles) || candles.length < minRequiredBars) {
+    return {
+      isValid: false,
+      error: `INSUFFICIENT_CANDLES: Timeframe ${timeframe} has ${candles?.length || 0} bars (minimum required: ${minRequiredBars})`,
+      sanitizedCandles: [],
+    };
+  }
+
+  const timestampMap = new Map<number, Candle>();
+  for (let i = 0; i < candles.length; i++) {
+    const c = candles[i];
+    if (!c || typeof c !== 'object') continue;
+
+    const ts = typeof c.timestamp === 'number' ? c.timestamp : Number(c.timestamp);
+    const open = typeof c.open === 'number' ? c.open : Number(c.open);
+    const high = typeof c.high === 'number' ? c.high : Number(c.high);
+    const low = typeof c.low === 'number' ? c.low : Number(c.low);
+    const close = typeof c.close === 'number' ? c.close : Number(c.close);
+    const volume = typeof c.volume === 'number' ? c.volume : Number(c.volume);
+
+    // Strict positive numeric price validation
+    if (
+      isNaN(ts) || ts <= 0 ||
+      isNaN(open) || open <= 0 ||
+      isNaN(high) || high <= 0 ||
+      isNaN(low) || low <= 0 ||
+      isNaN(close) || close <= 0 ||
+      isNaN(volume) || volume < 0
+    ) {
+      return {
+        isValid: false,
+        error: `CORRUPT_CANDLE_DATA: Non-positive or NaN values in ${timeframe} candle at index ${i}`,
+        sanitizedCandles: [],
+      };
+    }
+
+    // Geometry validation
+    if (high < low || high < open || high < close || low > open || low > close) {
+      return {
+        isValid: false,
+        error: `INVALID_CANDLE_GEOMETRY: Inconsistent OHLC bounds in ${timeframe} candle at timestamp ${ts} (O:${open} H:${high} L:${low} C:${close})`,
+        sanitizedCandles: [],
+      };
+    }
+
+    timestampMap.set(ts, {
+      timestamp: ts,
+      open,
+      high,
+      low,
+      close,
+      volume,
+    });
+  }
+
+  const sanitized = Array.from(timestampMap.values()).sort((a, b) => a.timestamp - b.timestamp);
+  if (sanitized.length < minRequiredBars) {
+    return {
+      isValid: false,
+      error: `INSUFFICIENT_UNIQUE_CANDLES: After deduplication, ${timeframe} has ${sanitized.length} bars (minimum required: ${minRequiredBars})`,
+      sanitizedCandles: [],
+    };
+  }
+
+  return {
+    isValid: true,
+    sanitizedCandles: sanitized,
+  };
+}
+
 export async function fetchCandles(
   asset: AssetType,
   timeframe: '1m' | '5m' | '15m' | '1h',
@@ -253,10 +338,7 @@ export async function fetchCandles(
     }, 3, 1000);
   } catch (netErr: any) {
     console.error(`[Biquote Candles Error] Network fetch failed for ${url}:`, netErr.message || netErr);
-    if (cached) {
-      console.warn(`[Biquote Candles] Falling back to stale cached candles for key ${cacheKey} due to network error`);
-      return cached.data;
-    }
+    // Task 3: Never silently fall back to stale expired cached candles for live execution / scanning
     throw new Error(`Biquote OHLC fetch failed: ${netErr.message || 'Fetch error'}`);
   }
 
@@ -292,8 +374,15 @@ export async function fetchCandles(
   // Sort ascending (oldest first, newest last) for charting and technical indicators
   parsedCandles.sort((a, b) => a.timestamp - b.timestamp);
 
-  candleCache[cacheKey] = { data: parsedCandles, cachedAt: now };
-  return parsedCandles;
+  // Validate and sanitize parsed candles
+  const validation = validateAndSanitizeCandles(parsedCandles, interval, 15);
+  if (!validation.isValid) {
+    throw new Error(`Biquote candle validation failed for ${symbol} [${interval}]: ${validation.error}`);
+  }
+
+  const sanitizedCandles = validation.sanitizedCandles;
+  candleCache[cacheKey] = { data: sanitizedCandles, cachedAt: now };
+  return sanitizedCandles;
 }
 
 /**

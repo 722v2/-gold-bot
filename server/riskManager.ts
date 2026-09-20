@@ -579,13 +579,14 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
   }
 
   // Requirement 4: RR Calculation
-  // Minimum acceptable RR is natural 1.0R execution viability (with 0.95R broker spread tolerance)
-  // R:R is an output metric, not an artificial target-selection requirement.
-  const minRequiredRr = Math.min(minRr, 0.95);
-  if (tp1Rr < minRequiredRr) {
+  // R:R is an authoritative post-selection validation gate: TP1 is selected strictly from the nearest valid structural target.
+  // The setup is rejected if the structural target provides less than the configured minRr (e.g. 1.0R).
+  // Standard floating-point precision tolerance (1e-4) is applied so exact values (e.g. 1.00R) are accepted cleanly.
+  const minRequiredRr = minRr;
+  if (tp1Rr < minRequiredRr - 0.0001) {
     return {
       valid: false,
-      reason: `نسبة العائد إلى المخاطرة للهدف الأول TP1 (${tp1RrString}) أقل من الحد الأدنى للتنفيذ 1:${minRequiredRr.toFixed(2)} -> NO TRADE.`,
+      reason: `نسبة العائد إلى المخاطرة للهدف الأول TP1 (${tp1RrString}) أقل من الحد الأدنى المطلوب 1:${minRequiredRr.toFixed(2)} -> NO TRADE.`,
       riskPercent: 0,
       riskAmount: 0,
       slPoints,

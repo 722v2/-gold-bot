@@ -226,10 +226,76 @@ class LiveMarketScanner {
       // Step 1: Fetch live quote & current price from Biquote only
       const quote = await fetchLiveQuote(asset);
       const currentPrice = Number(quote.mid.toFixed(2));
+      const liveSpread = typeof quote.spread === 'number' ? quote.spread : Number(quote.spread);
+      const spreadPoints = Number((liveSpread / 0.1).toFixed(1));
+
       this.lastKnownPrice = currentPrice;
       this.lastMarketDataTimestamp = Date.now();
-      this.biquoteConnectionStatus = `CONNECTED (Bid: ${quote.bid} / Ask: ${quote.ask})`;
-      this.config.dataStatus = `Connected (Biquote MT5 Feed - Bid: ${quote.bid} / Ask: ${quote.ask})`;
+      this.biquoteConnectionStatus = `CONNECTED (Bid: ${quote.bid} / Ask: ${quote.ask} / Spread: ${spreadPoints} pts)`;
+      this.config.dataStatus = `Connected (Biquote MT5 Feed - Bid: ${quote.bid} / Ask: ${quote.ask} / Spread: ${spreadPoints} pts)`;
+
+      // Task 1: Fail closed if spread is invalid, non-numeric, negative, or excessive (> 12.0 pts / $1.20)
+      if (isNaN(liveSpread) || liveSpread <= 0 || spreadPoints > 12.0) {
+        const spreadErrorReason = isNaN(liveSpread) || liveSpread <= 0
+          ? `SPREAD_INVALID: السبريد غير صالح أو غير متوفر في الأسعار الحية (Spread: ${quote.spread})`
+          : `SPREAD_EXCESSIVE: السبريد الحالي (${spreadPoints} نقطة / $${liveSpread.toFixed(2)}) يتجاوز الحد الأقصى الآمن للتداول (12.0 نقطة)`;
+        
+        console.warn(`[LiveMarketScanner] ${spreadErrorReason}. Blocking trade scan.`);
+        this.config.scanCount += 1;
+        this.config.lastScanStatus = spreadErrorReason;
+        const noTradeSignal: TradeSignal = {
+          id: `scan_spread_block_${Date.now()}`,
+          timestamp: Date.now(),
+          asset,
+          signal: 'NO TRADE',
+          currentPrice,
+          entry: currentPrice,
+          stopLoss: currentPrice,
+          slPoints: 0,
+          tp1: currentPrice,
+          tp1Points: 0,
+          tp1Rr: 0,
+          tp1RrString: '1:0',
+          tp2: currentPrice,
+          tp2Points: 0,
+          tp2Rr: 0,
+          tp2RrString: '1:0',
+          primaryTarget: 'TP1',
+          rr: '1:0',
+          rrRatio: 0,
+          riskPercent: 0,
+          riskAmount: 0,
+          potentialProfit: 0,
+          potentialLoss: 0,
+          recommendedLotSize: 0,
+          confidence: 0,
+          timeframe: '5M',
+          setup: 'SPREAD_GUARD_BLOCK',
+          mainReasons: [spreadErrorReason],
+          invalidation: 'Spread outside acceptable execution boundaries',
+          noTradeReason: spreadErrorReason,
+        };
+
+        storage.saveScan({
+          id: `scan_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          timestamp: Date.now(),
+          asset,
+          price: currentPrice,
+          signal: 'NO TRADE',
+          decision: 'NO TRADE',
+          strategy: 'Spread Execution Quality Gate',
+          confidence: 0,
+          status: 'SPREAD_GUARD_BLOCK',
+          rejectionReason: spreadErrorReason,
+          details: {
+            reason: spreadErrorReason,
+            liveSpread,
+            spreadPoints,
+          },
+        });
+
+        return noTradeSignal;
+      }
 
       // Evaluate active open trades lifecycle against live quote
       tradeMonitor.evaluatePrice(currentPrice).catch((err) => {
@@ -708,6 +774,7 @@ class LiveMarketScanner {
         losingStreak: this.losingStreak,
         brokerSpecs: this.brokerSpecs,
         activeTradeDirection,
+        currentSpread: liveSpread,
       });
       console.log('[SCANNER] AI analysis completed');
       console.log(`[SCANNER] result: ${signal.signal}`);

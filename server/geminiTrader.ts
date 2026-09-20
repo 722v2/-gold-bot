@@ -66,6 +66,7 @@ export interface MarketAnalysisInput {
   losingStreak: number;
   brokerSpecs?: Partial<BrokerContractSpecs>;
   activeTradeDirection?: 'BUY' | 'SELL' | null;
+  currentSpread?: number;
 }
 
 /**
@@ -100,6 +101,7 @@ export function algorithmicScreening(input: MarketAnalysisInput): {
     losingStreak: input.losingStreak,
     brokerSpecs: input.brokerSpecs,
     activeTradeDirection: input.activeTradeDirection,
+    currentSpread: input.currentSpread,
   });
 
   if (candidateResult.hasValidSignal && candidateResult.selectedCandidate) {
@@ -159,6 +161,7 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
     losingStreak: input.losingStreak,
     brokerSpecs: input.brokerSpecs,
     activeTradeDirection: input.activeTradeDirection,
+    currentSpread: input.currentSpread,
   });
 
   // 1. Check if in 429 rate-limit cooldown
@@ -373,6 +376,7 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
           indicators1h: input.indicators1h,
           brokerSpecs: input.brokerSpecs,
           activeTradeDirection: input.activeTradeDirection,
+          currentSpread: input.currentSpread,
         }
       );
 
