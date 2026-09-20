@@ -355,6 +355,20 @@ class LiveMarketScanner {
         const isResolvedInOutcomes = matchingOutcome && !!matchingOutcome.outcome;
 
         if (isResolvedInLedger || isResolvedInOutcomes) {
+          const isNotEntered =
+            (matchingOutcome && matchingOutcome.outcome === 'NOT_ENTERED') ||
+            (matchingTrade && (matchingTrade.result as any) === 'NOT_ENTERED');
+
+          if (isNotEntered) {
+            opp.status = 'NOT_ENTERED';
+            opp.lastUpdatedTime = Date.now();
+            storage.saveOpportunity(opp);
+            console.log(
+              `[LiveMarketScanner] Reconciled unentered opportunity ${opp.id} (signal: ${opp.signalId}) as NOT_ENTERED.`
+            );
+            continue;
+          }
+
           const isWin =
             (matchingTrade && matchingTrade.result === 'WIN') ||
             (matchingOutcome && matchingOutcome.outcome === 'WIN');
@@ -545,29 +559,39 @@ class LiveMarketScanner {
         }
       }
 
-      // Check if our activeSignal's trade was closed in the trade ledger
+      // Check if our activeSignal was marked NOT_ENTERED or closed in the trade ledger
       if (this.activeSignal) {
-        const matchingTrade = allTrades.find(
-          (t) =>
-            t.id === this.activeSignal?.id ||
-            (t as any).signalId === this.activeSignal?.id
-        );
-        if (matchingTrade && matchingTrade.result !== 'OPEN') {
-          console.log(`[LiveMarketScanner] Active trade ${this.activeSignal.id} is closed in ledger (${matchingTrade.result}). Clearing activeSignal.`);
-          const oppId = generateOpportunityId(this.activeSignal);
-          const opp =
-            storage.getOpportunity(oppId) ||
-            storage.getOpportunity(this.activeSignal.id) ||
-            storage.getOpportunities().find(o => o.signalId === this.activeSignal?.id);
-          if (opp) {
-            opp.status = matchingTrade.result === 'WIN' ? 'COMPLETED' : 'FAILED';
-            if (opp.status === 'FAILED') opp.failedAt = Date.now();
-            else opp.completedAt = Date.now();
-            opp.lastUpdatedTime = Date.now();
-            storage.saveOpportunity(opp);
-          }
+        const sigState = storage.getSignal(this.activeSignal.id)?.lifecycleState;
+        const outcomeState = storage.getTradeOutcome(this.activeSignal.id)?.outcome;
+
+        if (sigState === 'NOT_ENTERED' || outcomeState === 'NOT_ENTERED') {
+          console.log(`[LiveMarketScanner] Signal ${this.activeSignal.id} marked NOT_ENTERED. Clearing activeSignal.`);
           this.activeSignal = null;
           this.config.activeSetupName = null;
+        } else {
+          const matchingTrade = allTrades.find(
+            (t) =>
+              t.id === this.activeSignal?.id ||
+              (t as any).signalId === this.activeSignal?.id
+          );
+          if (matchingTrade && matchingTrade.result !== 'OPEN') {
+            console.log(`[LiveMarketScanner] Active trade ${this.activeSignal.id} is closed in ledger (${matchingTrade.result}). Clearing activeSignal.`);
+            const oppId = generateOpportunityId(this.activeSignal);
+            const opp =
+              storage.getOpportunity(oppId) ||
+              storage.getOpportunity(this.activeSignal.id) ||
+              storage.getOpportunities().find(o => o.signalId === this.activeSignal?.id);
+            if (opp) {
+              const isNotEnteredTrade = (matchingTrade.result as any) === 'NOT_ENTERED';
+              opp.status = isNotEnteredTrade ? 'NOT_ENTERED' : (matchingTrade.result === 'WIN' ? 'COMPLETED' : 'FAILED');
+              if (opp.status === 'FAILED') opp.failedAt = Date.now();
+              else if (opp.status === 'COMPLETED') opp.completedAt = Date.now();
+              opp.lastUpdatedTime = Date.now();
+              storage.saveOpportunity(opp);
+            }
+            this.activeSignal = null;
+            this.config.activeSetupName = null;
+          }
         }
       }
 

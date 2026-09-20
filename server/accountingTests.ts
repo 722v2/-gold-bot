@@ -676,6 +676,38 @@ export function runAccountingTests(): { allPassed: boolean; results: TestResult[
       });
     }
 
+    // --------------------------------------------------------------------------
+    // TEST 14: NOT_ENTERED signals do NOT count towards daily trade stats or ledger
+    // --------------------------------------------------------------------------
+    try {
+      const initialStats = storage.getTodayStats();
+      const sigId = 'test-not-entered-daily-' + Date.now();
+      
+      const res = storage.markSignalOrOpportunityNotEntered(sigId);
+      const afterStats = storage.getTodayStats();
+      const outcome = storage.getTradeOutcome(sigId);
+
+      const passed =
+        res.success === true &&
+        afterStats.tradesCount === initialStats.tradesCount &&
+        afterStats.totalRiskPercentUsed === initialStats.totalRiskPercentUsed &&
+        outcome?.outcome === 'NOT_ENTERED';
+
+      results.push({
+        testNumber: 14,
+        name: 'NOT_ENTERED signals do not increment daily tradesCount or risk percent used',
+        passed,
+        details: `Initial daily trades: ${initialStats.tradesCount}, After: ${afterStats.tradesCount}, Risk used: ${afterStats.totalRiskPercentUsed}%`,
+      });
+    } catch (err: any) {
+      results.push({
+        testNumber: 14,
+        name: 'NOT_ENTERED signals do not increment daily tradesCount or risk percent used',
+        passed: false,
+        details: `Exception: ${err?.message}`,
+      });
+    }
+
     const allPassed = results.every((r) => r.passed);
     return { allPassed, results };
   } finally {

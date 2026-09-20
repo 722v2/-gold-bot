@@ -1282,7 +1282,31 @@ export class PersistentStorage {
         (t) => t.id === record.signalId || t.id === record.tradeId || (record.signalId && t.signalId === record.signalId)
       );
 
-      // If referenced trade does not exist, instantiate it from signalData if available
+      // If outcome is NOT_ENTERED, record outcome and ensure no trade is created in ledger
+      if (record.outcome === 'NOT_ENTERED') {
+        const outcomeIndex = this.inMemoryOutcomes.findIndex((o) => o.signalId === record.signalId || (record.tradeId && o.tradeId === record.tradeId));
+        if (outcomeIndex >= 0) {
+          this.inMemoryOutcomes[outcomeIndex] = record;
+        } else {
+          this.inMemoryOutcomes.unshift(record);
+        }
+        if (this.inMemoryOutcomes.length > 500) {
+          this.inMemoryOutcomes = this.inMemoryOutcomes.slice(0, 500);
+        }
+        this.safeSupabase(
+          (c) => c.from('trade_outcomes').upsert(this.formatOutcomeRow(record)),
+          'recordTradeOutcome:not_entered'
+        );
+        this.syncJsonBackups();
+        return {
+          success: true,
+          isDuplicate: false,
+          outcome: record,
+          message: 'NOT_ENTERED',
+        };
+      }
+
+      // If referenced trade does not exist, instantiate it from signalData if available (for executed outcomes only)
       let tradeToUpdate = existingTrade;
       if (!tradeToUpdate) {
         if (signalData) {
@@ -1358,7 +1382,7 @@ export class PersistentStorage {
       }
 
       // Requirement 13: Standardize outcome based on realized PnL
-      if (record.outcome !== 'NOT_ENTERED') {
+      if ((record.outcome as any) !== 'NOT_ENTERED') {
         if (finalRealizedPnl > 0.001) {
           record.outcome = 'WIN';
         } else if (finalRealizedPnl < -0.001) {
@@ -1638,6 +1662,8 @@ export class PersistentStorage {
   public getTodayStats(todayDateStr?: string): DailyTradeStats {
     const today = todayDateStr || new Date().toISOString().split('T')[0];
     const todayTrades = this.inMemoryTrades.filter((t) => {
+      // Non-executed records (e.g. NOT_ENTERED, CANCELLED, VOID) must never count towards executed trades
+      if (t.result === 'NOT_ENTERED' || (t.result as any) === 'CANCELLED' || (t.result as any) === 'VOID') return false;
       if (t.isoTime) return t.isoTime.startsWith(today);
       return true;
     });
@@ -2207,6 +2233,19 @@ export class PersistentStorage {
       (c) => c.from('trade_outcomes').upsert(this.formatOutcomeRow(outcomeRecord)),
       `markNotEntered:outcome:${signalOrOppId}`
     );
+
+    // 5. Ensure NO executed trade exists in trade ledger for this unentered signal
+    const tradeIdx = this.inMemoryTrades.findIndex(
+      (t) => t.id === signalOrOppId || t.signalId === signalOrOppId || (updatedSignal && (t.id === updatedSignal.id || t.signalId === updatedSignal.id))
+    );
+    if (tradeIdx >= 0) {
+      const removedTrade = this.inMemoryTrades[tradeIdx];
+      this.inMemoryTrades.splice(tradeIdx, 1);
+      this.safeSupabase(
+        (c) => c.from('trade_ledger').delete().eq('id', removedTrade.id),
+        `markNotEntered:delete_trade:${removedTrade.id}`
+      );
+    }
 
     this.syncJsonBackups();
     return { success: true, signal: updatedSignal, opportunity: updatedOpp };

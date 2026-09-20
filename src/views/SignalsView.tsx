@@ -124,7 +124,7 @@ export const SignalsView: React.FC<SignalsViewProps> = ({
 
         {/* Filter Badges */}
         <div className="flex flex-wrap items-center gap-1.5 text-xs font-mono">
-          {['ALL', 'NEW', 'ACTIVE', 'TP1 HIT', 'TP2 HIT', 'SL HIT'].map((f) => (
+          {['ALL', 'NEW', 'ACTIVE', 'NOT_ENTERED', 'TP1 HIT', 'TP2 HIT', 'SL HIT'].map((f) => (
             <button
               key={f}
               onClick={() => setStatusFilter(f)}
@@ -221,10 +221,12 @@ export const SignalsView: React.FC<SignalsViewProps> = ({
                           ? 'bg-rose-950 text-rose-300 border-rose-800'
                           : status === 'ACTIVE'
                           ? 'bg-amber-950 text-amber-300 border-amber-800 animate-pulse'
+                          : status === 'NOT_ENTERED'
+                          ? 'bg-stone-800/90 text-stone-300 border-stone-600'
                           : 'bg-stone-800 text-stone-300 border-stone-700'
                       }`}
                     >
-                      {status}
+                      {status === 'NOT_ENTERED' ? '⚪ NOT ENTERED' : status}
                     </span>
 
                     <span className="text-xs font-mono font-bold text-amber-400">

@@ -70,7 +70,9 @@ export const TradesView: React.FC<TradesViewProps> = ({
     }
     return true;
   });
-  const closedTrades = ledger.filter((t) => t.result !== 'OPEN' || t.isActive === false);
+  const closedTrades = ledger.filter(
+    (t) => (t.result === 'WIN' || t.result === 'LOSS' || t.result === 'BREAK_EVEN') && t.result !== 'NOT_ENTERED'
+  );
 
   // Compute live floating P/L for open trades
   const computeFloatingPl = (trade: TradeLedgerItem) => {

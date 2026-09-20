@@ -118,6 +118,7 @@ export type CandidateLifecycleState =
   | 'READY'
   | 'TRIGGERED'
   | 'EXECUTABLE'
+  | 'ENTERED'
   | 'ACTIVE'
   | 'COMPLETED'
   | 'FAILED'

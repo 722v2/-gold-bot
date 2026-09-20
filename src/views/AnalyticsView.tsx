@@ -44,7 +44,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
   };
   const safeStartingBalance = Number(startingBalance || 100);
 
-  const closedTrades = (ledger || []).filter((t) => t && t.result !== 'OPEN');
+  const closedTrades = (ledger || []).filter(
+    (t) => t && (t.result === 'WIN' || t.result === 'LOSS' || t.result === 'BREAK_EVEN')
+  );
   const hasData = closedTrades.length > 0;
 
   // Build real equity points

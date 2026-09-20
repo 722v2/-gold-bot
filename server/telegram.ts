@@ -1242,7 +1242,7 @@ ${pending.originalMessageText || ''}
     const action = parts[0];
     const signalId = parts.slice(1).join(':');
 
-    if (action !== 'win' && action !== 'loss' && action !== 'not_entered') {
+    if (action !== 'win' && action !== 'loss' && action !== 'not_entered' && action !== 'entered') {
       await this.answerCallbackQuery(queryId, 'إجراء غير معروف (Unknown action)');
       return;
     }
@@ -1266,7 +1266,66 @@ ${pending.originalMessageText || ''}
         return;
       }
 
-      if (action === 'win' || action === 'loss') {
+      if (action === 'entered') {
+        // Confirm trade exists in ledger (save as OPEN for active management)
+        if (!existingTrade) {
+          const newTrade: any = {
+            id: signal.id,
+            signalId: signal.id,
+            tradeNumber: (storage.getTrades(1)[0]?.tradeNumber || 0) + 1,
+            date: new Date(signal.timestamp || Date.now()).toLocaleDateString('ar-EG', {
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            }),
+            isoTime: new Date(signal.timestamp || Date.now()).toISOString(),
+            asset: signal.asset || 'XAU/USD',
+            direction: signal.signal as any,
+            entry: Number(signal.entry),
+            sl: Number(signal.stopLoss),
+            slPoints: signal.slPoints || Math.round(Math.abs(Number(signal.entry) - Number(signal.stopLoss)) / 0.1),
+            tp1: Number(signal.tp1),
+            tp1Points: signal.tp1Points || Math.round(Math.abs(Number(signal.tp1) - Number(signal.entry)) / 0.1),
+            tp2: signal.tp2 ? Number(signal.tp2) : undefined,
+            tp2Points: signal.tp2Points || (signal.tp2 ? Math.round(Math.abs(Number(signal.tp2) - Number(signal.entry)) / 0.1) : undefined),
+            lotSize: signal.standardLot ?? signal.recommendedLotSize ?? 0.01,
+            riskPercent: signal.riskPercent || 15,
+            riskAmount: signal.riskAmount || 1.5,
+            confidence: signal.confidence || 75,
+            setup: signal.setup || 'Telegram Signal',
+            rr: signal.rr || '1:1.5',
+            result: 'OPEN',
+            pl: 0,
+            isActive: true,
+            source: 'MANUAL',
+            notes: 'تم الدخول وتوثيقه عبر زر التليجرام',
+          };
+          await storage.saveTradeAsync(newTrade);
+        }
+
+        signal.lifecycleState = 'ENTERED';
+        storage.saveSignal(signal);
+
+        await this.answerCallbackQuery(queryId, '🟢 تم توثيق الدخول في الصفقة (ENTERED) - قيد المتابعة النشطة وإدارة الأهداف');
+
+        const activeKeyboard = {
+          inline_keyboard: [
+            [
+              { text: '🟢 WIN (توثيق ربح)', callback_data: `win:${signal.id}` },
+              { text: '🔴 LOSS (توثيق خسارة)', callback_data: `loss:${signal.id}` }
+            ]
+          ]
+        };
+
+        const updatedText = `
+${message.text}
+
+<b>📌 حالة الصفقة:</b> 🟢 تم الدخول (ENTERED) - قيد المتابعة وإدارة الأهداف (TP/SL)
+        `.trim();
+        await this.editMessageText(chatId, messageId, updatedText, activeKeyboard);
+
+      } else if (action === 'win' || action === 'loss') {
         // Confirm trade exists in ledger (save as OPEN if not yet present)
         if (!existingTrade) {
           const newTrade: any = {
@@ -1520,13 +1579,16 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
 ⏱ <i>الوقت: ${new Date().toLocaleTimeString('ar-EG')}</i>
     `.trim();
 
-    // Attach manual outcome buttons linked to this signal ID
+    // Attach entry & outcome buttons linked to this signal ID
     const replyMarkup = {
       inline_keyboard: [
         [
-          { text: '🟢 WIN', callback_data: `win:${signal.id}` },
-          { text: '🔴 LOSS', callback_data: `loss:${signal.id}` },
-          { text: '⚪ NOT ENTERED', callback_data: `not_entered:${signal.id}` }
+          { text: '🟢 دخلت الصفقة (ENTERED)', callback_data: `entered:${signal.id}` },
+          { text: '⚪ لم أدخل (NOT ENTERED)', callback_data: `not_entered:${signal.id}` }
+        ],
+        [
+          { text: '✅ WIN', callback_data: `win:${signal.id}` },
+          { text: '❌ LOSS', callback_data: `loss:${signal.id}` }
         ]
       ]
     };

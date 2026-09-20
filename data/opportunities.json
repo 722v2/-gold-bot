@@ -1,4 +1,86 @@
 {
+  "opp_rest_1789930718318": {
+    "id": "opp_rest_1789930718318",
+    "tp1": 2656,
+    "tp2": 0,
+    "entry": 2650,
+    "score": 80,
+    "tp1Rr": 1.2,
+    "tp2Rr": 0,
+    "status": "ACTIVE",
+    "signalId": "sig_rest_1789930718318",
+    "stopLoss": 2645,
+    "direction": "BUY",
+    "setupName": "Restored Bullish OB",
+    "timeframe": "15M",
+    "confidence": 85,
+    "mainReasons": [
+      "Restoration Test"
+    ],
+    "tp1RrString": "1:1.20",
+    "tp2RrString": "N/A",
+    "lastUpdatedTime": 1789930718318,
+    "firstObservedTime": 1789930718318,
+    "rawScoreBreakdown": {
+      "locationScore": 80,
+      "liquidityScore": 80,
+      "structureScore": 80,
+      "technicalScore": 80,
+      "priceActionScore": 80
+    },
+    "executionBreakdown": {
+      "slScore": 80,
+      "runwayScore": 80,
+      "timingScore": 80,
+      "triggerScore": 80,
+      "pullbackScore": 80,
+      "freshnessScore": 80
+    },
+    "invalidationReason": "N/A",
+    "recommendedLotSize": 0.01,
+    "supportingConfluences": []
+  },
+  "opp_b7_1789930715386": {
+    "id": "opp_b7_1789930715386",
+    "tp1": 2656,
+    "tp2": 0,
+    "entry": 2650,
+    "score": 80,
+    "tp1Rr": 1.2,
+    "tp2Rr": 0,
+    "status": "ACTIVE",
+    "signalId": "sig_b7_1789930715386",
+    "stopLoss": 2645,
+    "direction": "BUY",
+    "setupName": "Single Target Restoration",
+    "timeframe": "15M",
+    "confidence": 85,
+    "mainReasons": [
+      "Storage Test"
+    ],
+    "tp1RrString": "1:1.20",
+    "tp2RrString": "N/A",
+    "lastUpdatedTime": 1789930715386,
+    "firstObservedTime": 1789930715386,
+    "rawScoreBreakdown": {
+      "locationScore": 80,
+      "liquidityScore": 80,
+      "structureScore": 80,
+      "technicalScore": 80,
+      "priceActionScore": 80
+    },
+    "executionBreakdown": {
+      "slScore": 80,
+      "runwayScore": 80,
+      "timingScore": 80,
+      "triggerScore": 80,
+      "pullbackScore": 80,
+      "freshnessScore": 80
+    },
+    "invalidationReason": "N/A",
+    "recommendedLotSize": 0.01,
+    "supportingConfluences": []
+  },
   "opp_rest_1789930078260": {
     "id": "opp_rest_1789930078260",
     "tp1": 2656,
