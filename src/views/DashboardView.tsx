@@ -683,18 +683,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   ${(Number(activeSignal.tp1) || 0).toFixed(2)}
                 </span>
                 <span className="text-[10px] text-stone-400 block mt-0.5">
-                  {activeSignal.tp1RrString || '1:1.50'} • {(Number(activeSignal.tp1Points) || 0).toFixed(1)} نقطة
+                  {activeSignal.tp1RrString || (activeSignal.tp1Rr ? `1:${Number(activeSignal.tp1Rr).toFixed(2)}` : 'N/A')} • {(Number(activeSignal.tp1Points) || 0).toFixed(1)} نقطة
                 </span>
               </div>
 
-              {/* TP2 (3R) */}
+              {/* TP2 */}
               <div className="bg-stone-950/80 border border-emerald-950/60 rounded-xl p-3">
-                <span className="text-[10px] text-emerald-300 block uppercase">الهدف الثاني TP2 (3R)</span>
+                <span className="text-[10px] text-emerald-300 block uppercase">الهدف الثاني TP2</span>
                 <span className="text-base sm:text-lg font-black text-emerald-300">
-                  ${(Number(activeSignal.tp2) || 0).toFixed(2)}
+                  {activeSignal.tp2 && Number(activeSignal.tp2) > 0 ? `$${Number(activeSignal.tp2).toFixed(2)}` : 'N/A'}
                 </span>
                 <span className="text-[10px] text-stone-400 block mt-0.5">
-                  {activeSignal.tp2RrString || '1:3.00'} • {(Number(activeSignal.tp2Points) || 0).toFixed(1)} نقطة
+                  {activeSignal.tp2 && Number(activeSignal.tp2) > 0 ? (activeSignal.tp2RrString || (activeSignal.tp2Rr ? `1:${Number(activeSignal.tp2Rr).toFixed(2)}` : 'N/A')) : 'N/A'} • {(Number(activeSignal.tp2Points) || 0).toFixed(1)} نقطة
                 </span>
               </div>
             </div>
@@ -805,7 +805,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       هدف السيولة والمضاعف (RR Logic):
                     </span>
                     <p className="text-stone-300 leading-relaxed">
-                      الهدف الأول يمثل حجز ربح عند {activeSignal.tp1RrString || '1:1.50'} لتأمين رأس المال ونقل الوقف إلى الدخول (Breakeven)، بينما يستهدف الهدف الثاني {activeSignal.tp2RrString || '1:3.00'} قاع/قمة السيولة المقابلة.
+                      الهدف الأول يمثل حجز ربح عند {activeSignal.tp1RrString || (activeSignal.tp1Rr ? `1:${Number(activeSignal.tp1Rr).toFixed(2)}` : 'N/A')} لتأمين رأس المال ونقل الوقف إلى الدخول (Breakeven)، بينما يستهدف الهدف الثاني {activeSignal.tp2 && Number(activeSignal.tp2) > 0 ? (activeSignal.tp2RrString || (activeSignal.tp2Rr ? `1:${Number(activeSignal.tp2Rr).toFixed(2)}` : 'N/A')) : 'N/A'} قاع/قمة السيولة المقابلة.
                     </p>
                   </div>
                 </div>

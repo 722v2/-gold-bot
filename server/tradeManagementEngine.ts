@@ -170,7 +170,7 @@ export class TradeManagementEngine {
     let entry = Number(trade.entry !== undefined ? trade.entry : (trade as any).entryPrice);
     let sl = Number(trade.sl !== undefined ? trade.sl : (trade as any).stopLoss);
     let tp1 = Number(trade.tp1);
-    let tp2 = Number(trade.tp2 || trade.tp1);
+    let tp2 = (trade.tp2 && Number(trade.tp2) > 0) ? Number(trade.tp2) : 0;
     const lotSize = trade.lotSize || 0.01;
     const contractSize = settings.contractSizeOz || 100;
 
@@ -181,7 +181,7 @@ export class TradeManagementEngine {
         if (!entry || isNaN(entry)) entry = Number(origSignal.entry);
         if (!sl || isNaN(sl)) sl = Number(origSignal.stopLoss);
         if (!tp1 || isNaN(tp1)) tp1 = Number(origSignal.tp1);
-        if (!tp2 || isNaN(tp2)) tp2 = Number(origSignal.tp2 || origSignal.tp1);
+        if ((!tp2 || isNaN(tp2)) && origSignal.tp2 && Number(origSignal.tp2) > 0) tp2 = Number(origSignal.tp2);
       }
     }
 
@@ -312,32 +312,39 @@ export class TradeManagementEngine {
       };
     }
 
-    // Terminal Exit Evaluation: Stop Loss and TP2
-    let exitTrigger: 'TP2' | 'SL' | null = null;
+    // Terminal Exit Evaluation: Stop Loss, TP2, or single-target TP1
+    const hasValidTp2 = Boolean(tp2 && tp2 > 0);
+    let exitTrigger: 'TP2' | 'TP1' | 'SL' | null = null;
     let exitPrice = currentPrice;
 
     if (isBuy) {
       if (sl > 0 && currentPrice <= sl) {
         exitTrigger = 'SL';
         exitPrice = sl;
-      } else if (tp2 > 0 && currentPrice >= tp2) {
+      } else if (hasValidTp2 && currentPrice >= tp2) {
         exitTrigger = 'TP2';
         exitPrice = tp2;
+      } else if (!hasValidTp2 && tp1 > 0 && currentPrice >= tp1) {
+        exitTrigger = 'TP1';
+        exitPrice = tp1;
       }
     } else {
       if (sl > 0 && currentPrice >= sl) {
         exitTrigger = 'SL';
         exitPrice = sl;
-      } else if (tp2 > 0 && currentPrice <= tp2) {
+      } else if (hasValidTp2 && currentPrice <= tp2) {
         exitTrigger = 'TP2';
         exitPrice = tp2;
+      } else if (!hasValidTp2 && tp1 > 0 && currentPrice <= tp1) {
+        exitTrigger = 'TP1';
+        exitPrice = tp1;
       }
     }
 
     if (exitTrigger) {
       this.inFlightTradeIds.add(trade.id);
       try {
-        const isWin = exitTrigger === 'TP2';
+        const isWin = exitTrigger === 'TP2' || exitTrigger === 'TP1';
         const priceDiff = isBuy ? (exitPrice - entry) : (entry - exitPrice);
         let realizedPl = Number((priceDiff * contractSize * lotSize).toFixed(2));
 
@@ -423,15 +430,15 @@ export class TradeManagementEngine {
 
     const distanceToSlPoints = isBuy ? currentPrice - sl : sl - currentPrice;
     const distanceToTp1Points = isBuy ? tp1 - currentPrice : currentPrice - tp1;
-    const distanceToTp2Points = isBuy ? tp2 - currentPrice : currentPrice - tp2;
+    const distanceToTp2Points = (tp2 && tp2 > 0) ? (isBuy ? tp2 - currentPrice : currentPrice - tp2) : 0;
 
     const tp1DistanceTotal = Math.abs(tp1 - entry);
     const tp1ProgressPct = tp1DistanceTotal > 0
       ? Math.max(0, Math.min(150, ((priceDiff) / tp1DistanceTotal) * 100))
       : 0;
 
-    const tp2DistanceTotal = Math.abs(tp2 - entry);
-    const tp2ProgressPct = tp2DistanceTotal > 0
+    const tp2DistanceTotal = (tp2 && tp2 > 0) ? Math.abs(tp2 - entry) : 0;
+    const tp2ProgressPct = (tp2 && tp2 > 0 && tp2DistanceTotal > 0)
       ? Math.max(0, Math.min(150, ((priceDiff) / tp2DistanceTotal) * 100))
       : 0;
 
@@ -1135,7 +1142,11 @@ export class TradeManagementEngine {
         const slText = action.newSL 
           ? `حرّك SL إلى $${action.newSL.toFixed(2)} لحماية الصفقة.`
           : `حرّك SL إلى نقطة الدخول (Breakeven).`;
-        const tp2Value = trade.tp2 || trade.tp1;
+        const hasValidTp2 = Boolean(trade.tp2 && Number(trade.tp2) > 0);
+        const tp2Display = hasValidTp2 ? `$${Number(trade.tp2).toFixed(2)}` : 'غير محدد';
+        const pctInstruction = hasValidTp2
+          ? `• أغلق <b>${pct}%</b> من الصفقة لجني الربح.\n• اترك <b>${100 - pct}%</b> المتبقية باتجاه TP2.`
+          : `• أغلق الصفقة بالكامل حجزاً للأرباح عند الهدف الوحيد.`;
 
         bodyText = `
 ${dirEmoji} <b>${action.direction} XAU/USD</b>
@@ -1148,19 +1159,19 @@ Floating P&L: ${pnlSign}$${Math.abs(action.floatingPnl ?? 0).toFixed(2)}
 السعر وصل إلى TP1.
 
 📌 <b>القرار:</b>
-• أغلق <b>${pct}%</b> من الصفقة لجني الربح.
-• اترك <b>${100 - pct}%</b> المتبقية باتجاه TP2.
+${pctInstruction}
 • ${slText}
 
 🎯 <b>TP2:</b>
-$${Number(tp2Value).toFixed(2)}
+${tp2Display}
 `.trim();
         break;
       }
 
       case 'UPDATE_SL': {
         titleHeader = `🛡️ <b>إدارة الصفقة — تحديث وقف الخسارة</b>`;
-        const tp2Value = trade.tp2 || trade.tp1;
+        const hasValidTp2 = Boolean(trade.tp2 && Number(trade.tp2) > 0);
+        const tp2Display = hasValidTp2 ? `$${Number(trade.tp2).toFixed(2)}` : 'غير محدد';
 
         bodyText = `
 ${dirEmoji} <b>${action.direction} XAU/USD</b>
@@ -1173,8 +1184,8 @@ Current: $${action.currentPrice.toFixed(2)}
 🔧 <b>الإجراء:</b>
 حرّك SL من <b>$${action.oldSL.toFixed(2)}</b> إلى <b>$${action.newSL?.toFixed(2)}</b>.
 
-🎯 <b>TP2 يبقى:</b>
-$${Number(tp2Value).toFixed(2)}
+🎯 <b>TP2:</b>
+${tp2Display}
 `.trim();
         break;
       }

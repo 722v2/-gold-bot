@@ -1,5 +1,6 @@
 import { AssetType, ScannerConfig, SignalDecision, TradeSignal, TradeOpportunity } from '../src/types.js';
 import { analyzeTechnicals } from './indicators.js';
+import { partition5mCandles } from './candleUtils.js';
 import { fetchCandles, fetchLiveQuote } from './marketData.js';
 import { runAIAnalysis } from './geminiTrader.js';
 import { BrokerContractSpecs } from './riskManager.js';
@@ -246,9 +247,16 @@ class LiveMarketScanner {
       console.log(`[SCANNER] market data loaded: price=${currentPrice}, 1h=${candles1h.length}, 15m=${candles15m.length}, 5m=${candles5m.length}`);
 
       // Step 3: Calculate required technical/market-structure data
+      // Partition 5M candles so 5M technical analysis receives ONLY closed candles
+      const quoteTime = typeof quote.timestamp === 'number' ? quote.timestamp : (Number(quote.timestamp) || Date.now());
+      const partition5m = partition5mCandles(candles5m, quoteTime);
+      const closedCandles5m = partition5m.isValid && partition5m.closedCandles.length > 0
+        ? partition5m.closedCandles
+        : candles5m;
+
       const ind1h = analyzeTechnicals(candles1h);
       const ind15m = analyzeTechnicals(candles15m);
-      const ind5m = analyzeTechnicals(candles5m);
+      const ind5m = analyzeTechnicals(closedCandles5m);
 
       // Synchronize in-flight trade state with TradeLedger & TradeMonitor
       const allTrades = storage.getTrades(300);
@@ -369,15 +377,23 @@ class LiveMarketScanner {
               slPoints: Math.round(Math.abs(legitimateOpp.entry - legitimateOpp.stopLoss) / 0.1),
               tp1: legitimateOpp.tp1,
               tp1Points: Math.round(Math.abs(legitimateOpp.tp1 - legitimateOpp.entry) / 0.1),
-              tp1Rr: 1.5,
-              tp1RrString: '1:1.50',
-              tp2: legitimateOpp.tp2,
-              tp2Points: Math.round(Math.abs(legitimateOpp.tp2 - legitimateOpp.entry) / 0.1),
-              tp2Rr: 3.0,
-              tp2RrString: '1:3.00',
+              tp1Rr: typeof (legitimateOpp as any).tp1Rr === 'number'
+                ? (legitimateOpp as any).tp1Rr
+                : (Math.abs(legitimateOpp.entry - legitimateOpp.stopLoss) > 0 ? Number((Math.abs(legitimateOpp.tp1 - legitimateOpp.entry) / Math.abs(legitimateOpp.entry - legitimateOpp.stopLoss)).toFixed(2)) : 0),
+              tp1RrString: (legitimateOpp as any).tp1RrString || (Math.abs(legitimateOpp.entry - legitimateOpp.stopLoss) > 0 ? `1:${(Math.abs(legitimateOpp.tp1 - legitimateOpp.entry) / Math.abs(legitimateOpp.entry - legitimateOpp.stopLoss)).toFixed(2)}` : 'N/A'),
+              tp2: (legitimateOpp.tp2 && legitimateOpp.tp2 > 0 && Math.abs(legitimateOpp.tp2 - legitimateOpp.entry) > 0.01) ? legitimateOpp.tp2 : 0,
+              tp2Points: (legitimateOpp.tp2 && legitimateOpp.tp2 > 0 && Math.abs(legitimateOpp.tp2 - legitimateOpp.entry) > 0.01) ? Math.round(Math.abs(legitimateOpp.tp2 - legitimateOpp.entry) / 0.1) : 0,
+              tp2Rr: (legitimateOpp.tp2 && legitimateOpp.tp2 > 0)
+                ? (typeof (legitimateOpp as any).tp2Rr === 'number' ? (legitimateOpp as any).tp2Rr : (Math.abs(legitimateOpp.entry - legitimateOpp.stopLoss) > 0 ? Number((Math.abs(legitimateOpp.tp2 - legitimateOpp.entry) / Math.abs(legitimateOpp.entry - legitimateOpp.stopLoss)).toFixed(2)) : 0))
+                : 0,
+              tp2RrString: (legitimateOpp.tp2 && legitimateOpp.tp2 > 0)
+                ? ((legitimateOpp as any).tp2RrString || (Math.abs(legitimateOpp.entry - legitimateOpp.stopLoss) > 0 ? `1:${(Math.abs(legitimateOpp.tp2 - legitimateOpp.entry) / Math.abs(legitimateOpp.entry - legitimateOpp.stopLoss)).toFixed(2)}` : 'N/A'))
+                : 'N/A',
               primaryTarget: 'TP1',
-              rr: '1:1.50',
-              rrRatio: 1.5,
+              rr: (legitimateOpp.tp2 && legitimateOpp.tp2 > 0 && Math.abs(legitimateOpp.entry - legitimateOpp.stopLoss) > 0)
+                ? `TP1: 1:${(Math.abs(legitimateOpp.tp1 - legitimateOpp.entry) / Math.abs(legitimateOpp.entry - legitimateOpp.stopLoss)).toFixed(2)} | TP2: 1:${(Math.abs(legitimateOpp.tp2 - legitimateOpp.entry) / Math.abs(legitimateOpp.entry - legitimateOpp.stopLoss)).toFixed(2)}`
+                : `1:${Math.abs(legitimateOpp.entry - legitimateOpp.stopLoss) > 0 ? (Math.abs(legitimateOpp.tp1 - legitimateOpp.entry) / Math.abs(legitimateOpp.entry - legitimateOpp.stopLoss)).toFixed(2) : '1.00'}`,
+              rrRatio: Math.abs(legitimateOpp.entry - legitimateOpp.stopLoss) > 0 ? Number((Math.abs(legitimateOpp.tp1 - legitimateOpp.entry) / Math.abs(legitimateOpp.entry - legitimateOpp.stopLoss)).toFixed(2)) : 1.0,
               riskPercent: 15,
               riskAmount: 0,
               potentialProfit: 0,
@@ -415,15 +431,33 @@ class LiveMarketScanner {
             slPoints: primaryOpenTrade.slPoints || Math.round(Math.abs(Number(primaryOpenTrade.entry) - Number(primaryOpenTrade.sl)) / 0.1),
             tp1: Number(primaryOpenTrade.tp1),
             tp1Points: primaryOpenTrade.tp1Points || Math.round(Math.abs(Number(primaryOpenTrade.tp1) - Number(primaryOpenTrade.entry)) / 0.1),
-            tp1Rr: 1.5,
-            tp1RrString: '1:1.50',
-            tp2: primaryOpenTrade.tp2 ? Number(primaryOpenTrade.tp2) : Number(primaryOpenTrade.entry),
-            tp2Points: primaryOpenTrade.tp2Points || 0,
-            tp2Rr: 3.0,
-            tp2RrString: '1:3.00',
+            tp1Rr: typeof (primaryOpenTrade as any).tp1Rr === 'number'
+              ? (primaryOpenTrade as any).tp1Rr
+              : (Math.abs(Number(primaryOpenTrade.entry) - Number(primaryOpenTrade.sl)) > 0
+                ? Number((Math.abs(Number(primaryOpenTrade.tp1) - Number(primaryOpenTrade.entry)) / Math.abs(Number(primaryOpenTrade.entry) - Number(primaryOpenTrade.sl))).toFixed(2))
+                : 0),
+            tp1RrString: (primaryOpenTrade as any).tp1RrString || (Math.abs(Number(primaryOpenTrade.entry) - Number(primaryOpenTrade.sl)) > 0
+              ? `1:${(Math.abs(Number(primaryOpenTrade.tp1) - Number(primaryOpenTrade.entry)) / Math.abs(Number(primaryOpenTrade.entry) - Number(primaryOpenTrade.sl))).toFixed(2)}`
+              : 'N/A'),
+            tp2: (primaryOpenTrade.tp2 && Number(primaryOpenTrade.tp2) > 0 && Math.abs(Number(primaryOpenTrade.tp2) - Number(primaryOpenTrade.entry)) > 0.01) ? Number(primaryOpenTrade.tp2) : 0,
+            tp2Points: (primaryOpenTrade.tp2 && Number(primaryOpenTrade.tp2) > 0 && Math.abs(Number(primaryOpenTrade.tp2) - Number(primaryOpenTrade.entry)) > 0.01) ? Math.round(Math.abs(Number(primaryOpenTrade.tp2) - Number(primaryOpenTrade.entry)) / 0.1) : 0,
+            tp2Rr: (primaryOpenTrade.tp2 && Number(primaryOpenTrade.tp2) > 0)
+              ? (typeof (primaryOpenTrade as any).tp2Rr === 'number' ? (primaryOpenTrade as any).tp2Rr : (Math.abs(Number(primaryOpenTrade.entry) - Number(primaryOpenTrade.sl)) > 0
+                ? Number((Math.abs(Number(primaryOpenTrade.tp2) - Number(primaryOpenTrade.entry)) / Math.abs(Number(primaryOpenTrade.entry) - Number(primaryOpenTrade.sl))).toFixed(2))
+                : 0))
+              : 0,
+            tp2RrString: (primaryOpenTrade.tp2 && Number(primaryOpenTrade.tp2) > 0)
+              ? ((primaryOpenTrade as any).tp2RrString || (Math.abs(Number(primaryOpenTrade.entry) - Number(primaryOpenTrade.sl)) > 0
+                ? `1:${(Math.abs(Number(primaryOpenTrade.tp2) - Number(primaryOpenTrade.entry)) / Math.abs(Number(primaryOpenTrade.entry) - Number(primaryOpenTrade.sl))).toFixed(2)}`
+                : 'N/A'))
+              : 'N/A',
             primaryTarget: 'TP1',
-            rr: primaryOpenTrade.rr || '1:1.50',
-            rrRatio: 1.5,
+            rr: primaryOpenTrade.rr || ((primaryOpenTrade.tp2 && Number(primaryOpenTrade.tp2) > 0 && Math.abs(Number(primaryOpenTrade.entry) - Number(primaryOpenTrade.sl)) > 0)
+              ? `TP1: 1:${(Math.abs(Number(primaryOpenTrade.tp1) - Number(primaryOpenTrade.entry)) / Math.abs(Number(primaryOpenTrade.entry) - Number(primaryOpenTrade.sl))).toFixed(2)} | TP2: 1:${(Math.abs(Number(primaryOpenTrade.tp2) - Number(primaryOpenTrade.entry)) / Math.abs(Number(primaryOpenTrade.entry) - Number(primaryOpenTrade.sl))).toFixed(2)}`
+              : `1:${Math.abs(Number(primaryOpenTrade.entry) - Number(primaryOpenTrade.sl)) > 0 ? (Math.abs(Number(primaryOpenTrade.tp1) - Number(primaryOpenTrade.entry)) / Math.abs(Number(primaryOpenTrade.entry) - Number(primaryOpenTrade.sl))).toFixed(2) : '1.00'}`),
+            rrRatio: Math.abs(Number(primaryOpenTrade.entry) - Number(primaryOpenTrade.sl)) > 0
+              ? Number((Math.abs(Number(primaryOpenTrade.tp1) - Number(primaryOpenTrade.entry)) / Math.abs(Number(primaryOpenTrade.entry) - Number(primaryOpenTrade.sl))).toFixed(2))
+              : 1.0,
             riskPercent: primaryOpenTrade.riskPercent || 15,
             riskAmount: primaryOpenTrade.riskAmount || 0,
             potentialProfit: 0,
@@ -474,12 +508,16 @@ class LiveMarketScanner {
       // Check active signal status against live price (TP / SL reached)
       if (this.activeSignal && this.activeSignal.signal !== 'NO TRADE') {
         const isBuy = this.activeSignal.signal.includes('BUY');
+        const hasTp2 = Boolean(this.activeSignal.tp2 && Number(this.activeSignal.tp2) > 0);
         const slHit = isBuy
           ? currentPrice <= this.activeSignal.stopLoss
           : currentPrice >= this.activeSignal.stopLoss;
-        const tp2Hit = isBuy
-          ? currentPrice >= this.activeSignal.tp2
-          : currentPrice <= this.activeSignal.tp2;
+        const tp2Hit = hasTp2
+          ? (isBuy ? currentPrice >= Number(this.activeSignal.tp2) : currentPrice <= Number(this.activeSignal.tp2))
+          : false;
+        const tp1Hit = !hasTp2 && Boolean(this.activeSignal.tp1 && Number(this.activeSignal.tp1) > 0)
+          ? (isBuy ? currentPrice >= Number(this.activeSignal.tp1) : currentPrice <= Number(this.activeSignal.tp1))
+          : false;
 
         if (slHit) {
           console.log(`[LiveMarketScanner] Active setup ${this.activeSignal.setup} hit Stop Loss. Resetting active setup.`);
@@ -496,8 +534,8 @@ class LiveMarketScanner {
           }
           this.activeSignal = null;
           this.config.activeSetupName = null;
-        } else if (tp2Hit) {
-          console.log(`[LiveMarketScanner] Active setup ${this.activeSignal.setup} reached TP2. Resetting active setup.`);
+        } else if (tp2Hit || tp1Hit) {
+          console.log(`[LiveMarketScanner] Active setup ${this.activeSignal.setup} reached target. Resetting active setup.`);
           const oppId = generateOpportunityId(this.activeSignal);
           const opp =
             storage.getOpportunity(oppId) ||
@@ -727,10 +765,10 @@ class LiveMarketScanner {
         slPoints: signal.slPoints,
         tp1: signal.tp1,
         tp1Points: signal.tp1Points || 0,
-        tp1Rr: signal.tp1RrString || (signal.tp1Rr ? `1:${signal.tp1Rr.toFixed(2)}` : '1:1.50'),
+        tp1Rr: signal.tp1RrString || (signal.tp1Rr ? `1:${signal.tp1Rr.toFixed(2)}` : 'N/A'),
         tp2: signal.tp2,
         tp2Points: signal.tp2Points || 0,
-        tp2Rr: signal.tp2RrString || (signal.tp2Rr ? `1:${signal.tp2Rr.toFixed(2)}` : '1:3.00'),
+        tp2Rr: signal.tp2RrString || ((signal.tp2 && signal.tp2 > 0 && signal.tp2Rr) ? `1:${signal.tp2Rr.toFixed(2)}` : 'N/A'),
         rr: signal.rr,
         confidence: signal.confidence,
         riskPercent: signal.riskPercent,

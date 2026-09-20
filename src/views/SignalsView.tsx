@@ -80,14 +80,18 @@ export const SignalsView: React.FC<SignalsViewProps> = ({
     const tp1 = s.tp1;
     const tp2 = s.tp2;
 
+    const hasTp2 = Boolean(tp2 && Number(tp2) > 0);
+    const hasTp1 = Boolean(tp1 && Number(tp1) > 0);
+    const hasSl = Boolean(sl && Number(sl) > 0);
+
     if (isBuy) {
-      if (currentPrice >= tp2) return 'TP2 HIT';
-      if (currentPrice >= tp1) return 'TP1 HIT';
-      if (currentPrice <= sl) return 'SL HIT';
+      if (hasTp2 && currentPrice >= Number(tp2)) return 'TP2 HIT';
+      if (hasTp1 && currentPrice >= Number(tp1)) return 'TP1 HIT';
+      if (hasSl && currentPrice <= Number(sl)) return 'SL HIT';
     } else {
-      if (currentPrice <= tp2) return 'TP2 HIT';
-      if (currentPrice <= tp1) return 'TP1 HIT';
-      if (currentPrice >= sl) return 'SL HIT';
+      if (hasTp2 && currentPrice <= Number(tp2)) return 'TP2 HIT';
+      if (hasTp1 && currentPrice <= Number(tp1)) return 'TP1 HIT';
+      if (hasSl && currentPrice >= Number(sl)) return 'SL HIT';
     }
 
     return s.status || 'ACTIVE';
@@ -242,13 +246,13 @@ export const SignalsView: React.FC<SignalsViewProps> = ({
                   </div>
 
                   <div className="bg-stone-950/70 p-2 rounded-lg border border-emerald-950/50">
-                    <span className="text-[10px] text-emerald-400 block">TP1 (2R)</span>
+                    <span className="text-[10px] text-emerald-400 block">TP1</span>
                     <span className="font-bold text-emerald-400">${(item.tp1 || 0).toFixed(2)}</span>
                   </div>
 
                   <div className="bg-stone-950/70 p-2 rounded-lg border border-emerald-950/50">
-                    <span className="text-[10px] text-emerald-300 block">TP2 (3R)</span>
-                    <span className="font-bold text-emerald-300">${(item.tp2 || 0).toFixed(2)}</span>
+                    <span className="text-[10px] text-emerald-300 block">TP2</span>
+                    <span className="font-bold text-emerald-300">{item.tp2 && Number(item.tp2) > 0 ? `$${Number(item.tp2).toFixed(2)}` : 'N/A'}</span>
                   </div>
 
                   <div className="bg-stone-950/70 p-2 rounded-lg border border-stone-800/80">
@@ -261,7 +265,7 @@ export const SignalsView: React.FC<SignalsViewProps> = ({
                   <div className="bg-stone-950/70 p-2 rounded-lg border border-stone-800/80">
                     <span className="text-[10px] text-stone-400 block">RR Ratio</span>
                     <span className="font-bold text-stone-200">
-                      {item.tp1RrString || '1:1.50'}
+                      {item.tp1RrString || (item.tp1Rr ? `1:${Number(item.tp1Rr).toFixed(2)}` : 'N/A')}
                     </span>
                   </div>
                 </div>

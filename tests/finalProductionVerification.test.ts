@@ -136,6 +136,13 @@ async function runAllProductionVerifications() {
       tp1: 2507.0, // 70 pts TP (blocked by 2502.5 OB)
       tp2: 2514.0,
       setupName: 'AI Breakout Setup',
+      strategyFamily: 'ORDER_BLOCK',
+      poiPrice: 2500.0,
+      poiMeta: {
+        type: 'ORDER_BLOCK',
+        top: 2500.5,
+        bottom: 2499.0,
+      },
     },
     {
       currentPrice: 2500.0,
@@ -174,6 +181,13 @@ async function runAllProductionVerifications() {
       tp1: 2493.0, // 70 pts TP (blocked by 2497.5 OB)
       tp2: 2486.0,
       setupName: 'AI Bearish Breakdown',
+      strategyFamily: 'ORDER_BLOCK',
+      poiPrice: 2500.0,
+      poiMeta: {
+        type: 'ORDER_BLOCK',
+        top: 2501.0,
+        bottom: 2499.5,
+      },
     },
     {
       currentPrice: 2500.0,
@@ -268,6 +282,13 @@ async function runAllProductionVerifications() {
       stopLoss: 2495.5,
       tp1: 2507.0,
       setupName: 'Market Structure',
+      strategyFamily: 'ORDER_BLOCK',
+      poiPrice: 2500.0,
+      poiMeta: {
+        type: 'ORDER_BLOCK',
+        top: 2500.5,
+        bottom: 2499.0,
+      },
     },
     {
       currentPrice: 2500.0,

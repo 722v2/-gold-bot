@@ -5,9 +5,11 @@ export interface BrokerContractSpecs {
   minimumLot: number; // default 0.01 standard lot
   maximumLot: number; // default 100 standard lot
   lotStep: number; // default 0.01
-  minGoldSlPoints?: number; // default 40 points
-  maxGoldSlPoints: number; // default 50 points
-  minRr: number; // default 1.5
+  minGoldSlPoints?: number; // default 35 points
+  maxGoldSlPoints?: number; // default 65 points
+  minSlPoints?: number; // default 35 points
+  maxSlPoints?: number; // default 65 points
+  minRr: number; // default 1.0
   maxLoss?: number; // User-configured maximum loss limit in USD (e.g. $5.00)
 }
 
@@ -18,7 +20,7 @@ export interface RiskCalculationParams {
   stopLoss: number;
   tp1: number;
   tp2?: number;
-  confidence: number;
+  confidence?: number;
   isVeryStrongSetup?: boolean;
   losingStreak?: number;
   asset?: 'XAU/USD' | 'BTC/USD';
@@ -70,6 +72,7 @@ export interface RiskEvaluationResult {
   tp2Distance: number;
   tp2Rr: number;
   tp2RrString: string;
+  hasValidTp2?: boolean;
   primaryTarget: 'TP1' | 'TP2';
   rrRatio: number; // Primary RR (TP1)
   rrString: string; // e.g. "TP1: 1:1.50 (75.0 pts) | TP2: 1:3.20 (160.0 pts)"
@@ -86,8 +89,10 @@ export const DEFAULT_BROKER_SPECS: BrokerContractSpecs = {
   minimumLot: 0.01,
   maximumLot: 100,
   lotStep: 0.01,
-  minGoldSlPoints: 40,
-  maxGoldSlPoints: 50,
+  minGoldSlPoints: 35,
+  maxGoldSlPoints: 65,
+  minSlPoints: 35,
+  maxSlPoints: 65,
   minRr: 1.0,
   maxLoss: 5.0,
 };
@@ -187,7 +192,7 @@ export function calculatePositionSizing(
     if (riskDollars > maxLossLimit + 0.0001) {
       const cappedLot = Number((maxLossLimit / riskPerStandardLot).toFixed(4));
       if (cappedLot >= minimumLot) {
-        finalStandardLotSize = Math.max(minimumLot, Math.floor(cappedLot / lotStep) * lotStep);
+        finalStandardLotSize = Math.max(minimumLot, Math.floor((cappedLot + 1e-9) / lotStep) * lotStep);
         isExecutable = true;
       } else if (monetaryRiskAtMinLot <= maxLossLimit + 0.0001) {
         finalStandardLotSize = minimumLot;
@@ -197,8 +202,22 @@ export function calculatePositionSizing(
         nonExecutableReason = `TRADE NOT EXECUTABLE: Actual loss at minimum lot ${minimumLot} ($${monetaryRiskAtMinLot.toFixed(2)}) exceeds configured Max Loss limit ($${maxLossLimit.toFixed(2)}).`;
       }
     } else {
-      finalStandardLotSize = Math.max(minimumLot, Math.floor(standardLotSize / lotStep) * lotStep);
+      finalStandardLotSize = Math.max(minimumLot, Math.floor((standardLotSize + 1e-9) / lotStep) * lotStep);
       isExecutable = true;
+    }
+  }
+
+  finalStandardLotSize = Number(finalStandardLotSize.toFixed(2));
+
+  // Downward Rounding Safety: Ensure actual monetary risk never exceeds maxLossLimit through rounding
+  const finalCalculatedLoss = Number((finalStandardLotSize * riskPerStandardLot).toFixed(4));
+  if (isExecutable && finalCalculatedLoss > maxLossLimit + 0.0001) {
+    const reducedLot = Number((finalStandardLotSize - lotStep).toFixed(2));
+    if (reducedLot >= minimumLot && Number((reducedLot * riskPerStandardLot).toFixed(4)) <= maxLossLimit + 0.0001) {
+      finalStandardLotSize = reducedLot;
+    } else {
+      isExecutable = false;
+      nonExecutableReason = `TRADE NOT EXECUTABLE: Actual loss at lot ${finalStandardLotSize} ($${finalCalculatedLoss.toFixed(2)}) exceeds configured Max Loss limit ($${maxLossLimit.toFixed(2)}).`;
     }
   }
 
@@ -273,9 +292,9 @@ export function optimizeSetupExecutability(params: {
 
   const contractSizeOz = Number(brokerSpecs.contractSizeOz ?? DEFAULT_BROKER_SPECS.contractSizeOz);
   const minimumLot = Number(brokerSpecs.minimumLot ?? DEFAULT_BROKER_SPECS.minimumLot);
-  const minGoldSlPoints = Number(brokerSpecs.minGoldSlPoints ?? DEFAULT_BROKER_SPECS.minGoldSlPoints ?? 40);
-  const maxGoldSlPoints = Number(brokerSpecs.maxGoldSlPoints ?? DEFAULT_BROKER_SPECS.maxGoldSlPoints ?? 50);
-  const minRr = Number(brokerSpecs.minRr ?? DEFAULT_BROKER_SPECS.minRr ?? 1.5);
+  const minSlFloor = Number(brokerSpecs.minSlPoints ?? brokerSpecs.minGoldSlPoints ?? DEFAULT_BROKER_SPECS.minGoldSlPoints ?? 35);
+  const maxSlCeiling = Number(brokerSpecs.maxSlPoints ?? brokerSpecs.maxGoldSlPoints ?? DEFAULT_BROKER_SPECS.maxGoldSlPoints ?? 65);
+  const minRr = Number(brokerSpecs.minRr ?? DEFAULT_BROKER_SPECS.minRr ?? 1.0);
   const pointValue = asset === 'XAU/USD' ? 0.1 : 1.0;
 
   const maxLossLimit = typeof brokerSpecs.maxLoss === 'number' && brokerSpecs.maxLoss > 0
@@ -289,118 +308,35 @@ export function optimizeSetupExecutability(params: {
   const initialSlPoints = Number((initialDistance / pointValue).toFixed(1));
   const initialRiskAtMinLot = Number((minimumLot * initialDistance * contractSizeOz).toFixed(4));
 
-  // If already executable within risk budget or within persisted Max Loss limit, no optimization needed
-  if (initialRiskAtMinLot <= riskDollars + 0.0001 || initialRiskAtMinLot <= maxLossLimit + 0.0001) {
-    const tp1Dist = Number(Math.abs(tp1 - entry).toFixed(2));
-    const tp1Pts = Number((tp1Dist / pointValue).toFixed(1));
-    const tp1RrVal = initialDistance > 0 ? Number((tp1Dist / initialDistance).toFixed(2)) : 0;
-    const tp2Dist = tp2 ? Number(Math.abs(tp2 - entry).toFixed(2)) : tp1Dist;
-    const tp2Pts = Number((tp2Dist / pointValue).toFixed(1));
-    const tp2RrVal = initialDistance > 0 ? Number((tp2Dist / initialDistance).toFixed(2)) : tp1RrVal;
-
-    return {
-      wasOptimized: false,
-      optimizedEntry: entry,
-      optimizedStopLoss: stopLoss,
-      optimizedTp1: tp1,
-      optimizedTp2: tp2,
-      priceDistance: initialDistance,
-      slPoints: initialSlPoints,
-      tp1Distance: tp1Dist,
-      tp1Points: tp1Pts,
-      tp1Rr: tp1RrVal,
-      tp2Distance: tp2Dist,
-      tp2Points: tp2Pts,
-      tp2Rr: tp2RrVal,
-      isExecutable: true,
-    };
-  }
-
-  // Target price distance to match allowed risk exactly at minimum lot
-  const targetDistance = Number((riskDollars / (contractSizeOz * minimumLot)).toFixed(4));
-  const targetSlPoints = Number((targetDistance / pointValue).toFixed(1));
-
-  // Define allowable technical range with small structural tolerance
-  // E.g. if minGoldSlPoints is 40, allow down to 38.0 points for minimum-lot executability optimization
-  const structuralMinPoints = Math.max(30.0, Number((minGoldSlPoints - 2.0).toFixed(1)));
-  const structuralMaxPoints = Number((maxGoldSlPoints + 5.0).toFixed(1));
-
-  let candidateEntry = entry;
-  let candidateStopLoss = stopLoss;
-  let wasAdjusted = false;
-  let optimizationReason = '';
-
-  // 1. Optimize Stop Loss if initial SL was wider than minGoldSlPoints (e.g. 45-50 points)
-  if (initialSlPoints > minGoldSlPoints) {
-    const optimalPoints = Math.max(structuralMinPoints, Math.min(initialSlPoints, Math.max(targetSlPoints, minGoldSlPoints)));
-    const optimalDist = Number((optimalPoints * pointValue).toFixed(2));
-
-    candidateStopLoss = direction === 'BUY'
-      ? Number((entry - optimalDist).toFixed(2))
-      : Number((entry + optimalDist).toFixed(2));
-
-    wasAdjusted = true;
-    optimizationReason = `تم تقليص الوقف من ${initialSlPoints} نقطة إلى ${optimalPoints} نقطة بما يناسب أدنى لوت وإدارة المخاطر.`;
-  }
-
-  // Recalculate distance after SL adjustment
-  let currentDist = Number(Math.abs(candidateEntry - candidateStopLoss).toFixed(4));
-  let currentRiskAtMinLot = Number((minimumLot * currentDist * contractSizeOz).toFixed(4));
-
-  // 2. If still slightly over risk limit, refine Entry price closer to SL
-  if (currentRiskAtMinLot > riskDollars) {
-    const excess = currentRiskAtMinLot - riskDollars;
-    const deltaDistance = Number((excess / (contractSizeOz * minimumLot)).toFixed(4));
-    
-    // Refine entry if delta is a small, realistic refinement (e.g. <= 1.5 USD on Gold)
-    if (deltaDistance > 0 && deltaDistance <= 1.5) {
-      const refinedDist = Number(Math.max(structuralMinPoints * pointValue, currentDist - deltaDistance).toFixed(2));
-      const refinedEntry = direction === 'BUY'
-        ? Number((candidateStopLoss + refinedDist).toFixed(2))
-        : Number((candidateStopLoss - refinedDist).toFixed(2));
-
-      candidateEntry = refinedEntry;
-      wasAdjusted = true;
-      optimizationReason += (optimizationReason ? ' ' : '') + `تم تحسين سعر الدخول (${entry} -> ${candidateEntry}) لتقليل المسافة بما يتوافق مع مخاطرة $${riskDollars.toFixed(2)}.`;
-    }
-  }
-
-  const finalDist = Number(Math.abs(candidateEntry - candidateStopLoss).toFixed(4));
-  const finalSlPoints = Number((finalDist / pointValue).toFixed(1));
-  const tp1Dist = Number(Math.abs(tp1 - candidateEntry).toFixed(2));
+  const tp1Dist = Number(Math.abs(tp1 - entry).toFixed(2));
   const tp1Pts = Number((tp1Dist / pointValue).toFixed(1));
-  const tp1RrVal = finalDist > 0 ? Number((tp1Dist / finalDist).toFixed(2)) : 0;
-  const tp2Dist = tp2 ? Number(Math.abs(tp2 - candidateEntry).toFixed(2)) : tp1Dist;
-  const tp2Pts = Number((tp2Dist / pointValue).toFixed(1));
-  const tp2RrVal = finalDist > 0 ? Number((tp2Dist / finalDist).toFixed(2)) : tp1RrVal;
+  const tp1RrVal = initialDistance > 0 ? Number((tp1Dist / initialDistance).toFixed(2)) : 0;
+  const tp2Dist = (tp2 && tp2 > 0) ? Number(Math.abs(tp2 - entry).toFixed(2)) : 0;
+  const tp2Pts = (tp2 && tp2 > 0) ? Number((tp2Dist / pointValue).toFixed(1)) : 0;
+  const tp2RrVal = (initialDistance > 0 && tp2 && tp2 > 0) ? Number((tp2Dist / initialDistance).toFixed(2)) : 0;
 
-  const finalRiskAtMinLot = Number((minimumLot * finalDist * contractSizeOz).toFixed(4));
-  const remainingExcess = Number((finalRiskAtMinLot - riskDollars).toFixed(4));
-  const dollarPerPoint = Number(((contractSizeOz * pointValue) * minimumLot).toFixed(4));
-
-  // Check if final configuration is executable (within risk budget or within persisted Max Loss limit)
-  const effectiveMinRr = Math.min(minRr, 0.95);
+  // Structural Stop Loss is authoritative: NEVER artificially clamp, compress, or tighten SL or shift entry
+  // If the structural SL violates safety bounds [35, 65] pts or exceeds risk budget at minimum lot, reject as not executable
   const isExecutable =
-    (finalRiskAtMinLot <= riskDollars + 0.0001 || finalRiskAtMinLot <= maxLossLimit + 0.0001) &&
-    finalSlPoints >= structuralMinPoints &&
-    finalSlPoints <= structuralMaxPoints &&
-    tp1RrVal >= effectiveMinRr;
+    (initialRiskAtMinLot <= riskDollars + 0.0001 || initialRiskAtMinLot <= maxLossLimit + 0.0001) &&
+    initialSlPoints >= minSlFloor &&
+    initialSlPoints <= maxSlCeiling &&
+    tp1RrVal >= minRr;
 
   return {
-    wasOptimized: wasAdjusted,
-    optimizedEntry: candidateEntry,
-    optimizedStopLoss: candidateStopLoss,
+    wasOptimized: false,
+    optimizedEntry: entry,
+    optimizedStopLoss: stopLoss,
     optimizedTp1: tp1,
     optimizedTp2: tp2,
-    priceDistance: finalDist,
-    slPoints: finalSlPoints,
+    priceDistance: initialDistance,
+    slPoints: initialSlPoints,
     tp1Distance: tp1Dist,
     tp1Points: tp1Pts,
     tp1Rr: tp1RrVal,
     tp2Distance: tp2Dist,
     tp2Points: tp2Pts,
     tp2Rr: tp2RrVal,
-    optimizationNote: optimizationReason || undefined,
     isExecutable,
   };
 }
@@ -415,7 +351,7 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
     stopLoss: initialStopLoss,
     tp1: initialTp1,
     tp2: initialTp2,
-    confidence,
+    confidence = 75,
     isVeryStrongSetup = false,
     losingStreak = 0,
     asset = 'XAU/USD',
@@ -425,8 +361,8 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
     allowExecutabilityOptimization = true,
   } = params;
 
-  const minGoldSlPoints = brokerSpecs.minGoldSlPoints ?? DEFAULT_BROKER_SPECS.minGoldSlPoints ?? 40;
-  const maxGoldSlPoints = brokerSpecs.maxGoldSlPoints ?? DEFAULT_BROKER_SPECS.maxGoldSlPoints ?? 50;
+  const minGoldSlPoints = brokerSpecs.minGoldSlPoints ?? brokerSpecs.minSlPoints ?? DEFAULT_BROKER_SPECS.minGoldSlPoints ?? 35;
+  const maxGoldSlPoints = brokerSpecs.maxGoldSlPoints ?? brokerSpecs.maxSlPoints ?? DEFAULT_BROKER_SPECS.maxGoldSlPoints ?? 65;
   const minRr = brokerSpecs.minRr ?? DEFAULT_BROKER_SPECS.minRr;
   const configuredRiskPercent = params.riskPercent ?? brokerSpecs.riskPercent ?? DEFAULT_BROKER_SPECS.riskPercent;
 
@@ -465,6 +401,7 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
       tp2Distance: 0,
       tp2Rr: 0,
       tp2RrString: '1:0',
+      hasValidTp2: false,
       primaryTarget: 'TP1',
       rrRatio: 0,
       rrString: '1:0',
@@ -501,6 +438,7 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
       tp2Distance: 0,
       tp2Rr: 0,
       tp2RrString: '1:0',
+      hasValidTp2: false,
       primaryTarget: 'TP1',
       rrRatio: 0,
       rrString: '1:0',
@@ -562,10 +500,10 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
   const tp1Rr = priceDistance > 0 ? Number((tp1Distance / priceDistance).toFixed(2)) : 0;
   const tp1RrString = `1:${tp1Rr.toFixed(2)}`;
 
-  let tp2Distance = tp1Distance;
-  let tp2Points = tp1Points;
-  let tp2Rr = tp1Rr;
-  let tp2RrString = tp1RrString;
+  let tp2Distance = 0;
+  let tp2Points = 0;
+  let tp2Rr = 0;
+  let tp2RrString = 'N/A';
   if (tp2 && tp2 > 0) {
     tp2Distance = Math.abs(tp2 - entry);
     tp2Points = asset === 'XAU/USD'
@@ -575,20 +513,21 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
     tp2RrString = `1:${tp2Rr.toFixed(2)}`;
   }
 
-  const compositeRrString = `TP1: ${tp1RrString} (${tp1Points} pts) | TP2: ${tp2RrString} (${tp2Points} pts)`;
+  const compositeRrString = (tp2 && tp2 > 0)
+    ? `TP1: ${tp1RrString} (${tp1Points} pts) | TP2: ${tp2RrString} (${tp2Points} pts)`
+    : `TP1: ${tp1RrString} (${tp1Points} pts)`;
 
-  // Gold SL range filter with structural executability tolerance:
-  // Allow down to minGoldSlPoints - 2.0 (e.g. 38 points) for minimum-lot executability optimization
-  const structuralMinSl = Math.max(30.0, Number((minGoldSlPoints - 2.0).toFixed(1)));
-  const structuralMaxSl = Number((maxGoldSlPoints + 5.0).toFixed(1));
+  // Gold SL range filter: strict 35 to 65 points boundary (or brokerSpecs overrides)
+  const structuralMinSl = Number(brokerSpecs.minSlPoints ?? brokerSpecs.minGoldSlPoints ?? DEFAULT_BROKER_SPECS.minGoldSlPoints ?? 35.0);
+  const structuralMaxSl = Number(brokerSpecs.maxSlPoints ?? brokerSpecs.maxGoldSlPoints ?? DEFAULT_BROKER_SPECS.maxGoldSlPoints ?? 65.0);
 
   if (asset === 'XAU/USD' && (slPoints < structuralMinSl || slPoints > structuralMaxSl)) {
     const isBelow = slPoints < structuralMinSl;
     return {
       valid: false,
       reason: isBelow
-        ? `الـStop Loss المطلوب (${slPoints} نقطة) أقل من الحد الأدنى المسموح للذهب (${minGoldSlPoints} نقطة = $${(minGoldSlPoints * 0.1).toFixed(1)}). النطاق المسموح به حصراً هو ${minGoldSlPoints}-${maxGoldSlPoints} نقطة -> NO TRADE.`
-        : `الـStop Loss المطلوب (${slPoints} نقطة) يتجاوز الحد الأقصى المسموح للذهب (${maxGoldSlPoints} نقطة = $${(maxGoldSlPoints * 0.1).toFixed(1)}). النطاق المسموح به حصراً هو ${minGoldSlPoints}-${maxGoldSlPoints} نقطة -> NO TRADE.`,
+        ? `الـStop Loss المطلوب (${slPoints} نقطة) أقل من الحد الأدنى المسموح للذهب (${structuralMinSl} نقطة = $${(structuralMinSl * 0.1).toFixed(1)}). النطاق المسموح به حصراً هو ${structuralMinSl}-${structuralMaxSl} نقطة -> NO TRADE.`
+        : `الـStop Loss المطلوب (${slPoints} نقطة) يتجاوز الحد الأقصى المسموح للذهب (${structuralMaxSl} نقطة = $${(structuralMaxSl * 0.1).toFixed(1)}). النطاق المسموح به حصراً هو ${structuralMinSl}-${structuralMaxSl} نقطة -> NO TRADE.`,
       riskPercent: 0,
       riskAmount: 0,
       slPoints,
@@ -601,6 +540,7 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
       tp2Distance: Number(tp2Distance.toFixed(2)),
       tp2Rr: 0,
       tp2RrString: '1:0',
+      hasValidTp2: (typeof tp2 === 'number' && tp2 > 0),
       primaryTarget: 'TP1',
       rrRatio: 0,
       rrString: '1:0',
@@ -627,6 +567,7 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
       tp2Distance: Number(tp2Distance.toFixed(2)),
       tp2Rr: 0,
       tp2RrString: '1:0',
+      hasValidTp2: (typeof tp2 === 'number' && tp2 > 0),
       primaryTarget: 'TP1',
       rrRatio: 0,
       rrString: '1:0',
@@ -657,6 +598,7 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
       tp2Distance: Number(tp2Distance.toFixed(2)),
       tp2Rr,
       tp2RrString,
+      hasValidTp2: (typeof tp2 === 'number' && tp2 > 0),
       primaryTarget: 'TP1',
       rrRatio: tp1Rr,
       rrString: compositeRrString,
@@ -667,31 +609,42 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
     };
   }
 
-  // Target 2 Geometric Consistency: If TP2 is provided, it must be at least as far as TP1
-  if (tp2 && tp2 > 0 && tp2Distance < tp1Distance) {
-    return {
-      valid: false,
-      reason: `الهدف الثاني TP2 (${tp2RrString}) أقرب من الهدف الأول TP1 (${tp1RrString}) -> هندسة أهداف غير متسقة.`,
-      riskPercent: 0,
-      riskAmount: 0,
-      slPoints,
-      priceDistance: Number(priceDistance.toFixed(2)),
-      tp1Points,
-      tp1Distance: Number(tp1Distance.toFixed(2)),
-      tp1Rr,
-      tp1RrString,
-      tp2Points,
-      tp2Distance: Number(tp2Distance.toFixed(2)),
-      tp2Rr,
-      tp2RrString,
-      primaryTarget: 'TP1',
-      rrRatio: tp1Rr,
-      rrString: compositeRrString,
-      potentialProfit: 0,
-      potentialLoss: 0,
-      recommendedLotSize: 0,
-      positionSizing: emptyPositionSizing,
-    };
+  // Target 2 Geometric Consistency: If TP2 is provided and > 0, it must strictly satisfy:
+  // BUY: TP2 > TP1 > Entry
+  // SELL: TP2 < TP1 < Entry
+  if (tp2 && tp2 > 0) {
+    const isBuy = resolvedDirection === 'BUY';
+    const isDirectionallyInconsistent =
+      (isBuy && (tp2 <= tp1 || tp1 <= entry)) ||
+      (!isBuy && (tp2 >= tp1 || tp1 >= entry)) ||
+      tp2Distance <= tp1Distance;
+
+    if (isDirectionallyInconsistent) {
+      return {
+        valid: false,
+        reason: `هندسة الهدف الثاني TP2 غير متسقة (${isBuy ? 'يجب أن يكون TP2 > TP1 > Entry' : 'يجب أن يكون TP2 < TP1 < Entry'}) -> هندسة أهداف غير متسقة.`,
+        riskPercent: 0,
+        riskAmount: 0,
+        slPoints,
+        priceDistance: Number(priceDistance.toFixed(2)),
+        tp1Points,
+        tp1Distance: Number(tp1Distance.toFixed(2)),
+        tp1Rr,
+        tp1RrString,
+        tp2Points,
+        tp2Distance: Number(tp2Distance.toFixed(2)),
+        tp2Rr,
+        tp2RrString,
+        hasValidTp2: true,
+        primaryTarget: 'TP1',
+        rrRatio: tp1Rr,
+        rrString: compositeRrString,
+        potentialProfit: 0,
+        potentialLoss: 0,
+        recommendedLotSize: 0,
+        positionSizing: emptyPositionSizing,
+      };
+    }
   }
 
   // Calculate Position Sizing
@@ -726,6 +679,7 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
       tp2Distance: Number(tp2Distance.toFixed(2)),
       tp2Rr,
       tp2RrString,
+      hasValidTp2: (typeof tp2 === 'number' && tp2 > 0),
       primaryTarget: 'TP1',
       rrRatio: tp1Rr,
       rrString: compositeRrString,
@@ -756,6 +710,7 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
     tp2Distance: Number(tp2Distance.toFixed(2)),
     tp2Rr,
     tp2RrString,
+    hasValidTp2: (typeof tp2 === 'number' && tp2 > 0),
     primaryTarget: 'TP1',
     rrRatio: tp1Rr,
     rrString: compositeRrString,

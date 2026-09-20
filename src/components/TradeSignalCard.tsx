@@ -122,9 +122,9 @@ Entry: $${(Number(signal.entry) || 0).toFixed(2)}
 SL: $${(Number(signal.stopLoss) || 0).toFixed(2)}
 SL Points: ${signal.slPoints} points
 TP1: $${(Number(signal.tp1) || 0).toFixed(2)} (${signal.tp1Points ?? Math.round(Math.abs((Number(signal.tp1) || 0) - (Number(signal.entry) || 0)) / 0.1)} points)
-TP1 RR: ${signal.tp1RrString || '1:1.50'}
+TP1 RR: ${signal.tp1RrString || (signal.tp1Rr ? `1:${(Number(signal.tp1Rr) || 0).toFixed(2)}` : 'N/A')}
 TP2: $${(Number(signal.tp2) || 0).toFixed(2)} (${signal.tp2Points ?? Math.round(Math.abs((Number(signal.tp2) || 0) - (Number(signal.entry) || 0)) / 0.1)} points)
-TP2 RR: ${signal.tp2RrString || '1:3.00'}
+TP2 RR: ${signal.tp2 && Number(signal.tp2) > 0 ? (signal.tp2RrString || (signal.tp2Rr ? `1:${(Number(signal.tp2Rr) || 0).toFixed(2)}` : 'N/A')) : 'N/A'}
 Main RR: ${signal.rr}
 
 RISK & POSITION SIZING:
@@ -213,8 +213,9 @@ Invalidation: ${signal.invalidation}`;
   const isExecutable = signal.isExecutable ?? ps?.isExecutable ?? true;
 
   // Separate RR calculation values
-  const tp1RrStr = signal.tp1RrString || (signal.tp1Rr ? `1:${(Number(signal.tp1Rr) || 0).toFixed(2)}` : '1:1.50');
-  const tp2RrStr = signal.tp2RrString || (signal.tp2Rr ? `1:${(Number(signal.tp2Rr) || 0).toFixed(2)}` : '1:3.00');
+  const tp1RrStr = signal.tp1RrString || (signal.tp1Rr ? `1:${(Number(signal.tp1Rr) || 0).toFixed(2)}` : 'N/A');
+  const hasTp2 = Boolean(signal.tp2 && Number(signal.tp2) > 0);
+  const tp2RrStr = hasTp2 ? (signal.tp2RrString || (signal.tp2Rr ? `1:${(Number(signal.tp2Rr) || 0).toFixed(2)}` : 'N/A')) : 'N/A';
 
   // Confidence Tier tag
   let confidenceLabel = 'متوسط';
@@ -345,7 +346,7 @@ Invalidation: ${signal.invalidation}`;
             </span>
           </div>
           <span className="text-base font-bold font-mono text-emerald-300">
-            ${(Number(signal.tp2) || 0).toFixed(2)}
+            {hasTp2 ? `$${(Number(signal.tp2) || 0).toFixed(2)}` : 'غير محدد (N/A)'}
           </span>
           <span className="text-[9px] text-emerald-300/70 block mt-0.5">
             TP2 RR: {tp2RrStr} {signal.tp2Points ? `(${signal.tp2Points} pts)` : '(Runner)'}

@@ -219,6 +219,13 @@ async function runAdversarialProductionSuite() {
       stopLoss: 2495.5,
       tp1: 2508.0, // target is past the 2503.0 obstacle
       setupName: 'Adversarial Blocked Runway',
+      strategyFamily: 'ORDER_BLOCK',
+      poiPrice: 2500.0,
+      poiMeta: {
+        type: 'ORDER_BLOCK',
+        top: 2500.5,
+        bottom: 2499.0,
+      },
     },
     {
       currentPrice: 2500.0,

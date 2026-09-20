@@ -22,6 +22,8 @@ export type StructuralSourceType =
   | '5M_SWING'
   | '15M_SWING'
   | 'SWING'
+  | 'SUPPORT'
+  | 'RESISTANCE'
   | '5M_OB'
   | '15M_OB'
   | 'ORDER_BLOCK'
@@ -48,7 +50,7 @@ export interface StructuralLevel {
   price: number;
   type: StructuralSourceType;
   isStructural: boolean; // true = genuine market structure; false = synthetic fallback
-  priority: number; // 1 = Swings/Liquidity/Barriers, 2 = OB, 3 = FVG, 4 = BB, 5 = Fib, 6 = ATR
+  priority: number; // 1 = Swings/Liquidity/Support/Resistance, 2 = OB, 3 = FVG, 4 = Other Structure, 5 = BB, 6 = Fib, 7 = ATR
   qualityScore: number; // Structural target quality score (higher = stronger/closer/fresher)
   name: string;
   distance: number;
@@ -59,6 +61,7 @@ export interface DynamicTpResult {
   valid: boolean;
   tp1: number;
   tp2: number;
+  hasValidTp2?: boolean;
   slDistance: number;
   slPoints: number;
   tp1Distance: number;
@@ -275,8 +278,67 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
     }
   }
 
-  // B. 5M & 15M Swing Pivots (Priority 1)
+  // B. 5M, 15M & 1H Swing Pivots, Support/Resistance & Liquidity Pools (Priority 1)
   if (isBuy) {
+    // 5M & 15M Resistance levels
+    if (indicators5m?.resistance && indicators5m.resistance > entry) {
+      const dist = Number((indicators5m.resistance - entry).toFixed(2));
+      const rr = Number((dist / slDistance).toFixed(2));
+      candidateLevels.push({
+        price: Number(indicators5m.resistance.toFixed(2)),
+        type: 'RESISTANCE',
+        isStructural: true,
+        priority: 1,
+        qualityScore: 98,
+        name: '5M Resistance Level',
+        distance: dist,
+        rr,
+      });
+    }
+    if (indicators15m?.resistance && indicators15m.resistance > entry) {
+      const dist = Number((indicators15m.resistance - entry).toFixed(2));
+      const rr = Number((dist / slDistance).toFixed(2));
+      candidateLevels.push({
+        price: Number(indicators15m.resistance.toFixed(2)),
+        type: 'RESISTANCE',
+        isStructural: true,
+        priority: 1,
+        qualityScore: 97,
+        name: '15M Resistance Level',
+        distance: dist,
+        rr,
+      });
+    }
+    // Liquidity Pools / Equal Highs
+    if (indicators5m?.liquidityLevels?.buySideLiquidity && indicators5m.liquidityLevels.buySideLiquidity > entry) {
+      const dist = Number((indicators5m.liquidityLevels.buySideLiquidity - entry).toFixed(2));
+      const rr = Number((dist / slDistance).toFixed(2));
+      candidateLevels.push({
+        price: Number(indicators5m.liquidityLevels.buySideLiquidity.toFixed(2)),
+        type: 'LIQUIDITY',
+        isStructural: true,
+        priority: 1,
+        qualityScore: 97,
+        name: '5M Buy-Side Liquidity Pool',
+        distance: dist,
+        rr,
+      });
+    }
+    if (indicators15m?.liquidityLevels?.buySideLiquidity && indicators15m.liquidityLevels.buySideLiquidity > entry) {
+      const dist = Number((indicators15m.liquidityLevels.buySideLiquidity - entry).toFixed(2));
+      const rr = Number((dist / slDistance).toFixed(2));
+      candidateLevels.push({
+        price: Number(indicators15m.liquidityLevels.buySideLiquidity.toFixed(2)),
+        type: 'LIQUIDITY',
+        isStructural: true,
+        priority: 1,
+        qualityScore: 96,
+        name: '15M Buy-Side Liquidity Pool',
+        distance: dist,
+        rr,
+      });
+    }
+    // Swings
     if (indicators5m?.swingHigh && indicators5m.swingHigh > entry) {
       const dist = Number((indicators5m.swingHigh - entry).toFixed(2));
       const rr = Number((dist / slDistance).toFixed(2));
@@ -320,7 +382,65 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
       });
     }
   } else {
-    // SELL: Swing Lows
+    // SELL: 5M & 15M Support levels
+    if (indicators5m?.support && indicators5m.support < entry) {
+      const dist = Number((entry - indicators5m.support).toFixed(2));
+      const rr = Number((dist / slDistance).toFixed(2));
+      candidateLevels.push({
+        price: Number(indicators5m.support.toFixed(2)),
+        type: 'SUPPORT',
+        isStructural: true,
+        priority: 1,
+        qualityScore: 98,
+        name: '5M Support Level',
+        distance: dist,
+        rr,
+      });
+    }
+    if (indicators15m?.support && indicators15m.support < entry) {
+      const dist = Number((entry - indicators15m.support).toFixed(2));
+      const rr = Number((dist / slDistance).toFixed(2));
+      candidateLevels.push({
+        price: Number(indicators15m.support.toFixed(2)),
+        type: 'SUPPORT',
+        isStructural: true,
+        priority: 1,
+        qualityScore: 97,
+        name: '15M Support Level',
+        distance: dist,
+        rr,
+      });
+    }
+    // Liquidity Pools / Equal Lows
+    if (indicators5m?.liquidityLevels?.sellSideLiquidity && indicators5m.liquidityLevels.sellSideLiquidity < entry) {
+      const dist = Number((entry - indicators5m.liquidityLevels.sellSideLiquidity).toFixed(2));
+      const rr = Number((dist / slDistance).toFixed(2));
+      candidateLevels.push({
+        price: Number(indicators5m.liquidityLevels.sellSideLiquidity.toFixed(2)),
+        type: 'LIQUIDITY',
+        isStructural: true,
+        priority: 1,
+        qualityScore: 97,
+        name: '5M Sell-Side Liquidity Pool',
+        distance: dist,
+        rr,
+      });
+    }
+    if (indicators15m?.liquidityLevels?.sellSideLiquidity && indicators15m.liquidityLevels.sellSideLiquidity < entry) {
+      const dist = Number((entry - indicators15m.liquidityLevels.sellSideLiquidity).toFixed(2));
+      const rr = Number((dist / slDistance).toFixed(2));
+      candidateLevels.push({
+        price: Number(indicators15m.liquidityLevels.sellSideLiquidity.toFixed(2)),
+        type: 'LIQUIDITY',
+        isStructural: true,
+        priority: 1,
+        qualityScore: 96,
+        name: '15M Sell-Side Liquidity Pool',
+        distance: dist,
+        rr,
+      });
+    }
+    // Swings
     if (indicators5m?.swingLow && indicators5m.swingLow < entry) {
       const dist = Number((entry - indicators5m.swingLow).toFixed(2));
       const rr = Number((dist / slDistance).toFixed(2));
@@ -428,7 +548,8 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
     }
   }
 
-  // E. 5M & 15M Bollinger Band Extremes (Priority 4)
+  // E. 5M & 15M Bollinger Band Extremes (Non-Structural Fallback, Priority 5)
+  // Bollinger Bands are NOT genuine market structure; set as non-structural fallback candidates only.
   if (isBuy) {
     if (indicators5m?.bollingerBands?.upper && indicators5m.bollingerBands.upper > entry) {
       const dist = Number((indicators5m.bollingerBands.upper - entry).toFixed(2));
@@ -436,10 +557,10 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
       candidateLevels.push({
         price: Number(indicators5m.bollingerBands.upper.toFixed(2)),
         type: '5M_BB',
-        isStructural: true,
-        priority: 4,
-        qualityScore: 75,
-        name: '5M Upper Volatility Band',
+        isStructural: false,
+        priority: 5,
+        qualityScore: 35,
+        name: '5M Upper Volatility Band (Non-Structural)',
         distance: dist,
         rr,
       });
@@ -450,10 +571,10 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
       candidateLevels.push({
         price: Number(indicators15m.bollingerBands.upper.toFixed(2)),
         type: '15M_BB',
-        isStructural: true,
-        priority: 4,
-        qualityScore: 72,
-        name: '15M Upper Volatility Band',
+        isStructural: false,
+        priority: 5,
+        qualityScore: 32,
+        name: '15M Upper Volatility Band (Non-Structural)',
         distance: dist,
         rr,
       });
@@ -466,10 +587,10 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
       candidateLevels.push({
         price: Number(indicators5m.bollingerBands.lower.toFixed(2)),
         type: '5M_BB',
-        isStructural: true,
-        priority: 4,
-        qualityScore: 75,
-        name: '5M Lower Volatility Band',
+        isStructural: false,
+        priority: 5,
+        qualityScore: 35,
+        name: '5M Lower Volatility Band (Non-Structural)',
         distance: dist,
         rr,
       });
@@ -480,10 +601,10 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
       candidateLevels.push({
         price: Number(indicators15m.bollingerBands.lower.toFixed(2)),
         type: '15M_BB',
-        isStructural: true,
-        priority: 4,
-        qualityScore: 72,
-        name: '15M Lower Volatility Band',
+        isStructural: false,
+        priority: 5,
+        qualityScore: 32,
+        name: '15M Lower Volatility Band (Non-Structural)',
         distance: dist,
         rr,
       });
@@ -506,8 +627,8 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
           price: fib1272,
           type: 'FIB_EXTENSION_1272',
           isStructural: false,
-          priority: 5,
-          qualityScore: 35,
+          priority: 6,
+          qualityScore: 30,
           name: 'Fibonacci 1.272 Extension Target',
           distance: dist1272,
           rr: Number((dist1272 / slDistance).toFixed(2)),
@@ -522,8 +643,8 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
           price: fib1618,
           type: 'FIB_EXTENSION_1618',
           isStructural: false,
-          priority: 5,
-          qualityScore: 30,
+          priority: 6,
+          qualityScore: 28,
           name: 'Fibonacci 1.618 Extension Target',
           distance: dist1618,
           rr: Number((dist1618 / slDistance).toFixed(2)),
@@ -539,7 +660,7 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
         price: atrProj1,
         type: 'ATR_PROJECTION',
         isStructural: false,
-        priority: 6,
+        priority: 7,
         qualityScore: 20,
         name: 'Dynamic ATR Projection Target',
         distance: distAtr1,
@@ -556,8 +677,8 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
           price: fib1272,
           type: 'FIB_EXTENSION_1272',
           isStructural: false,
-          priority: 5,
-          qualityScore: 35,
+          priority: 6,
+          qualityScore: 30,
           name: 'Fibonacci 1.272 Extension Target',
           distance: dist1272,
           rr: Number((dist1272 / slDistance).toFixed(2)),
@@ -571,8 +692,8 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
           price: fib1618,
           type: 'FIB_EXTENSION_1618',
           isStructural: false,
-          priority: 5,
-          qualityScore: 30,
+          priority: 6,
+          qualityScore: 28,
           name: 'Fibonacci 1.618 Extension Target',
           distance: dist1618,
           rr: Number((dist1618 / slDistance).toFixed(2)),
@@ -588,7 +709,7 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
         price: atrProj1,
         type: 'ATR_PROJECTION',
         isStructural: false,
-        priority: 6,
+        priority: 7,
         qualityScore: 20,
         name: 'Dynamic ATR Projection Target',
         distance: distAtr1,
@@ -598,6 +719,7 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
   }
 
   // 3. Filter out invalid candidates (wrong direction, non-finite, zero distance)
+  // No artificial R:R filtering here; genuine market structure is preserved.
   const validCandidates = candidateLevels.filter((c) => {
     if (typeof c.price !== 'number' || isNaN(c.price) || !isFinite(c.price)) return false;
     if (typeof c.distance !== 'number' || isNaN(c.distance) || !isFinite(c.distance) || c.distance <= 0.05) return false;
@@ -614,12 +736,12 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
   const structuralCandidates = validCandidates.filter((c) => c.isStructural);
   const syntheticCandidates = validCandidates.filter((c) => !c.isStructural);
 
-  // Sorting helper: Nearest objective first; if equidistant within 0.3 points, prefer higher quality/priority
+  // Sorting helper: Nearest objective first; if equidistant within 0.1 points, prefer higher priority/quality
   const sortByProximityAndQuality = (list: StructuralLevel[]) => {
     list.sort((a, b) => {
       const distDiff = a.distance - b.distance;
-      if (Math.abs(distDiff) < 0.3) {
-        return b.qualityScore - a.qualityScore || a.priority - b.priority;
+      if (Math.abs(distDiff) < 0.1) {
+        return a.priority - b.priority || b.qualityScore - a.qualityScore;
       }
       return distDiff;
     });
@@ -642,33 +764,37 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
   const tp1RrString = `1:${tp1Rr.toFixed(2)}`;
 
   // 6. TP2 Selection: Next meaningful structural objective farther than TP1
-  const remainingStructural = structuralCandidates.filter(
-    (c) => c.distance > tp1Distance + 0.3 * slDistance && Math.abs(c.price - tp1Price) >= 0.5
-  );
-  const remainingSynthetic = syntheticCandidates.filter(
-    (c) => c.distance > tp1Distance + 0.3 * slDistance && Math.abs(c.price - tp1Price) >= 0.5
+  // Geometry must strictly satisfy: BUY: TP2 > TP1 > Entry, SELL: TP2 < TP1 < Entry
+  // Remove arbitrary distance requirements that can discard a genuine nearby structural target.
+  const remainingStructural = structuralCandidates.filter((c) =>
+    isBuy ? c.price > tp1Price : c.price < tp1Price
   );
 
-  let selectedTp2: StructuralLevel;
-  let tp2ReasonText: string;
+  let selectedTp2: StructuralLevel | null = null;
+  let hasValidTp2 = false;
+  let tp2ReasonText = '';
 
   if (remainingStructural.length > 0) {
     selectedTp2 = remainingStructural[0];
+    hasValidTp2 = true;
     tp2ReasonText = `Next genuine structural objective (${selectedTp2.name})`;
-  } else if (remainingSynthetic.length > 0) {
-    selectedTp2 = remainingSynthetic[0];
-    tp2ReasonText = `Secondary extension fallback (${selectedTp2.name})`;
   } else {
-    // If no subsequent target exists, do not invent a huge fake target
-    selectedTp2 = selectedTp1;
-    tp2ReasonText = 'Single structural target identified; TP2 matches TP1';
+    // If no valid second structural target exists:
+    // DO NOT set TP2 equal to TP1.
+    // Do NOT invent a large mathematical TP2.
+    // Return a clearly invalid/no-second-target state (tp2 = 0) that downstream validation can handle safely.
+    selectedTp2 = null;
+    hasValidTp2 = false;
+    tp2ReasonText = 'No valid second structural target identified beyond TP1';
   }
 
-  const tp2Price = Number(selectedTp2.price.toFixed(2));
-  const tp2Distance = Number(Math.abs(tp2Price - entry).toFixed(2));
-  const tp2Points = Number((tp2Distance / 0.1).toFixed(1));
-  const tp2Rr = Number((tp2Distance / slDistance).toFixed(2));
-  const tp2RrString = `1:${tp2Rr.toFixed(2)}`;
+  const tp2Price = selectedTp2 ? Number(selectedTp2.price.toFixed(2)) : 0;
+  const tp2Distance = selectedTp2 ? Number(Math.abs(tp2Price - entry).toFixed(2)) : 0;
+  const tp2Points = selectedTp2 ? Number((tp2Distance / 0.1).toFixed(1)) : 0;
+  const tp2Rr = selectedTp2 ? Number((tp2Distance / slDistance).toFixed(2)) : 0;
+  const tp2RrString = selectedTp2 ? `1:${tp2Rr.toFixed(2)}` : 'N/A';
+  const tp2TargetName = selectedTp2 ? selectedTp2.name : 'None';
+  const tp2IsStructural = selectedTp2 ? selectedTp2.isStructural : false;
 
   const tp1SelectionReason = selectedTp1.isStructural
     ? `Nearest genuine structural objective (${selectedTp1.name}) at ${tp1Price} (Distance: ${tp1Points} pts, Natural RR: ${tp1RrString})`
@@ -678,6 +804,7 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
     valid: true,
     tp1: tp1Price,
     tp2: tp2Price,
+    hasValidTp2,
     slDistance,
     slPoints,
     tp1Distance,
@@ -689,7 +816,7 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
     tp2Rr,
     tp2RrString,
     tp1TargetName: selectedTp1.name,
-    tp2TargetName: selectedTp2.name,
+    tp2TargetName,
     tpSelectionReason: `${tp1SelectionReason}. TP2: ${tp2ReasonText}.`,
     structuralTargetUsed: selectedTp1.name,
     passedVolatilityCheck: true,
@@ -705,7 +832,7 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
     isModified: false,
     modificationReason: 'None (Natural Market Structure Target)',
     tp1IsStructural: selectedTp1.isStructural,
-    tp2IsStructural: selectedTp2.isStructural,
+    tp2IsStructural,
     tp1QualityScore: selectedTp1.qualityScore,
     tp1SelectionTelemetry: {
       selectedPrice: tp1Price,
@@ -718,11 +845,11 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
     },
     tp2SelectionTelemetry: {
       selectedPrice: tp2Price,
-      sourceType: selectedTp2.type,
-      structuralName: selectedTp2.name,
+      sourceType: selectedTp2 ? selectedTp2.type : 'NONE',
+      structuralName: tp2TargetName,
       distancePoints: tp2Points,
       naturalRr: tp2Rr,
-      isStructural: selectedTp2.isStructural,
+      isStructural: tp2IsStructural,
       reason: tp2ReasonText,
     },
   };
@@ -736,8 +863,9 @@ function createEmptyTpResult(
 ): DynamicTpResult {
   return {
     valid: false,
-    tp1: entry,
-    tp2: entry,
+    tp1: 0,
+    tp2: 0,
+    hasValidTp2: false,
     slDistance,
     slPoints: Number((slDistance / 0.1).toFixed(1)),
     tp1Distance: 0,
@@ -747,7 +875,7 @@ function createEmptyTpResult(
     tp2Distance: 0,
     tp2Points: 0,
     tp2Rr: 0,
-    tp2RrString: '1:0',
+    tp2RrString: 'N/A',
     tp1TargetName: 'None',
     tp2TargetName: 'None',
     tpSelectionReason: rejectionReason,
@@ -767,7 +895,7 @@ function createEmptyTpResult(
     tp2IsStructural: false,
     tp1QualityScore: 0,
     tp1SelectionTelemetry: {
-      selectedPrice: entry,
+      selectedPrice: 0,
       sourceType: 'NONE',
       structuralName: 'None',
       distancePoints: 0,
@@ -776,7 +904,7 @@ function createEmptyTpResult(
       reason: rejectionReason,
     },
     tp2SelectionTelemetry: {
-      selectedPrice: entry,
+      selectedPrice: 0,
       sourceType: 'NONE',
       structuralName: 'None',
       distancePoints: 0,

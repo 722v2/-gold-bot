@@ -17,7 +17,9 @@ scanner.onSignal((signal) => {
   console.log(`[ALERT] NEW QUALIFIED TRADE SIGNAL FOUND: ${signal.signal}`);
   console.log(`Setup: ${signal.setup} | Confidence: ${signal.confidence}%`);
   console.log(`Entry: $${signal.entry.toFixed(2)} | SL: $${signal.stopLoss.toFixed(2)} (${signal.slPoints} pts)`);
-  console.log(`TP1: $${signal.tp1.toFixed(2)} (${signal.tp1RrString || '1:1.50'}) | TP2: $${signal.tp2.toFixed(2)} (${signal.tp2RrString || '1:3.00'})`);
+  const tp1RrLabel = signal.tp1RrString || (signal.tp1Rr ? `1:${signal.tp1Rr.toFixed(2)}` : 'N/A');
+  const tp2RrLabel = (signal.tp2 && signal.tp2 > 0) ? (signal.tp2RrString || (signal.tp2Rr ? `1:${signal.tp2Rr.toFixed(2)}` : 'N/A')) : 'N/A';
+  console.log(`TP1: $${signal.tp1.toFixed(2)} (${tp1RrLabel}) | TP2: $${signal.tp2 && signal.tp2 > 0 ? '$' + signal.tp2.toFixed(2) : 'N/A'} (${tp2RrLabel})`);
   console.log(`Risk: ${signal.riskPercent}% ($${signal.riskAmount.toFixed(2)}) | Lot Size: ${signal.recommendedLotSize} Std Lot`);
   console.log('----------------------------------------------------\n');
 });

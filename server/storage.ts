@@ -194,6 +194,8 @@ export class PersistentStorage {
         (t) => !String(t.id).startsWith('test-trade-') && !String(t.id).startsWith('phantom-trade-')
       );
       this.inMemoryTelegramDispatches.clear();
+      this.inMemoryExperienceRecords = [];
+      this.inMemoryFactorSnapshots.clear();
     }
   }
 
@@ -1084,15 +1086,17 @@ export class PersistentStorage {
         slPoints: Math.round(Math.abs(opp.entry - opp.stopLoss) / 0.1),
         tp1: opp.tp1,
         tp1Points: Math.round(Math.abs(opp.tp1 - opp.entry) / 0.1),
-        tp1Rr: 1.5,
-        tp1RrString: '1:1.50',
-        tp2: opp.tp2,
-        tp2Points: Math.round(Math.abs(opp.tp2 - opp.entry) / 0.1),
-        tp2Rr: 3.0,
-        tp2RrString: '1:3.00',
+        tp1Rr: Math.abs(opp.entry - opp.stopLoss) > 0 ? Number((Math.abs(opp.tp1 - opp.entry) / Math.abs(opp.entry - opp.stopLoss)).toFixed(2)) : 1.0,
+        tp1RrString: Math.abs(opp.entry - opp.stopLoss) > 0 ? `1:${(Math.abs(opp.tp1 - opp.entry) / Math.abs(opp.entry - opp.stopLoss)).toFixed(2)}` : '1:1.00',
+        tp2: (opp.tp2 && opp.tp2 > 0 && Math.abs(opp.tp2 - opp.entry) > 0.01) ? opp.tp2 : 0,
+        tp2Points: (opp.tp2 && opp.tp2 > 0 && Math.abs(opp.tp2 - opp.entry) > 0.01) ? Math.round(Math.abs(opp.tp2 - opp.entry) / 0.1) : 0,
+        tp2Rr: (opp.tp2 && opp.tp2 > 0 && Math.abs(opp.entry - opp.stopLoss) > 0) ? Number((Math.abs(opp.tp2 - opp.entry) / Math.abs(opp.entry - opp.stopLoss)).toFixed(2)) : 0,
+        tp2RrString: (opp.tp2 && opp.tp2 > 0 && Math.abs(opp.entry - opp.stopLoss) > 0) ? `1:${(Math.abs(opp.tp2 - opp.entry) / Math.abs(opp.entry - opp.stopLoss)).toFixed(2)}` : 'N/A',
         primaryTarget: 'TP1',
-        rr: '1:1.50',
-        rrRatio: 1.5,
+        rr: (opp.tp2 && opp.tp2 > 0 && Math.abs(opp.entry - opp.stopLoss) > 0)
+          ? `TP1: 1:${(Math.abs(opp.tp1 - opp.entry) / Math.abs(opp.entry - opp.stopLoss)).toFixed(2)} | TP2: 1:${(Math.abs(opp.tp2 - opp.entry) / Math.abs(opp.entry - opp.stopLoss)).toFixed(2)}`
+          : `1:${Math.abs(opp.entry - opp.stopLoss) > 0 ? (Math.abs(opp.tp1 - opp.entry) / Math.abs(opp.entry - opp.stopLoss)).toFixed(2) : '1.00'}`,
+        rrRatio: Math.abs(opp.entry - opp.stopLoss) > 0 ? Number((Math.abs(opp.tp1 - opp.entry) / Math.abs(opp.entry - opp.stopLoss)).toFixed(2)) : 1.0,
         riskPercent: 15,
         riskAmount: 0,
         potentialProfit: 0,
@@ -1415,7 +1419,9 @@ export class PersistentStorage {
       const tp2Price = Number(record.tp2 || tradeToUpdate.tp2 || signalData?.tp2 || 0);
 
       const theoreticalTp1Profit = Number((Math.abs(entryPrice - tp1Price) * 100 * lotSize).toFixed(2));
-      const theoreticalTp2Profit = Number((Math.abs(entryPrice - tp2Price) * 100 * lotSize).toFixed(2));
+      const theoreticalTp2Profit = (tp2Price > 0 && Math.abs(entryPrice - tp2Price) > 0.01)
+        ? Number((Math.abs(entryPrice - tp2Price) * 100 * lotSize).toFixed(2))
+        : undefined;
 
       const previousPnl =
         typeof tradeToUpdate.realizedPnl === 'number'
@@ -2317,7 +2323,9 @@ export class PersistentStorage {
   public saveFactorSnapshot(snapshot: any): void {
     if (!snapshot || !snapshot.signalId) return;
     this.inMemoryFactorSnapshots.set(snapshot.signalId, snapshot);
-    this.syncJsonBackups();
+    if (this.shouldPersist()) {
+      this.syncJsonBackups();
+    }
   }
 
   public getFactorSnapshot(signalId: string): any | null {
@@ -2338,25 +2346,27 @@ export class PersistentStorage {
     if (this.inMemoryExperienceRecords.length > 1000) {
       this.inMemoryExperienceRecords = this.inMemoryExperienceRecords.slice(-1000);
     }
-    this.safeSupabase(
-      (c) =>
-        c.from('experience_records').upsert({
-          id: record.id,
-          signal_id: record.signalId,
-          trade_id: record.tradeId || null,
-          combination_key: record.combinationKey,
-          factors: record.factors,
-          direction: record.direction,
-          setup_family: record.setupFamily,
-          outcome: record.outcome,
-          realized_pnl: record.realizedPnl,
-          rr: record.rr || null,
-          completed_at: record.completedAt,
-          raw_data: record,
-        }),
-      'saveExperienceRecord'
-    );
-    this.syncJsonBackups();
+    if (this.shouldPersist()) {
+      this.safeSupabase(
+        (c) =>
+          c.from('experience_records').upsert({
+            id: record.id,
+            signal_id: record.signalId,
+            trade_id: record.tradeId || null,
+            combination_key: record.combinationKey,
+            factors: record.factors,
+            direction: record.direction,
+            setup_family: record.setupFamily,
+            outcome: record.outcome,
+            realized_pnl: record.realizedPnl,
+            rr: record.rr || null,
+            completed_at: record.completedAt,
+            raw_data: record,
+          }),
+        'saveExperienceRecord'
+      );
+      this.syncJsonBackups();
+    }
   }
 
   public getCompletedExperienceRecords(): any[] {

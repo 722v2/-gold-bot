@@ -9,6 +9,8 @@ import { calculatePositionSizing } from '../server/riskManager.js';
 import { TechnicalIndicators, Candle } from '../src/types.js';
 
 function buildMockIndicators(overrides: Partial<TechnicalIndicators> = {}): TechnicalIndicators {
+  const swingHigh = overrides.swingHigh ?? 2660;
+  const swingLow = overrides.swingLow ?? 2640;
   return {
     trendStructure: 'HH_HL',
     structure: 'BULLISH',
@@ -20,11 +22,11 @@ function buildMockIndicators(overrides: Partial<TechnicalIndicators> = {}): Tech
     vwap: 2650,
     rsi14: 60,
     macd: { macd: 1, signal: 0.5, histogram: 0.5 },
-    bollingerBands: { upper: 2660, middle: 2650, lower: 2640 },
-    swingHigh: 2660,
-    swingLow: 2640,
-    support: 2640,
-    resistance: 2660,
+    bollingerBands: { upper: swingHigh, middle: 2650, lower: swingLow },
+    swingHigh,
+    swingLow,
+    support: swingLow,
+    resistance: swingHigh,
     ...overrides,
   };
 }

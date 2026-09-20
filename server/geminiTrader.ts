@@ -122,7 +122,7 @@ export function algorithmicScreening(input: MarketAnalysisInput): {
     };
   }
 
-  const minRr = input.brokerSpecs?.minRr ?? 1.5;
+  const minRr = input.brokerSpecs?.minRr ?? 1.0;
   return {
     decision: 'NO TRADE',
     entry: input.currentPrice,
@@ -283,8 +283,6 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
     }))
   };
 
-  const minRr = input.brokerSpecs?.minRr ?? 1.5;
-
   const systemInstruction = `أنت AI Trading Agent فائق الذكاء ومحترف للغاية متخصص في تداول الذهب XAU/USD بنظام Scalping على حساب صغير (يبدأ من $10).
 القواعد الصارمة لمحرك التداول والأهداف الربحية:
 1. الهدف الأساسي: حماية رأس المال واختيار صفقات نوعية عالية الجودة بناءً على حالة السوق (Market Regime)، واستراتيجيات الهيكل (Structure)، والسيولة (Liquidity Sweeps)، وOrder Blocks، وFVG، وFibonacci OTE، واستمرار الترند (Trend Continuation)، واستراتيجيات النطاق (Range SFP Reversal & Breakout Expansion).
@@ -298,9 +296,12 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
 4. حساب وقف الخسارة (SL):
    - للذهب: 1 point = 0.10$ حركة سعر (abs(Entry - SL) / 0.10).
    - نطاق الـStop Loss الفني المسموح به هو من 35 إلى 65 نقطة.
-5. قواعد محرك الأهداف الهيكلية والامتدادية (Dynamic TP Engine Rules):
-   - الهدف الأول (TP1): يجب أن يحقق نسبة عائد لا تقل عن ${minRr}R (حيث R = مسافة الـSL)، سواء تم تحديده من مستويات هيكلية سابقة أو امتدادات فيبوناتشي / ATR في حال كسر القمم/القيعان التاريخية.
-   - الهدف الثاني (TP2): 2.5R أو 3R فما فوق لاستهداف سيولة هيكلية أو امتدادية أبعد.
+5. سياسة الأهداف الهيكلية الصارمة (Market Structure Target Policy):
+   - الهدف الأول (TP1) هو أقرب هدف هيكلي حقيقي وملموس في السوق (Nearest genuine market-structure objective مثل Swings / S/R / Liquidity Pools / Order Blocks / FVG).
+   - نسبة العائد إلى المخاطرة (R:R) هي مقياس ناتج (Output metric) وليست معياراً تعسفياً لتوليد الأهداف.
+   - الهدف الهيكلي الحقيقي الذي يحقق نسبة عائد طبيعية حول 1.0R–1.4R يُعتبر صالحاً تماماً ومقبولاً إذا كانت جودة النموذج، والدخول، ووقف الخسارة، وهيكل السوق، وشروط التنفيذ قوية ومكتملة.
+   - يُحظر تماماً على الذكاء الاصطناعي مدّ أو إبعاد الهدف الأول (TP1) بعيداً عن الهيكل الحقيقي لمجرد تحسين نسبة R:R حسابياً بشكل مصطنع.
+   - الهدف الثاني (TP2): هو الهدف الهيكلي الحقيقي التالي بعد TP1 (Next genuine structural objective). إذا لم يوجد هدف هيكلي ثانٍ صالح وواضح في السوق، لا تخترع هدفاً رياضياً ضخماً ولا تضع TP2 مساوياً لـ TP1، بل اتركه غير محدد أو 0.
    - إذا تم توفير مرشحات استراتيجية صالحة في "topCandidates"، قم بتقييمها واختيار الأقوى أو تأكيدها.
 6. الثقة (Confidence): من 70 إلى 96 للصفقات الصالحة.
 7. في حال عدم وجود فرصة حقيقية أو تذبذب في منتصف الرينج، اختر "NO TRADE" واذكر السبب بالتفصيل.
@@ -417,7 +418,7 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
           entry: aiEntry,
           stopLoss: aiSl,
           tp1: aiTp1,
-          tp2: aiTp2 || aiTp1,
+          tp2: (typeof aiTp2 === 'number' && aiTp2 > 0 && Math.abs(aiTp2 - aiEntry) > 0.01) ? aiTp2 : 0,
           confidence: Math.min(100, Math.max(0, Number(parsed.confidence || 75))),
           timeframe: parsed.timeframe || '15M / 5M',
           setup: aiSetup,
@@ -438,7 +439,7 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
         setup: 'No Setup',
         mainReasons: [],
         invalidation: 'N/A',
-        noTradeReason: parsed.noTradeReason || 'عدم وجود فرصة واضحة بنسبة عائد تفوق 1:1.5R مع وقف خسارة مناسب.'
+        noTradeReason: parsed.noTradeReason || 'عدم وجود فرصة واضحة بنسبة عائد تفوق 1:1.0R مع وقف خسارة مناسب.'
       }, input);
     }
 
@@ -511,7 +512,7 @@ function buildFinalSignal(
   input: MarketAnalysisInput
 ): TradeSignal {
   const { asset, balance, currentPrice, losingStreak, brokerSpecs } = input;
-  const minRr = brokerSpecs?.minRr ?? 1.5;
+  const minRr = brokerSpecs?.minRr ?? 1.0;
   const id = `sig_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
   if (raw.decision === 'NO TRADE') {
@@ -565,7 +566,7 @@ function buildFinalSignal(
   });
 
   const targetTp1 = dynamicTp.valid ? dynamicTp.tp1 : raw.tp1;
-  const targetTp2 = dynamicTp.valid ? dynamicTp.tp2 : raw.tp2;
+  const targetTp2 = dynamicTp.valid ? (dynamicTp.hasValidTp2 ? dynamicTp.tp2 : 0) : (raw.tp2 && raw.tp2 !== raw.tp1 ? raw.tp2 : 0);
 
   // Evaluate risk strictly with configurable broker specs and intelligent executability optimization
   const riskEval = evaluateTradeRisk({
@@ -614,7 +615,7 @@ function buildFinalSignal(
       setup: raw.setup,
       mainReasons: [],
       invalidation: 'N/A',
-      noTradeReason: riskEval.reason || 'الـSetup لا يحقق معايير إدارة المخاطر (RR >= 1.5 أو SL المناسب).'
+      noTradeReason: riskEval.reason || 'الـSetup لا يحقق معايير إدارة المخاطر (نسبة عائد أو وقف خسارة غير مناسب).'
     };
   }
 
@@ -627,8 +628,8 @@ function buildFinalSignal(
   if (riskEval.optimizationNote) {
     reasonsList.unshift(riskEval.optimizationNote);
   }
-  reasonsList.push(`الهدف الأول TP1 (${finalTp1}) يستهدف ${dynamicTp.tp1TargetName || 'المستوى الهيكلي'} بنسبة عائد ${riskEval.tp1RrString} (${riskEval.tp1Points} نقطة ≥ ${minRr}R).`);
-  if (finalTp2) {
+  reasonsList.push(`الهدف الأول TP1 (${finalTp1}) يستهدف ${dynamicTp.tp1TargetName || 'المستوى الهيكلي'} بنسبة عائد ${riskEval.tp1RrString} (${riskEval.tp1Points} نقطة).`);
+  if (finalTp2 && finalTp2 > 0) {
     reasonsList.push(`الهدف الثاني TP2 (${finalTp2}) يستهدف ${dynamicTp.tp2TargetName || 'الامتداد الهيكلي'} بنسبة عائد ${riskEval.tp2RrString} (${riskEval.tp2Points} نقطة).`);
   }
 

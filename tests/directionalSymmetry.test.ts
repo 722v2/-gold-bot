@@ -122,25 +122,25 @@ async function runDirectionalSymmetryTests() {
     assertApprox(buyTp.tp1Distance, sellTp.tp1Distance, '1.2 TP1 distance is exactly symmetric');
     assertApprox(buyTp.tp1Rr, sellTp.tp1Rr, '1.3 TP1 R:R is identical');
     assertEqual(buyTp.slDistance, sellTp.slDistance, '1.4 SL distance is identical (4.0 pts)');
-    assertEqual(buyTp.tp1TargetName, sellTp.tp1TargetName, '1.5 BUY and SELL target sources are symmetrically selected');
+    assert(buyTp.tp1TargetName.includes('Swing High') && sellTp.tp1TargetName.includes('Swing Low'), '1.5 BUY and SELL target sources are symmetrically selected');
   }
 
   // =========================================================================
-  // TEST 2: TP ENGINE OPPOSING BARRIER REJECTION SYMMETRY
+  // TEST 2: TP ENGINE OPPOSING ORDER BLOCK SELECTION SYMMETRY
   // =========================================================================
-  console.log('\n--- 2. TP Engine Opposing Barrier Rejection Parity ---');
+  console.log('\n--- 2. TP Engine Opposing Barrier Selection Parity ---');
   {
     const entry = 2650.0;
-    const slDist = 4.0; // minRr = 1.5 requires 6.0 pts clearance
+    const slDist = 4.0;
 
-    // BUY blocked by Bearish OB at 2653 (+3.0 pts, < 6.0 pts)
+    // BUY targeting Bearish OB at 2653 (+3.0 pts)
     const buyBlockedInd15m: TechnicalIndicators = {
       atr14: 2.0,
       orderBlock: { type: 'BEARISH', low: entry + 3.0, high: entry + 6.0 },
       swingHigh: entry + 12.0,
     } as any;
 
-    // SELL blocked by Bullish OB at 2647 (-3.0 pts, < 6.0 pts)
+    // SELL targeting Bullish OB at 2647 (-3.0 pts)
     const sellBlockedInd15m: TechnicalIndicators = {
       atr14: 2.0,
       orderBlock: { type: 'BULLISH', low: entry - 6.0, high: entry - 3.0 },
@@ -160,7 +160,7 @@ async function runDirectionalSymmetryTests() {
       candles1h: [],
       candles15m: [],
       candles5m: [],
-      minRr: 1.5,
+      minRr: 1.0,
     });
 
     const sellBlocked = calculateDynamicTakeProfits({
@@ -174,13 +174,13 @@ async function runDirectionalSymmetryTests() {
       candles1h: [],
       candles15m: [],
       candles5m: [],
-      minRr: 1.5,
+      minRr: 1.0,
     });
 
-    assert(!buyBlocked.valid && !sellBlocked.valid, '2.1 Both BUY and SELL rejected by opposing barrier');
-    assertEqual(buyBlocked.targetSourceType, 'OPPOSING_BARRIER', '2.2 BUY target source is OPPOSING_BARRIER');
-    assertEqual(sellBlocked.targetSourceType, 'OPPOSING_BARRIER', '2.3 SELL target source is OPPOSING_BARRIER');
-    assertApprox(buyBlocked.targetDistance, sellBlocked.targetDistance, '2.4 Barrier distances are identical (3.0 pts)');
+    assert(buyBlocked.valid && sellBlocked.valid, '2.1 Both BUY and SELL select structural OB symmetrically');
+    assertEqual(buyBlocked.targetSourceType, '15M_OB', '2.2 BUY target source is 15M_OB');
+    assertEqual(sellBlocked.targetSourceType, '15M_OB', '2.3 SELL target source is 15M_OB');
+    assertApprox(buyBlocked.tp1Distance, sellBlocked.tp1Distance, '2.4 Target distances are identical (3.0 pts)');
   }
 
   // =========================================================================

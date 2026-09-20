@@ -7,5 +7,14 @@
   "cand_bullish_ob_retest_BUY_2500",
   "cand_bearish_breakdown_SELL_2500",
   "cand_bullish_breakout_BUY_2500",
-  "cand_bullish_order_block_retest___reaction_BUY_4385"
+  "cand_bullish_order_block_retest___reaction_BUY_4385",
+  "cand_bare_sr_BUY_2650",
+  "cand_setup_BUY_2650",
+  "cand_setup_BUY_4380",
+  "cand_setup_SELL_4380",
+  "cand_cold_restart_verification_trade_BUY_2650",
+  "cand_single_target_s10_ob_BUY_2650",
+  "cand_dual_target_s10_ob_BUY_2650",
+  "cand_be_path_s10_ob_BUY_2650",
+  "cand_bearish_breakdown_s10_SELL_2660"
 ]

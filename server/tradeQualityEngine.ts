@@ -21,6 +21,7 @@ import {
   TradeOpportunity,
 } from '../src/types.js';
 import { storage } from './storage.js';
+import { partition5mCandles } from './candleUtils.js';
 
 // ============================================================================
 // 1. SETUP FRESHNESS & POI MITIGATION ENGINE
@@ -488,19 +489,63 @@ export function assessEntryTimingAndAntiChase(
   idealEntry: number,
   candles5m: Candle[],
   indicators5m: TechnicalIndicators,
-  regime: string
+  regime: string,
+  poiContext?: {
+    top?: number;
+    bottom?: number;
+    poiPrice?: number;
+    invalidationPrice?: number;
+    type?: string;
+  },
+  candles1m?: Candle[],
+  currentSpread?: number
 ): EntryTimingAssessment {
   const atr = Math.max(0.5, indicators5m.atr14 || 2.0);
-  const distance = Math.abs(currentPrice - idealEntry);
-  const distanceFromPoiAtr = Number((distance / atr).toFixed(2));
 
-  // Evaluate displacement over last 3 candles
+  // Calculate distance from structural POI
+  let distanceFromPoi = Math.abs(currentPrice - idealEntry);
+  if (poiContext) {
+    const poiTop = poiContext.top ?? poiContext.poiPrice ?? idealEntry;
+    const poiBottom = poiContext.bottom ?? poiContext.poiPrice ?? idealEntry;
+
+    if (direction === 'BUY') {
+      if (currentPrice >= poiBottom && currentPrice <= poiTop) {
+        distanceFromPoi = 0;
+      } else if (currentPrice > poiTop) {
+        distanceFromPoi = currentPrice - poiTop;
+      } else {
+        distanceFromPoi = poiBottom - currentPrice;
+      }
+    } else {
+      // SELL
+      if (currentPrice >= poiBottom && currentPrice <= poiTop) {
+        distanceFromPoi = 0;
+      } else if (currentPrice < poiBottom) {
+        distanceFromPoi = poiBottom - currentPrice;
+      } else {
+        distanceFromPoi = currentPrice - poiTop;
+      }
+    }
+  }
+
+  const distanceFromPoiAtr = Number((distanceFromPoi / atr).toFixed(2));
+
+  // Evaluate displacement over last 1-3 candles
   const recent3 = candles5m.slice(-3);
   let totalDisplacement = 0;
-  if (recent3.length >= 2) {
-    const startPrice = recent3[0].open;
-    const endPrice = recent3[recent3.length - 1].close;
-    totalDisplacement = Math.abs(endPrice - startPrice);
+  let netDisplacementDirection: 'UP' | 'DOWN' | 'NONE' = 'NONE';
+  if (recent3.length >= 1) {
+    const lastC = recent3[recent3.length - 1];
+    const prevC = recent3.length >= 2 ? recent3[recent3.length - 2] : lastC;
+    const startC = recent3[0];
+
+    const disp1 = Math.abs(lastC.close - lastC.open);
+    const disp2 = Math.abs(lastC.close - prevC.open);
+    const disp3 = Math.abs(lastC.close - startC.open);
+    totalDisplacement = Math.max(disp1, disp2, disp3);
+
+    if (lastC.close > startC.open + 0.1 || lastC.close > prevC.open + 0.1) netDisplacementDirection = 'UP';
+    else if (lastC.close < startC.open - 0.1 || lastC.close < prevC.open - 0.1) netDisplacementDirection = 'DOWN';
   }
   const displacementAtr = Number((totalDisplacement / atr).toFixed(2));
 
@@ -513,25 +558,31 @@ export function assessEntryTimingAndAntiChase(
   const isBreakout = strategyFamily === 'RANGE_BREAKOUT_EXPANSION';
   const isSfp = strategyFamily === 'RANGE_SFP_REVERSAL' || strategyFamily === 'LIQUIDITY_SWEEP';
 
-  if (isBreakout) {
-    // Breakouts tolerate slightly larger displacement upon confirmation
+  // Check for late displacement entry:
+  // A strong displacement candle/move confirmed direction, but price has already expanded away from the POI without a pullback
+  const isDisplacementInTradeDirection =
+    (direction === 'BUY' && netDisplacementDirection === 'UP') ||
+    (direction === 'SELL' && netDisplacementDirection === 'DOWN');
+
+  if (isBreakout || isSfp) {
+    // Breakouts and SFP / Liquidity sweeps tolerate slightly larger confirmation displacement
     if (distanceFromPoiAtr <= 1.2) {
       timing = 'OPTIMAL';
-      reason = `Optimal breakout expansion entry (within ${distanceFromPoiAtr} ATR of breakout level)`;
+      reason = `Optimal ${isBreakout ? 'breakout expansion' : 'sweep reversal'} entry (within ${distanceFromPoiAtr} ATR of trigger)`;
     } else if (distanceFromPoiAtr <= 2.2) {
       timing = 'ACCEPTABLE';
       timingPenalty = 8;
-      reason = `Acceptable breakout entry (${distanceFromPoiAtr} ATR from trigger)`;
+      reason = `Acceptable ${isBreakout ? 'breakout' : 'sweep reversal'} entry (${distanceFromPoiAtr} ATR from trigger)`;
     } else if (distanceFromPoiAtr <= 3.2) {
       timing = 'LATE';
       timingPenalty = 20;
       isChasing = true;
-      reason = `Late breakout entry (${distanceFromPoiAtr} ATR from trigger) - Risk of pullback retest`;
+      reason = `Late ${isBreakout ? 'breakout' : 'sweep reversal'} entry (${distanceFromPoiAtr} ATR from trigger) - Risk of pullback retest`;
     } else {
       timing = 'CHASED';
       timingPenalty = 40;
       isChasing = true;
-      reason = `Chased breakout expansion (${distanceFromPoiAtr} ATR displacement) - Disqualified`;
+      reason = `Chased ${isBreakout ? 'breakout expansion' : 'sweep reversal'} (${distanceFromPoiAtr} ATR displacement) - Disqualified`;
     }
   } else {
     // Pullback / Order Block / FVG / OTE setups demand tight execution near the POI
@@ -542,7 +593,7 @@ export function assessEntryTimingAndAntiChase(
       timing = 'ACCEPTABLE';
       timingPenalty = 6;
       reason = `Acceptable entry near POI (${distanceFromPoiAtr} ATR)`;
-    } else if (distanceFromPoiAtr <= 2.5) {
+    } else if (distanceFromPoiAtr <= 2.0) {
       timing = 'LATE';
       timingPenalty = 18;
       isChasing = true;
@@ -552,6 +603,59 @@ export function assessEntryTimingAndAntiChase(
       timingPenalty = 35;
       isChasing = true;
       reason = `Chased entry (${distanceFromPoiAtr} ATR from POI) - Disqualified to prevent chasing`;
+    }
+
+    // FIX 2: If recent candles exhibited strong displacement in trade direction and price is extended (> 1.2 ATR away without pullback)
+    if (isDisplacementInTradeDirection && displacementAtr >= 1.2 && distanceFromPoiAtr > 1.2) {
+      timing = 'CHASED';
+      isChasing = true;
+      timingPenalty = Math.max(timingPenalty, 30);
+      reason = `Late displacement entry: Price displaced ${displacementAtr} ATR away from POI without a pullback (${distanceFromPoiAtr} ATR from POI)`;
+    }
+  }
+
+  // FIX 6: 1M micro-structure timing refinement vs runaway expansion confirmation
+  if (candles1m && candles1m.length >= 5) {
+    const recent5_1m = candles1m.slice(-5);
+    const m1Start = recent5_1m[0].open;
+    const m1End = recent5_1m[recent5_1m.length - 1].close;
+    const m1Displacement = Math.abs(m1End - m1Start);
+    const m1DisplacementAtr = m1Displacement / atr;
+
+    if (direction === 'BUY') {
+      const isRunaway1m = m1End > m1Start + 0.1 && m1DisplacementAtr >= 1.0 && distanceFromPoiAtr > 1.2;
+      if (isRunaway1m) {
+        timing = 'CHASED';
+        isChasing = true;
+        timingPenalty = Math.max(timingPenalty, 35);
+        reason = `1M micro-structure confirms active runaway expansion away from POI (${m1DisplacementAtr.toFixed(1)} ATR) - Chased entry`;
+      } else if (distanceFromPoiAtr <= 0.8 && timing !== 'CHASED') {
+        timing = 'OPTIMAL';
+        reason = `Optimal entry: 1M micro-pullback retest confirmed near structural POI (${distanceFromPoiAtr} ATR)`;
+      }
+    } else {
+      // SELL
+      const isRunaway1m = m1End < m1Start - 0.1 && m1DisplacementAtr >= 1.0 && distanceFromPoiAtr > 1.2;
+      if (isRunaway1m) {
+        timing = 'CHASED';
+        isChasing = true;
+        timingPenalty = Math.max(timingPenalty, 35);
+        reason = `1M micro-structure confirms active runaway expansion away from POI (${m1DisplacementAtr.toFixed(1)} ATR) - Chased entry`;
+      } else if (distanceFromPoiAtr <= 0.8 && timing !== 'CHASED') {
+        timing = 'OPTIMAL';
+        reason = `Optimal entry: 1M micro-pullback retest confirmed near structural POI (${distanceFromPoiAtr} ATR)`;
+      }
+    }
+  }
+
+  // FIX 4: Spread impact on entry quality
+  if (currentSpread !== undefined && currentSpread > 0) {
+    const spreadPts = currentSpread / 0.1;
+    if (spreadPts > 12.0 || currentSpread / atr > 0.45) {
+      timing = 'CHASED';
+      isChasing = true;
+      timingPenalty = Math.max(timingPenalty, 35);
+      reason = `SPREAD_EXCESSIVE: Spread (${spreadPts.toFixed(1)} pts) degrades structural entry quality beyond acceptable limit`;
     }
   }
 
@@ -584,23 +688,27 @@ export function assessPriceActionTrigger(
   direction: 'BUY' | 'SELL',
   candles5m: Candle[],
   candles1m: Candle[] = [],
-  indicators5m: TechnicalIndicators
+  indicators5m: TechnicalIndicators,
+  referenceTime?: number
 ): TriggerAssessment {
   const allTriggers: PriceActionTriggerType[] = [];
   let confirmationScore = 0;
-  const last5m = candles5m[candles5m.length - 1];
-  const prev5m = candles5m[candles5m.length - 2];
 
-  if (!last5m) {
+  // FIX 1: Enforce closed 5M candle requirement. NEVER evaluate trigger on forming candle.
+  const partition = partition5mCandles(candles5m, referenceTime);
+  if (!partition.isValid || !partition.lastClosedCandle) {
     return {
       hasTrigger: false,
       primaryTrigger: null,
       allTriggers: [],
       triggerTimeframe: '5M',
       confirmationScore: 0,
-      description: 'No candle data available for trigger validation',
+      description: partition.unreliableReason || 'Cannot reliably confirm closed 5M candle for price-action trigger',
     };
   }
+
+  const last5m = partition.lastClosedCandle;
+  const prev5m = partition.prevClosedCandle;
 
   const isBull = last5m.close > last5m.open;
   const isBear = last5m.close < last5m.open;
@@ -611,48 +719,62 @@ export function assessPriceActionTrigger(
 
   // 1. Rejection Wick (Dominant wick relative to body, range, and opposing wick)
   let rejectionRatio = 0;
+  let wickScore = 0;
   if (direction === 'BUY') {
     rejectionRatio = lowerWick / totalRange;
     if (lowerWick > body * 1.3 && lowerWick > totalRange * 0.40 && lowerWick > upperWick * 1.4) {
       allTriggers.push('REJECTION_WICK');
-      confirmationScore += 12;
+      wickScore = 12;
     }
   } else {
     rejectionRatio = upperWick / totalRange;
     if (upperWick > body * 1.3 && upperWick > totalRange * 0.40 && upperWick > lowerWick * 1.4) {
       allTriggers.push('REJECTION_WICK');
-      confirmationScore += 12;
+      wickScore = 12;
     }
   }
 
-  // 2. Engulfing / Strong Close
+  // 2. Body Expansion & Displacement (Unified category to prevent double/triple counting the same 5M candle)
+  let bodyScore = 0;
+  const isAtrDisplacement = body > (indicators5m?.atr14 || 2.0) * 0.8;
   if (direction === 'BUY') {
-    if (isBull && body > totalRange * 0.60) {
-      allTriggers.push('ENGULFING');
-      confirmationScore += 10;
-    }
-    if (prev5m && last5m.close > prev5m.high) {
-      allTriggers.push('STRONG_EXPANSION_CLOSE');
-      confirmationScore += 8;
+    const isEngulfing = isBull && body > totalRange * 0.60;
+    const isExpansionClose = prev5m && last5m.close > prev5m.high;
+    const isDisplacement = isAtrDisplacement && isBull;
+
+    if (isEngulfing) allTriggers.push('ENGULFING');
+    if (isExpansionClose) allTriggers.push('STRONG_EXPANSION_CLOSE');
+    if (isDisplacement) allTriggers.push('DISPLACEMENT_CANDLE');
+
+    // Prevent duplicate counting: single candle body expansion contributes once
+    if (isDisplacement && isEngulfing) {
+      bodyScore = 12;
+    } else if (isEngulfing || isDisplacement) {
+      bodyScore = 10;
+    } else if (isExpansionClose) {
+      bodyScore = 8;
     }
   } else {
-    if (isBear && body > totalRange * 0.60) {
-      allTriggers.push('ENGULFING');
-      confirmationScore += 10;
-    }
-    if (prev5m && last5m.close < prev5m.low) {
-      allTriggers.push('STRONG_EXPANSION_CLOSE');
-      confirmationScore += 8;
+    const isEngulfing = isBear && body > totalRange * 0.60;
+    const isExpansionClose = prev5m && last5m.close < prev5m.low;
+    const isDisplacement = isAtrDisplacement && isBear;
+
+    if (isEngulfing) allTriggers.push('ENGULFING');
+    if (isExpansionClose) allTriggers.push('STRONG_EXPANSION_CLOSE');
+    if (isDisplacement) allTriggers.push('DISPLACEMENT_CANDLE');
+
+    // Prevent duplicate counting: single candle body expansion contributes once
+    if (isDisplacement && isEngulfing) {
+      bodyScore = 12;
+    } else if (isEngulfing || isDisplacement) {
+      bodyScore = 10;
+    } else if (isExpansionClose) {
+      bodyScore = 8;
     }
   }
 
-  // 3. Displacement Candle (large body > 1.4x ATR or > 1.4x previous body)
-  if (body > (indicators5m?.atr14 || 2.0) * 0.8 && ((direction === 'BUY' && isBull) || (direction === 'SELL' && isBear))) {
-    allTriggers.push('DISPLACEMENT_CANDLE');
-    confirmationScore += 8;
-  }
-
-  // 4. Micro-BOS / Micro-CHOCH (optional 1M or 5M minor structure shift)
+  // 3. Micro-BOS / Micro-CHOCH (distinct multi-candle structure shift)
+  let microBosScore = 0;
   if (candles1m && candles1m.length >= 5) {
     const recent1m = candles1m.slice(-5);
     const prev1mHigh = Math.max(...recent1m.slice(0, -1).map((c) => c.high));
@@ -661,20 +783,21 @@ export function assessPriceActionTrigger(
 
     if (direction === 'BUY' && current1m.close > prev1mHigh) {
       allTriggers.push('MICRO_BOS');
-      confirmationScore += 6;
+      microBosScore = 6;
     } else if (direction === 'SELL' && current1m.close < prev1mLow) {
       allTriggers.push('MICRO_BOS');
-      confirmationScore += 6;
+      microBosScore = 6;
     }
   }
 
-  confirmationScore = Math.min(30, confirmationScore);
+  // Confluence score combines independent factors (Wick + Body + Micro-structure)
+  confirmationScore = Math.min(30, wickScore + bodyScore + microBosScore);
   const hasTrigger = allTriggers.length > 0;
   const primaryTrigger = allTriggers[0] ?? null;
 
   const description = hasTrigger
-    ? `Confirmed price action trigger: ${allTriggers.join(' + ')} (Score: ${confirmationScore}/30)`
-    : 'No active execution trigger confirmed on 5M candle';
+    ? `Confirmed on closed 5M candle: ${allTriggers.join(' + ')} (Score: ${confirmationScore}/30)`
+    : 'No active execution trigger confirmed on closed 5M candle';
 
   return {
     hasTrigger,
@@ -1311,7 +1434,7 @@ export function rankCandidate(cand: any, htfRegime?: string): number {
   score += (cand.confidence || 50) * 0.5;
 
   // 9. RR
-  const rr = cand.tp1Rr || 1.5;
+  const rr = cand.tp1Rr || 1.0;
   score += rr * 5.0;
 
   return score;
@@ -1854,6 +1977,17 @@ export function validateTradeSignalCandidate(
     setupName?: string;
     strategyFamily?: StrategyFamily;
     confidence?: number;
+    poiOriginPrice?: number;
+    poiPrice?: number;
+    idealEntry?: number;
+    poiMeta?: {
+      type?: 'ORDER_BLOCK' | 'FVG' | 'SFP_ZONE' | 'SWING_LEVEL';
+      top?: number;
+      bottom?: number;
+      timeframe?: '1H' | '15M' | '5M';
+      createdCandleTime?: number;
+      invalidationPrice?: number;
+    };
   },
   context: {
     currentPrice: number;
@@ -1866,6 +2000,7 @@ export function validateTradeSignalCandidate(
     indicators1h: TechnicalIndicators;
     brokerSpecs?: Partial<any>;
     activeTradeDirection?: 'BUY' | 'SELL' | null;
+    currentSpread?: number;
   }
 ): {
   isValid: boolean;
@@ -1877,7 +2012,7 @@ export function validateTradeSignalCandidate(
   qualityScore?: number;
 } {
   const { direction, entry, stopLoss, tp1, tp2, setupName, strategyFamily } = cand;
-  const { currentPrice, candles5m, candles15m, candles1h, candles1m, indicators5m, indicators15m, indicators1h, brokerSpecs, activeTradeDirection } = context;
+  const { currentPrice, candles5m, candles15m, candles1h, candles1m, indicators5m, indicators15m, indicators1h, brokerSpecs, activeTradeDirection, currentSpread } = context;
 
   // 0. Insufficient candle data check (minimum 15 candles required for 14-period ATR/RSI and multi-timeframe structure)
   if (
@@ -1910,7 +2045,7 @@ export function validateTradeSignalCandidate(
   if (!isBuy && tp1 >= entry) {
     return { isValid: false, rejectionReason: 'INVALID_GEOMETRY: SELL TP1 must be strictly less than entry' };
   }
-  if (tp2 !== undefined && tp2 !== null && !isNaN(tp2)) {
+  if (tp2 !== undefined && tp2 !== null && !isNaN(tp2) && tp2 > 0) {
     if (isBuy && tp2 <= tp1) {
       return { isValid: false, rejectionReason: 'INVALID_GEOMETRY: BUY TP2 must be strictly greater than TP1' };
     }
@@ -1934,6 +2069,18 @@ export function validateTradeSignalCandidate(
     return { isValid: false, rejectionReason: `INSUFFICIENT_RR: R:R to TP1 (${rrToTp1.toFixed(2)}R) is below minimum required 1.0R` };
   }
 
+  // FIX 4: Spread-aware Entry Quality (Check before active gate or timing)
+  const effSpread = currentSpread ?? (brokerSpecs as any)?.spread;
+  if (effSpread !== undefined && effSpread !== null && effSpread > 0) {
+    const spreadPoints = Number((effSpread / 0.1).toFixed(1));
+    if (spreadPoints > 12.0 || (slDistance > 0 && effSpread / slDistance > 0.20)) {
+      return {
+        isValid: false,
+        rejectionReason: `SPREAD_EXCESSIVE: Spread (${spreadPoints} pts) exceeds executable quality limit for ${direction} entry (consumes > 20% of SL)`,
+      };
+    }
+  }
+
   // 2. Active In-Flight Trade Opposition Gate
   if (activeTradeDirection && activeTradeDirection !== direction) {
     return { isValid: false, rejectionReason: `OPPOSING_ACTIVE_BLOCKED: Candidate ${direction} opposes active in-flight ${activeTradeDirection} trade` };
@@ -1941,18 +2088,73 @@ export function validateTradeSignalCandidate(
 
   const family = strategyFamily || inferStrategyFamily(setupName || 'Market Structure');
 
-  // 3. Entry Timing & Anti-Chase Assessment (Check before evaluating TP runway)
+  // 3. Single-Factor Indicator Rejection & POI Confluence (Fix 2 & Fix 6)
+  const normalizedSetupName = (setupName || '').toUpperCase();
+  const isSingleFactorIndicatorOnly =
+    normalizedSetupName.includes('RSI_ONLY') ||
+    normalizedSetupName.includes('MACD_ONLY') ||
+    normalizedSetupName.includes('EMA_CROSS_ONLY') ||
+    normalizedSetupName.includes('ISOLATED_CANDLE') ||
+    normalizedSetupName.includes('DISPLACEMENT_ONLY') ||
+    normalizedSetupName.includes('ENGULFING_ONLY');
+
+  if (isSingleFactorIndicatorOnly) {
+    return {
+      isValid: false,
+      rejectionReason: 'SINGLE_FACTOR_REJECTED: Signal is based solely on an isolated indicator without required structural POI and trigger confluence',
+    };
+  }
+
+  // Check structural POI presence
+  const poiRef = cand.poiPrice ?? cand.poiOriginPrice ?? cand.idealEntry ??
+    (cand.direction === 'BUY'
+      ? (cand.poiMeta?.top ?? cand.poiMeta?.bottom)
+      : (cand.poiMeta?.bottom ?? cand.poiMeta?.top));
+
+  const hasStructuralContext =
+    poiRef !== undefined ||
+    cand.poiMeta !== undefined ||
+    cand.poiPrice !== undefined ||
+    cand.poiOriginPrice !== undefined ||
+    cand.idealEntry !== undefined ||
+    family === 'ORDER_BLOCK' ||
+    family === 'FVG_IMBALANCE' ||
+    family === 'LIQUIDITY_SWEEP' ||
+    family === 'RANGE_SFP_REVERSAL' ||
+    family === 'DOUBLE_TOP_BOTTOM' ||
+    family === 'BREAK_AND_RETEST' ||
+    family === 'BARE_SR' ||
+    family === 'FIBONACCI_OTE' ||
+    family === 'RANGE_BREAKOUT_EXPANSION';
+
+  if (!hasStructuralContext) {
+    return {
+      isValid: false,
+      rejectionReason: 'MISSING_POI_CONTEXT: Signal lacks a meaningful structural Point of Interest (POI)',
+    };
+  }
+
+  // 4. Entry Timing & Anti-Chase Assessment (Reject chased setups early before deeper analysis)
+  const poiContext = cand.poiMeta || (poiRef !== undefined ? {
+    top: cand.direction === 'BUY' ? poiRef : Math.max(poiRef, cand.stopLoss),
+    bottom: cand.direction === 'BUY' ? Math.min(poiRef, cand.stopLoss) : poiRef,
+    poiPrice: poiRef,
+  } : undefined);
+
   const timingAssessment = assessEntryTimingAndAntiChase(
     direction,
     family,
     currentPrice,
-    entry,
+    poiRef !== undefined ? poiRef : entry,
     candles5m || [],
     indicators5m,
-    indicators15m?.marketRegime || 'UNCLEAR'
+    indicators15m?.marketRegime || 'UNCLEAR',
+    poiContext,
+    candles1m,
+    effSpread
   );
 
-  if (timingAssessment.timing === 'CHASED') {
+  if (timingAssessment.timing === 'CHASED' || (timingAssessment.isChasing && timingAssessment.distanceFromPoiAtr > 1.2)) {
     return {
       isValid: false,
       rejectionReason: `CHASED_ENTRY: Entry is overextended beyond acceptable POI tolerance (${timingAssessment.reason})`,
@@ -1960,7 +2162,46 @@ export function validateTradeSignalCandidate(
     };
   }
 
-  // 4. TP Runway Assessment
+  // 5. Multi-Timeframe Structure Alignment (Fix 1 & Fix 7)
+  const isReversalStrategy =
+    family === 'LIQUIDITY_SWEEP' ||
+    family === 'RANGE_SFP_REVERSAL' ||
+    family === 'COUNTERTREND_SCALP' ||
+    family === 'FAILED_BREAKOUT' ||
+    family === 'DOUBLE_TOP_BOTTOM';
+
+  if (direction === 'BUY') {
+    const isH1Bearish =
+      indicators1h.marketRegime === 'STRONG_DOWNTREND' ||
+      (indicators1h.structure === 'BEARISH' && indicators1h.trendStructure === 'LH_LL');
+    const isM15Bearish =
+      indicators15m.marketRegime === 'STRONG_DOWNTREND' ||
+      (indicators15m.structure === 'BEARISH' && indicators15m.trendStructure === 'LH_LL');
+
+    if (isH1Bearish && isM15Bearish && !isReversalStrategy) {
+      return {
+        isValid: false,
+        rejectionReason: 'HTF_CONTRADICTION: 1H/15M structure is strongly bearish and contradicts BUY setup without qualified reversal context',
+      };
+    }
+  } else {
+    // SELL direction
+    const isH1Bullish =
+      indicators1h.marketRegime === 'STRONG_UPTREND' ||
+      (indicators1h.structure === 'BULLISH' && indicators1h.trendStructure === 'HH_HL');
+    const isM15Bullish =
+      indicators15m.marketRegime === 'STRONG_UPTREND' ||
+      (indicators15m.structure === 'BULLISH' && indicators15m.trendStructure === 'HH_HL');
+
+    if (isH1Bullish && isM15Bullish && !isReversalStrategy) {
+      return {
+        isValid: false,
+        rejectionReason: 'HTF_CONTRADICTION: 1H/15M structure is strongly bullish and contradicts SELL setup without qualified reversal context',
+      };
+    }
+  }
+
+  // 6. TP Runway Assessment
   const runwayAssessment = assessTpPathRunway(
     direction,
     entry,
@@ -1980,7 +2221,7 @@ export function validateTradeSignalCandidate(
     };
   }
 
-  // 5. Pullback Quality Assessment
+  // 7. Pullback Quality Assessment
   const pullbackAssessment = assessPullbackQuality(
     direction,
     candles5m || [],
@@ -2004,7 +2245,7 @@ export function validateTradeSignalCandidate(
     };
   }
 
-  // 6. Price Action Trigger Assessment
+  // 8. Price Action Trigger Assessment
   const triggerAssessment = assessPriceActionTrigger(
     direction,
     candles5m || [],
@@ -2012,10 +2253,10 @@ export function validateTradeSignalCandidate(
     indicators5m
   );
 
-  if (triggerAssessment.confirmationScore < 8) {
+  if (!triggerAssessment.hasTrigger || triggerAssessment.confirmationScore < 8) {
     return {
       isValid: false,
-      rejectionReason: `MISSING_PRICE_ACTION_TRIGGER: Insufficient price action confirmation trigger in recent candles`,
+      rejectionReason: `MISSING_PRICE_ACTION_TRIGGER: Insufficient price action confirmation trigger on closed 5M candle`,
       triggerType: triggerAssessment.primaryTrigger,
     };
   }

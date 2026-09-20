@@ -1,3 +1,27 @@
 [
-  "notif_test_1789824621723"
+  "close_trade_idem_1789901029279",
+  "test_adv_notif_1789901054346",
+  "close_scen_12_buy_1789901062696",
+  "close_scen_13_sell_1789901062734",
+  "close_scen_14_buy_1789901062748",
+  "close_scen_15_sell_1789901062767",
+  "close_scen_16_fail_1789901062781",
+  "notif_scen_16_1789901062793",
+  "close_seq_buy_1789901062800",
+  "close_seq_sell_1789901062818",
+  "notif_test_1789901182415",
+  "close_trade_b10_single_1789901245630",
+  "mgmt_tp1_trade_b10_dual_1789901245675",
+  "close_trade_b10_dual_1789901245675",
+  "shadow_notif_1789901245713",
+  "telegram_b11_sig_1789901254469",
+  "close_trade_b11_single_1789901254508",
+  "mgmt_reversal_trade_b11_1789901254472",
+  "mgmt_tp1_trade_b11_dual_1789901254583",
+  "close_trade_b11_dual_1789901254583",
+  "mgmt_tp1_trade_b11_1789901254472",
+  "mgmt_tp1_trade_b11_be_1789901254641",
+  "mgmt_mgmt_trade_b11_1789901254472",
+  "close_trade_b11_be_1789901254641",
+  "close_trade_restart_1789901245705"
 ]

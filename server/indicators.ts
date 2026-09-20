@@ -135,7 +135,7 @@ export function calculateVWAP(candles: Candle[]): number {
 }
 
 // Detect Price Action, SMC/ICT structure, Swing Points, OB, and FVG
-export function analyzeTechnicals(candles: Candle[]): TechnicalIndicators {
+export function analyzeTechnicals(candles: Candle[], referenceTime?: number): TechnicalIndicators {
   if (!candles || !Array.isArray(candles) || candles.length === 0) {
     return {
       ema20: 0,
@@ -155,7 +155,26 @@ export function analyzeTechnicals(candles: Candle[]): TechnicalIndicators {
     };
   }
 
-  const closes = candles.map((c) => c.close);
+  // Safety filter: Exclude currently forming candle from indicator calculation
+  // so forming spikes cannot create false BOS/CHOCH/latestClose.
+  let isLastForming = false;
+  if (candles.length > 1) {
+    const lastC = candles[candles.length - 1];
+    const prevC = candles[candles.length - 2];
+    if (lastC.isClosed === false) {
+      isLastForming = true;
+    } else if (lastC.isClosed !== true && typeof lastC.timestamp === 'number' && typeof prevC.timestamp === 'number') {
+      const estimatedTfMs = lastC.timestamp - prevC.timestamp;
+      const now = referenceTime !== undefined ? referenceTime : Date.now();
+      if (estimatedTfMs > 0 && now < lastC.timestamp + estimatedTfMs) {
+        isLastForming = true;
+      }
+    }
+  }
+
+  const effectiveCandles = isLastForming ? candles.slice(0, -1) : candles;
+
+  const closes = effectiveCandles.map((c) => c.close);
   const latestClose = closes[closes.length - 1] || 0;
   
   const ema20Arr = calculateEMA(closes, 20);
@@ -168,13 +187,13 @@ export function analyzeTechnicals(candles: Candle[]): TechnicalIndicators {
   
   const rsi14 = calculateRSI(closes, 14);
   const macd = calculateMACD(closes);
-  const atr14 = calculateATR(candles, 14);
+  const atr14 = calculateATR(effectiveCandles, 14);
   const bollingerBands = calculateBollingerBands(closes, 20);
-  const vwap = calculateVWAP(candles.slice(-50)); // Last 50 candles for intraday VWAP
+  const vwap = calculateVWAP(effectiveCandles.slice(-50)); // Last 50 candles for intraday VWAP
   
   // Find Genuine Swing Highs and Lows in historical window excluding current candle
-  const window = Math.min(30, candles.length);
-  const recent = candles.slice(-window);
+  const window = Math.min(30, effectiveCandles.length);
+  const recent = effectiveCandles.slice(-window);
   
   // To avoid circular lookahead/tautology:
   // Calculate established swing levels using prior candles (excluding the current formation candle)
@@ -321,7 +340,7 @@ export function analyzeTechnicals(candles: Candle[]): TechnicalIndicators {
   // MARKET REGIME & OVEREXTENSION DETECTOR ENGINE
   // =========================================================================
   // 1. Calculate Volatility Ratio (current ATR vs 50-period average ATR)
-  const longAtr = calculateATR(candles, Math.min(50, candles.length));
+  const longAtr = calculateATR(effectiveCandles, Math.min(50, effectiveCandles.length));
   const volatilityRatio = Number((longAtr > 0 ? atr14 / longAtr : 1.0).toFixed(2));
 
   // 2. Measure EMA Ribbon alignment & slope

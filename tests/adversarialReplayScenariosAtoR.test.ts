@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import { calculateDynamicTakeProfits } from '../server/tpEngine.js';
-import { calculatePositionSizing, evaluateTradeRisk, calculateSpreadCost } from '../server/riskManager.js';
+import { calculatePositionSizing, evaluateTradeRisk, calculateSpreadCost, DEFAULT_BROKER_SPECS } from '../server/riskManager.js';
 import { assessEntryTimingAndAntiChase, assessPriceActionTrigger, assessStopLossQuality } from '../server/tradeQualityEngine.js';
 import { tradeManagementEngine } from '../server/tradeManagementEngine.js';
 import { storage } from '../server/storage.js';
@@ -28,6 +28,8 @@ function expect(condition: boolean, description: string) {
 }
 
 async function runAdversarialScenarios() {
+  await (storage as any).readyPromise;
+  storage.setTestingMode(true);
   const dummyIndicators: TechnicalIndicators = {
     ema20: 2650,
     ema50: 2645,
@@ -138,8 +140,28 @@ async function runAdversarialScenarios() {
     minRr: 1.5,
   });
 
-  expect(!tpBuyOb.valid && tpBuyOb.targetSourceType === 'OPPOSING_BARRIER', 'B.1 BUY blocked by opposing 15M OB (< 1.5R)');
-  expect(!tpSellOb.valid && tpSellOb.targetSourceType === 'OPPOSING_BARRIER', 'B.2 SELL blocked by opposing 15M OB (< 1.5R)');
+  const evalBuyOb = evaluateTradeRisk({
+    balance: 100,
+    asset: 'XAU/USD',
+    direction: 'BUY',
+    entry: 2650,
+    stopLoss: 2646,
+    tp1: tpBuyOb.tp1,
+    brokerSpecs: { ...DEFAULT_BROKER_SPECS, minRr: 1.0 },
+  });
+
+  const evalSellOb = evaluateTradeRisk({
+    balance: 100,
+    asset: 'XAU/USD',
+    direction: 'SELL',
+    entry: 2650,
+    stopLoss: 2654,
+    tp1: tpSellOb.tp1,
+    brokerSpecs: { ...DEFAULT_BROKER_SPECS, minRr: 1.0 },
+  });
+
+  expect(!evalBuyOb.valid && evalBuyOb.tp1Rr < 1.0, 'B.1 BUY structural target below minRr (< 1.0R) is rejected during risk eval');
+  expect(!evalSellOb.valid && evalSellOb.tp1Rr < 1.0, 'B.2 SELL structural target below minRr (< 1.0R) is rejected during risk eval');
   expect(tpBuyOb.targetDistance === tpSellOb.targetDistance, 'B.3 Opposing OB distance symmetric (3.0 pts)');
 
   console.log('\n--- Scenario C: BUY Blocked by FVG vs SELL Blocked by FVG ---');
@@ -177,12 +199,33 @@ async function runAdversarialScenarios() {
     minRr: 1.5,
   });
 
-  expect(!tpBuyFvg.valid && tpBuyFvg.targetSourceType === 'OPPOSING_BARRIER', 'C.1 BUY blocked by opposing 15M FVG');
-  expect(!tpSellFvg.valid && tpSellFvg.targetSourceType === 'OPPOSING_BARRIER', 'C.2 SELL blocked by opposing 15M FVG');
+  const evalBuyFvg = evaluateTradeRisk({
+    balance: 100,
+    asset: 'XAU/USD',
+    direction: 'BUY',
+    entry: 2650,
+    stopLoss: 2646,
+    tp1: tpBuyFvg.tp1,
+    brokerSpecs: { ...DEFAULT_BROKER_SPECS, minRr: 1.0 },
+  });
+
+  const evalSellFvg = evaluateTradeRisk({
+    balance: 100,
+    asset: 'XAU/USD',
+    direction: 'SELL',
+    entry: 2650,
+    stopLoss: 2654,
+    tp1: tpSellFvg.tp1,
+    brokerSpecs: { ...DEFAULT_BROKER_SPECS, minRr: 1.0 },
+  });
+
+  expect(!evalBuyFvg.valid && evalBuyFvg.tp1Rr < 1.0, 'C.1 BUY structural target below minRr (< 1.0R) is rejected during risk eval');
+  expect(!evalSellFvg.valid && evalSellFvg.tp1Rr < 1.0, 'C.2 SELL structural target below minRr (< 1.0R) is rejected during risk eval');
 
   console.log('\n--- Scenario D: Active Trade Opposition Symmetry ---');
+  const nowTs = Date.now();
   const buyTrade: TradeLedgerItem = {
-    id: 'active_buy_scen_d',
+    id: `active_buy_scen_d_${nowTs}`,
     tradeNumber: 1,
     date: new Date().toISOString(),
     asset: 'XAU/USD',
@@ -212,7 +255,7 @@ async function runAdversarialScenarios() {
   storage.closeTrade(buyTrade.id, 'WIN', 4.0, 2654, 'Test cleanup');
 
   const sellTrade: TradeLedgerItem = {
-    id: 'active_sell_scen_d',
+    id: `active_sell_scen_d_${nowTs}`,
     tradeNumber: 2,
     date: new Date().toISOString(),
     asset: 'XAU/USD',
@@ -240,7 +283,7 @@ async function runAdversarialScenarios() {
 
   console.log('\n--- Scenario E: Concurrent Close Idempotency ---');
   const raceTrade: TradeLedgerItem = {
-    id: 'race_trade_scen_e',
+    id: `race_trade_scen_e_${nowTs}`,
     tradeNumber: 3,
     date: new Date().toISOString(),
     asset: 'XAU/USD',

@@ -13,6 +13,7 @@ import {
 } from '../src/types.js';
 import { BrokerContractSpecs, DEFAULT_BROKER_SPECS, evaluateTradeRisk } from './riskManager.js';
 import { calculateDynamicTakeProfits } from './tpEngine.js';
+import { partition5mCandles, partition15mCandles, partition1hCandles } from './candleUtils.js';
 import {
   detectDoubleTopBottom,
   detectBareSRLevels,
@@ -200,7 +201,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     brokerSpecs = {},
   } = input;
 
-  const minRr = brokerSpecs.minRr ?? DEFAULT_BROKER_SPECS.minRr ?? 1.5;
+  const minRr = brokerSpecs.minRr ?? DEFAULT_BROKER_SPECS.minRr ?? 1.0;
   const minSlPoints = brokerSpecs.minGoldSlPoints ?? 35;
   const maxSlPoints = brokerSpecs.maxGoldSlPoints ?? 65;
 
@@ -248,12 +249,102 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
 
   const candidates: SetupCandidate[] = [];
 
-  const last5m = candles5m[candles5m.length - 1] || { open: currentPrice, high: currentPrice, low: currentPrice, close: currentPrice, volume: 1, timestamp: Date.now() };
-  const prev5m = candles5m[candles5m.length - 2] || last5m;
+  // FIX 1: Partition 5M, 15M, and 1H candles into forming and closed.
+  // Never use the currently forming candle for trigger confirmation, BOS/CHOCH, or displacement.
+  const partition5m = partition5mCandles(candles5m);
+  const partition15m = partition15mCandles(candles15m);
+  const partition1h = partition1hCandles(candles1h);
+
+  if (!partition5m.isValid || !partition5m.lastClosedCandle) {
+    const fallbackSignal: TradeSignal = {
+      id: `sig_notrade_${Date.now()}`,
+      timestamp: Date.now(),
+      asset,
+      signal: 'NO TRADE',
+      currentPrice,
+      entry: currentPrice,
+      stopLoss: 0,
+      slPoints: 0,
+      tp1: 0,
+      tp1Points: 0,
+      tp1Rr: 0,
+      tp1RrString: '1:0',
+      tp2: 0,
+      tp2Points: 0,
+      tp2Rr: 0,
+      tp2RrString: '1:0',
+      primaryTarget: 'TP1',
+      rr: '1:0',
+      rrRatio: 0,
+      riskPercent: 0,
+      riskAmount: 0,
+      potentialProfit: 0,
+      potentialLoss: 0,
+      recommendedLotSize: 0,
+      confidence: 0,
+      timeframe: '15M / 5M',
+      setup: 'UNRELIABLE_5M_CANDLE_DATA',
+      mainReasons: [partition5m.unreliableReason || 'لا يمكن التحقق من اكتمال إغلاق شمعة 5M الحالية بدقة'],
+      invalidation: 'N/A',
+      noTradeReason: partition5m.unreliableReason || 'بيانات شموع 5M غير كافية أو لم يكتمل إغلاق الشمعة؛ تم التحول لوضع NO TRADE تجنباً للدخول على شمعة غير مكتملة.',
+    };
+    return {
+      hasValidSignal: false,
+      selectedCandidate: null,
+      allCandidates: [],
+      finalSignal: fallbackSignal,
+      noTradeReason: partition5m.unreliableReason || 'بيانات شموع 5M غير كافية أو لم يكتمل إغلاق الشمعة؛ تم التحول لوضع NO TRADE تجنباً للدخول على شمعة غير مكتملة.',
+    };
+  }
+
+  if (!partition15m.isValid || !partition15m.lastClosedCandle) {
+    const fallbackSignal: TradeSignal = {
+      id: `sig_notrade_${Date.now()}`,
+      timestamp: Date.now(),
+      asset,
+      signal: 'NO TRADE',
+      currentPrice,
+      entry: currentPrice,
+      stopLoss: 0,
+      slPoints: 0,
+      tp1: 0,
+      tp1Points: 0,
+      tp1Rr: 0,
+      tp1RrString: '1:0',
+      tp2: 0,
+      tp2Points: 0,
+      tp2Rr: 0,
+      tp2RrString: '1:0',
+      primaryTarget: 'TP1',
+      rr: '1:0',
+      rrRatio: 0,
+      riskPercent: 0,
+      riskAmount: 0,
+      potentialProfit: 0,
+      potentialLoss: 0,
+      recommendedLotSize: 0,
+      confidence: 0,
+      timeframe: '15M',
+      setup: 'UNRELIABLE_15M_CANDLE_DATA',
+      mainReasons: [partition15m.unreliableReason || 'لا يمكن التحقق من اكتمال إغلاق شمعة 15M الحالية بدقة'],
+      invalidation: 'N/A',
+      noTradeReason: partition15m.unreliableReason || 'بيانات شموع 15M غير كافية أو لم يكتمل إغلاق الشمعة.',
+    };
+    return {
+      hasValidSignal: false,
+      selectedCandidate: null,
+      allCandidates: [],
+      finalSignal: fallbackSignal,
+      noTradeReason: partition15m.unreliableReason || 'بيانات شموع 15M غير كافية أو لم يكتمل إغلاق الشمعة.',
+    };
+  }
+
+  const last5m = partition5m.lastClosedCandle;
+  const prev5m = partition5m.prevClosedCandle || last5m;
   const c5mMetrics = analyzeCandle(last5m);
   const prev5mMetrics = analyzeCandle(prev5m);
 
-  const last15m = candles15m[candles15m.length - 1] || last5m;
+  const last15m = partition15m.lastClosedCandle;
   const c15mMetrics = analyzeCandle(last15m);
 
   const atr5m = Math.max(1.5, indicators5m.atr14 || 2.5);
@@ -331,6 +422,9 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
 
     // Evaluate Stop Loss Quality
     const slQuality = assessStopLossQuality(direction, entry, stopLoss, indicators5m, minSlPoints, maxSlPoints);
+    if (!slQuality.isValid) {
+      return null;
+    }
 
     // 2. Compute dynamic take profits using structural levels (TP1 >= minRr, TP2 >= 2.5R to 3R)
     let structuralTargetHint: { price: number; label: string } | undefined = undefined;
@@ -428,21 +522,29 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     }
 
     // 6. Phase 3: Entry Timing & Overextension / Anti-Chase Assessment
+    const poiRef = direction === 'BUY' ? poiTop : poiBottom;
     const timingAssessment = assessEntryTimingAndAntiChase(
       direction,
       family,
       currentPrice,
-      entry,
+      poiRef ?? entry,
       candles5m,
       indicators5m,
-      indicators15m.marketRegime || 'UNCLEAR'
+      indicators15m.marketRegime || 'UNCLEAR',
+      {
+        top: poiTop,
+        bottom: poiBottom,
+        poiPrice: poiRef,
+        type: poiType,
+      }
     );
 
-    let timingWarning: string | undefined = undefined;
-    if (timingAssessment.timing === 'CHASED') {
-      timingWarning = `CHASED (${timingAssessment.reason})`;
-      console.log(`[StrategyEngine] Candidate ${setupName} tagged with timing penalty/warning (${timingAssessment.reason})`);
+    if (timingAssessment.timing === 'CHASED' || (timingAssessment.isChasing && timingAssessment.distanceFromPoiAtr > 2.0)) {
+      console.log(`[StrategyEngine] Disqualified ${setupName} due to chased entry / late displacement (${timingAssessment.reason})`);
+      return null;
     }
+
+    let timingWarning: string | undefined = undefined;
 
     // 7. Phase 3: Price Action Trigger Assessment
     const triggerAssessment = assessPriceActionTrigger(
@@ -1167,7 +1269,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   // =========================================================================
   // STRATEGY 10 (Phase 2): DOUBLE_TOP_BOTTOM_REVERSAL (M & W Formations)
   // =========================================================================
-  const doubleTopBottomPatterns = detectDoubleTopBottom(candles5m, atr5m);
+  const doubleTopBottomPatterns = detectDoubleTopBottom(partition5m.closedCandles, atr5m);
   for (const pat of doubleTopBottomPatterns) {
     if (pat.type === 'DOUBLE_TOP') {
       const cand = evaluateCandidate(
@@ -1251,7 +1353,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   // =========================================================================
   // STRATEGY 11 (Phase 2): BARE_SR_REJECTION (Classic Support / Resistance)
   // =========================================================================
-  const bareSrLevels = detectBareSRLevels(candles15m, candles5m, atr15m);
+  const bareSrLevels = detectBareSRLevels(partition15m.closedCandles, partition5m.closedCandles, atr15m);
   for (const sr of bareSrLevels) {
     if (sr.type === 'RESISTANCE') {
       const isNearLevel = currentPrice <= sr.level + 0.5 * atr15m && currentPrice >= sr.level - 1.2 * atr15m;
@@ -1337,7 +1439,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   // =========================================================================
   // STRATEGY 12 (Phase 2): HORIZONTAL_BREAKOUT_RETEST (Breakout & Retest)
   // =========================================================================
-  const retestPatterns = detectHorizontalBreakoutRetest(candles15m, candles5m, atr15m);
+  const retestPatterns = detectHorizontalBreakoutRetest(partition15m.closedCandles, partition5m.closedCandles, atr15m);
   for (const retest of retestPatterns) {
     if (retest.type === 'RESISTANCE_TO_SUPPORT') {
       const cand = evaluateCandidate(
@@ -1411,8 +1513,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   // =========================================================================
   // STRATEGY 13 (Phase 2): STRUCTURE_ENGULFING_REVERSAL (Engulfing Candle at Key Structure)
   // =========================================================================
-  if (candles5m.length >= 3) {
-    const prevCandle = candles5m[candles5m.length - 2];
+  if (partition5m.closedCandles.length >= 2 && partition5m.prevClosedCandle) {
+    const prevCandle = partition5m.prevClosedCandle;
     const prevBody = Math.abs(prevCandle.close - prevCandle.open);
     const currBody = Math.abs(last5m.close - last5m.open);
 
@@ -1675,11 +1777,13 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     tp1Rr: winningCandidate.tp1Rr,
     tp1RrString: `1:${winningCandidate.tp1Rr.toFixed(2)}`,
     tp2: winningCandidate.tp2,
-    tp2Points: winningCandidate.tp2Points,
-    tp2Rr: winningCandidate.tp2Rr,
-    tp2RrString: `1:${winningCandidate.tp2Rr.toFixed(2)}`,
+    tp2Points: (winningCandidate.tp2 && winningCandidate.tp2 > 0) ? winningCandidate.tp2Points : 0,
+    tp2Rr: (winningCandidate.tp2 && winningCandidate.tp2 > 0) ? winningCandidate.tp2Rr : 0,
+    tp2RrString: (winningCandidate.tp2 && winningCandidate.tp2 > 0) ? `1:${winningCandidate.tp2Rr.toFixed(2)}` : 'N/A',
     primaryTarget: 'TP1',
-    rr: `1:${winningCandidate.tp1Rr.toFixed(2)}`,
+    rr: (winningCandidate.tp2 && winningCandidate.tp2 > 0)
+      ? `TP1: 1:${winningCandidate.tp1Rr.toFixed(2)} | TP2: 1:${winningCandidate.tp2Rr.toFixed(2)}`
+      : `1:${winningCandidate.tp1Rr.toFixed(2)}`,
     rrRatio: winningCandidate.tp1Rr,
     riskPercent: riskResult.riskPercent,
     riskAmount: riskResult.riskAmount,

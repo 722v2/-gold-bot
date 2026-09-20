@@ -286,6 +286,7 @@ async function runLiveMarketSimulation() {
       stopLoss: 2495.0,
       tp1: 2507.5,
       setupName: 'Bullish Breakout',
+      strategyFamily: 'ORDER_BLOCK' as const,
     };
 
     const val = validateTradeSignalCandidate(cand, {
@@ -342,6 +343,7 @@ async function runLiveMarketSimulation() {
       stopLoss: 2505.0,
       tp1: 2492.5,
       setupName: 'Bearish Breakdown',
+      strategyFamily: 'ORDER_BLOCK' as const,
     };
 
     const val = validateTradeSignalCandidate(cand, {
@@ -489,6 +491,7 @@ async function runLiveMarketSimulation() {
       stopLoss: 2495.0,
       tp1: 2507.5,
       setupName: 'Doji Reversal',
+      strategyFamily: 'ORDER_BLOCK' as const,
     };
 
     const val = validateTradeSignalCandidate(cand, {
@@ -1305,7 +1308,7 @@ async function runLiveMarketSimulation() {
     // Step 2: Clean Bullish Breakout -> Valid BUY
     const bullCandles = buildCandleSeries(2500, 50, 5, 'UP', 'BULL_PIN');
     const valBuy = validateTradeSignalCandidate(
-      { direction: 'BUY', entry: 2500, stopLoss: 2495, tp1: 2507.5, tp2: 2515.0, setupName: 'Bullish Breakout S10' },
+      { direction: 'BUY', entry: 2500, stopLoss: 2495, tp1: 2507.5, tp2: 2515.0, setupName: 'Bullish Breakout S10', strategyFamily: 'ORDER_BLOCK' },
       {
         currentPrice: 2500,
         candles5m: bullCandles,

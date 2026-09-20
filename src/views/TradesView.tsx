@@ -456,12 +456,12 @@ export const TradesView: React.FC<TradesViewProps> = ({
                       <span className="font-bold text-rose-400">${(Number(t.sl) || 0).toFixed(2)}</span>
                     </div>
                     <div className="bg-stone-950/70 p-2 rounded-lg border border-emerald-950/50">
-                      <span className="text-[10px] text-emerald-400 block">TP1 (2R)</span>
+                      <span className="text-[10px] text-emerald-400 block">TP1</span>
                       <span className="font-bold text-emerald-400">${(Number(t.tp1) || 0).toFixed(2)}</span>
                     </div>
                     <div className="bg-stone-950/70 p-2 rounded-lg border border-emerald-950/50">
-                      <span className="text-[10px] text-emerald-300 block">TP2 (3R)</span>
-                      <span className="font-bold text-emerald-300">${(Number(t.tp2) || 0).toFixed(2)}</span>
+                      <span className="text-[10px] text-emerald-300 block">TP2</span>
+                      <span className="font-bold text-emerald-300">{t.tp2 && Number(t.tp2) > 0 ? `$${(Number(t.tp2) || 0).toFixed(2)}` : 'N/A'}</span>
                     </div>
                     <div className="bg-stone-950/70 p-2 rounded-lg border border-stone-800">
                       <span className="text-[10px] text-stone-400 block">المخاطرة المحجوزة</span>
