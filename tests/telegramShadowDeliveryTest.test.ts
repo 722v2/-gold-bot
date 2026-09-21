@@ -262,4 +262,49 @@ test('Telegram Shadow Mode Delivery Test Suite', async (t) => {
     assert.equal(storage.getScans(100).length, initialScansCount);
     assert.equal(storage.getOpportunities().length, initialOppsCount);
   });
+
+  await t.test('9. sendSimpleTestMessage sends simple test string when allowShadowTest is true', async () => {
+    let sentPayload: any = null;
+    globalThis.fetch = (async (url: string, opts: any) => {
+      sentPayload = JSON.parse(opts.body);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          result: {
+            message_id: 1234567,
+            chat: { id: 987654321 },
+            text: sentPayload.text,
+          },
+        }),
+      };
+    }) as any;
+
+    const res = await telegramService.sendSimpleTestMessage('✅ Telegram connection test successful', {
+      allowShadowTest: true,
+    });
+
+    assert.equal(res.success, true);
+    assert.equal(res.telegramMessageId, 1234567);
+    assert.ok(sentPayload !== null);
+    assert.equal(sentPayload.text, '✅ Telegram connection test successful');
+    assert.equal(sentPayload.chat_id, '987654321');
+  });
+
+  await t.test('10. sendSimpleTestMessage blocks delivery if allowShadowTest is false in Shadow Mode', async () => {
+    let fetchCalled = false;
+    globalThis.fetch = (async () => {
+      fetchCalled = true;
+      return {} as any;
+    }) as any;
+
+    const res = await telegramService.sendSimpleTestMessage('✅ Telegram connection test successful', {
+      allowShadowTest: false,
+    });
+
+    assert.equal(res.success, false);
+    assert.equal(fetchCalled, false);
+    assert.ok(res.error?.includes('[SHADOW MODE]'));
+  });
 });

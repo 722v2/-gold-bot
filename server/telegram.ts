@@ -1590,6 +1590,49 @@ ${message.text}
   }
 
   /**
+   * Sends a simple direct test message to verify connectivity (e.g. for /api/telegram/test-signal)
+   */
+  public async sendSimpleTestMessage(customText?: string, options?: { allowShadowTest?: boolean }): Promise<{
+    success: boolean;
+    telegramMessageId?: number;
+    chatId?: string;
+    error?: string;
+  }> {
+    const isShadow = isShadowMode();
+    const isTestAllowed = Boolean(options?.allowShadowTest === true);
+
+    if (isShadow && !isTestAllowed) {
+      return { success: false, error: '[SHADOW MODE] Telegram test message blocked in shadow mode.' };
+    }
+
+    const token = this.getBotToken();
+    if (!token) {
+      return { success: false, error: 'TELEGRAM_BOT_TOKEN is not configured in environment.' };
+    }
+
+    const chatId = this.getPrivateChatId();
+    if (!chatId) {
+      return { success: false, error: 'No Telegram private chat ID registered. Send /start to the bot or set TELEGRAM_AUTHORIZED_USER_IDS.' };
+    }
+
+    const text = customText || '✅ Telegram connection test successful';
+    const result = await this.sendMessageDirectly(chatId, text, undefined, { allowShadowTest: isTestAllowed });
+
+    if (result && result.message_id) {
+      return {
+        success: true,
+        telegramMessageId: result.message_id,
+        chatId,
+      };
+    }
+
+    return {
+      success: false,
+      error: this.lastSendError || 'Telegram API rejected message delivery.',
+    };
+  }
+
+  /**
    * Sends a beautiful test notification to the detected private chat
    */
   public async sendTestNotification(): Promise<{ success: boolean; error?: string }> {

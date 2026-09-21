@@ -1109,52 +1109,26 @@ async function startServer() {
   /**
    * TEMPORARY DIAGNOSTIC TEST ENDPOINT: POST /api/telegram/test-signal
    * Explicitly identified as a TEST ONLY endpoint.
-   * Exercises only the telegramService.sendSignalNotification pipeline with synthetic memory-only data.
+   * Sends a simple direct test message to verify Telegram bot connectivity while Shadow Mode is active.
    * Never mutates storage, opportunities, accounting, scanner, or trade ledger state.
    */
   app.post('/api/telegram/test-signal', async (req, res) => {
     try {
-      const now = Date.now();
-      const testSignalId = `test_shadow_${now}`;
+      const testMessage = (req.body?.message as string) || '✅ Telegram connection test successful';
 
-      // In-memory synthetic test signal with problematic dynamic HTML entities
-      const syntheticTestSignal = {
-        id: testSignalId,
-        isTest: true,
-        signal: 'SELL NOW',
-        direction: 'SELL',
-        asset: 'XAU/USD <TEST>',
-        setup: 'Horizontal Support Breakout & Retest',
-        description: 'Test "HTML" & entity escaping <verification>',
-        entry: 2650.50,
-        stopLoss: 2658.00,
-        slPoints: 75,
-        tp1: 2638.00,
-        tp2: 2625.00,
-        riskPercent: 1.5,
-        riskAmount: 15.00,
-        confidence: 88,
-        timestamp: now,
-        createdAt: now,
-      };
-
-      // Calls the SAME telegramService.sendSignalNotification method with explicit allowShadowTest bypass
-      const telegramDelivered = await telegramService.sendSignalNotification(syntheticTestSignal, {
+      // Uses the existing Telegram service with explicit allowShadowTest bypass for this test endpoint only
+      const result = await telegramService.sendSimpleTestMessage(testMessage, {
         allowShadowTest: true,
       });
 
-      const messageId = telegramService.getTelegramMessageId(testSignalId) || null;
-      const notificationId = `signal_${testSignalId}`;
-      const lastErr = telegramDelivered ? null : (telegramService.getLastSendError() || 'Telegram delivery failed or chat not registered');
-
       res.json({
-        success: telegramDelivered,
+        success: result.success,
         testOnly: true,
         shadowMode: isShadowMode(),
-        telegramDelivered,
-        messageId,
-        notificationId,
-        error: lastErr,
+        telegramDelivered: result.success,
+        message_id: result.telegramMessageId || null,
+        message: testMessage,
+        error: result.error || null,
       });
     } catch (err: any) {
       res.status(500).json({
@@ -1162,9 +1136,8 @@ async function startServer() {
         testOnly: true,
         shadowMode: isShadowMode(),
         telegramDelivered: false,
-        messageId: null,
-        notificationId: null,
-        error: err.message || 'Failed to execute Telegram test-signal delivery',
+        message_id: null,
+        error: err.message || 'Failed to execute Telegram test delivery',
       });
     }
   });
