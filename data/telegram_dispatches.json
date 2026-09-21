@@ -25,5 +25,18 @@
   "sig_duplicate_check_1789996010900",
   "signal_sig_special_1789996010901",
   "sig_fail_nodedup_1789996010925",
-  "sig_malformed_amp_1789996010926"
+  "sig_malformed_amp_1789996010926",
+  "signal_test_shadow_999999",
+  "signal_test_shadow_success_1789998646202_56944",
+  "signal_test_shadow_retry_1789998646231_99424",
+  "sig_immediate_1789998662978",
+  "sig_failed_then_retry_1789998663003",
+  "sig_restart_survive_1789998663005",
+  "sent_already_1789998663010",
+  "sig_duplicate_check_1789998663011",
+  "signal_sig_special_1789998663012",
+  "sig_fail_nodedup_1789998663040",
+  "sig_malformed_amp_1789998663041",
+  "signal_test_shadow_success_1789998699689_54103",
+  "signal_test_shadow_retry_1789998699714_13209"
 ]

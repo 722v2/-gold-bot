@@ -474,8 +474,15 @@ export class TelegramService {
         item.message = item.message.replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/gi, '&amp;');
       }
 
+      const isTestItem = Boolean(
+        item.tradeId?.startsWith('test_') ||
+        item.tradeId?.startsWith('shadow_test_') ||
+        item.notificationId?.startsWith('signal_test_') ||
+        item.event === 'SHADOW_TEST_SIGNAL'
+      );
+
       item.attempts += 1;
-      const sentMsg = await this.sendMessageDirectly(chatId, item.message, item.replyMarkup);
+      const sentMsg = await this.sendMessageDirectly(chatId, item.message, item.replyMarkup, { allowShadowTest: isTestItem });
       if (sentMsg && sentMsg.message_id) {
         item.status = 'SENT';
         item.sentAt = Date.now();
@@ -499,6 +506,10 @@ export class TelegramService {
     }
   }
 
+  public getLastSendError(): string | null {
+    return this.lastSendError;
+  }
+
   /**
    * Dispatches a notification through the idempotent persistent retry queue
    */
@@ -510,8 +521,15 @@ export class TelegramService {
     replyMarkup?: any;
     maxAttempts?: number;
     eventTimestamp?: number;
-  }): Promise<{ success: boolean; telegramMessageId?: number; queued?: boolean; suppressed?: boolean }> {
-    if (isShadowMode()) {
+    allowShadowTest?: boolean;
+  }): Promise<{ success: boolean; telegramMessageId?: number; queued?: boolean; suppressed?: boolean; error?: string }> {
+    const isShadow = isShadowMode();
+    const isTestAllowed = Boolean(
+      options.allowShadowTest === true &&
+      (options.tradeId?.startsWith('test_') || options.tradeId?.startsWith('shadow_test_') || options.event === 'SHADOW_TEST_SIGNAL')
+    );
+
+    if (isShadow && !isTestAllowed) {
       console.log('[SHADOW MODE] Telegram production dispatch disabled.');
       return { success: false, suppressed: true };
     }
@@ -535,8 +553,8 @@ export class TelegramService {
     }
 
     // 3. EXPERIMENTAL / TEST TRADE SUPPRESSION
-    // Prevent experimental and test trades from sending notifications
-    if (tradeId && (
+    // Prevent experimental and test trades from sending notifications (unless explicitly allowed test)
+    if (!isTestAllowed && tradeId && (
       tradeId.startsWith('test_') ||
       tradeId.startsWith('phantom-') ||
       tradeId.startsWith('mock_') ||
@@ -576,7 +594,7 @@ export class TelegramService {
 
     // Attempt immediate delivery if not rate limited
     if (!this.isRateLimited()) {
-      const sentMsg = await this.sendMessageDirectly(chatId, message, replyMarkup);
+      const sentMsg = await this.sendMessageDirectly(chatId, message, replyMarkup, { allowShadowTest: isTestAllowed });
       if (sentMsg && sentMsg.message_id) {
         const sentItem: QueuedTelegramNotification = {
           notificationId,
@@ -1076,8 +1094,8 @@ ${pending.originalMessageText || ''}
   /**
    * Send text directly to a specific chat ID
    */
-  private async sendMessageDirectly(chatId: string, text: string, replyMarkup?: any): Promise<any> {
-    if (isShadowMode()) {
+  private async sendMessageDirectly(chatId: string, text: string, replyMarkup?: any, options?: { allowShadowTest?: boolean }): Promise<any> {
+    if (isShadowMode() && !options?.allowShadowTest) {
       return null;
     }
     if (this.isRateLimited()) {
@@ -1664,8 +1682,14 @@ ${message.text}
   /**
    * Formats and delivers a newly qualified trade signal alert
    */
-  public async sendSignalNotification(signal: any): Promise<boolean> {
-    if (isShadowMode()) {
+  public async sendSignalNotification(signal: any, options?: { allowShadowTest?: boolean }): Promise<boolean> {
+    const isShadow = isShadowMode();
+    const isTestAllowed = Boolean(
+      options?.allowShadowTest === true &&
+      (signal.isTest === true || String(signal.id).startsWith('test_') || String(signal.id).startsWith('shadow_test_'))
+    );
+
+    if (isShadow && !isTestAllowed) {
       console.log(`[SHADOW MODE] Telegram signal dispatch blocked for signal: ${signal.signal} (${signal.setup})`);
       return false;
     }
@@ -1721,10 +1745,11 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${escapeTelegramHtml(action
     const result = await this.dispatchReliableNotification({
       notificationId,
       tradeId: signal.id,
-      event: 'SIGNAL_NEW',
+      event: isTestAllowed ? 'SHADOW_TEST_SIGNAL' : 'SIGNAL_NEW',
       message: text,
       replyMarkup,
       eventTimestamp,
+      allowShadowTest: isTestAllowed,
     });
 
     if (result.telegramMessageId) {
