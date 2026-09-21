@@ -22,6 +22,7 @@ async function runAuditTests() {
   }
 
   await storage.waitUntilReady();
+  storage.setTestingMode(true);
 
   // Shared S10 anchor key for tests
   const anchorKey = `M5_DT_${Date.now()}_SELL`;

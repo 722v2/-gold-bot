@@ -1494,14 +1494,14 @@ export function checkStructuralSameSetupIdentity(
     const oppIsBuy = opp.direction === 'BUY';
     const oppStrategyFamily = opp.strategyFamily || inferStrategyFamily(opp.setupName);
 
-    // Check failed re-entry block
+    // Check failed re-entry block (only for the exact same structural formation/anchor, never for cluster IDs)
     if (opp.status === 'FAILED') {
       const isOppSameFam = oppStrategyFamily === candStrategyFamily;
       const isOppSameDir = oppIsBuy === candIsBuy;
-      const isOppSameAnchor = (opp.id === candOppId) ||
-        (opp.patternAnchorKey && metaCand?.patternAnchorKey && opp.patternAnchorKey === metaCand.patternAnchorKey) ||
-        (opp.pivot1Time && metaCand?.pivot1Time && opp.pivot1Time === metaCand.pivot1Time) ||
-        (opp.poiId && candidateSignal.poiId && opp.poiId === candidateSignal.poiId);
+      const isOppSameAnchor =
+        Boolean(opp.patternAnchorKey && metaCand?.patternAnchorKey && opp.patternAnchorKey === metaCand.patternAnchorKey) ||
+        Boolean(opp.pivot1Time && metaCand?.pivot1Time && opp.pivot1Time === metaCand.pivot1Time) ||
+        Boolean(opp.poiId && candidateSignal.poiId && opp.poiId === candidateSignal.poiId);
 
       if (isOppSameFam && isOppSameDir && isOppSameAnchor) {
         const details: DuplicateDetails = {

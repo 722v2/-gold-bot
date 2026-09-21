@@ -21,6 +21,22 @@ import { isShadowMode, shadowDiagnosticsStore, logShadowScanDiagnostic, ShadowSc
 export const SCAN_MIN_COOLDOWN_MS = 45000;
 
 /**
+ * Terminal opportunity statuses representing historical/closed trade lifecycles.
+ * A terminal opportunity must NEVER block a new independent signal.
+ */
+export const TERMINAL_OPPORTUNITY_STATUSES = new Set<string>([
+  'FAILED',
+  'COMPLETED',
+  'CANCELLED',
+  'NOT_ENTERED',
+]);
+
+export function isTerminalOpportunityStatus(status?: string): boolean {
+  if (!status) return false;
+  return TERMINAL_OPPORTUNITY_STATUSES.has(status);
+}
+
+/**
  * Determines whether the internal Node.js setInterval() scanner loop is enabled.
  * In production (e.g. Render), the external cron scheduler is authoritative, so
  * internal timer can be disabled via ENABLE_INTERNAL_SCANNER=false or SCANNER_TRIGGER_MODE=cron.
@@ -1003,8 +1019,20 @@ class LiveMarketScanner {
 
         let opp = storage.getOpportunity(oppId);
         const meta = (signal as any).patternMetadata;
+        const isTerminalOpp = opp && isTerminalOpportunityStatus(opp.status);
 
-        if (!opp) {
+        if (!opp || isTerminalOpp) {
+          if (opp && isTerminalOpp) {
+            // Preserve historical opportunity record under an immutable historical snapshot ID
+            const historicalArchivedId = `${opp.id}_hist_${opp.failedAt || opp.completedAt || opp.lastUpdatedTime || Date.now()}`;
+            storage.saveOpportunity({
+              ...opp,
+              id: historicalArchivedId,
+            });
+            console.log(`[LiveMarketScanner] Preserved historical terminal opportunity ${opp.id} (status: ${opp.status}) as ${historicalArchivedId}. Initializing fresh opportunity cycle for new signal.`);
+          }
+
+          // Initialize fresh active opportunity cycle for the new signal
           opp = {
             id: oppId,
             setupName: signal.setup,
@@ -1079,8 +1107,9 @@ class LiveMarketScanner {
           }
         }
 
-        if (opp.status === 'DISPATCHED' || !!opp.dispatchedAt) {
-          console.log(`[LiveMarketScanner] Opportunity ${oppId} was already dispatched (Status: ${opp.status}, DispatchedAt: ${opp.dispatchedAt}). Suppressing duplicate evolving alert.`);
+        // Only suppress if this opportunity is currently in-flight/DISPATCHED (not terminal)
+        if (opp.status === 'DISPATCHED') {
+          console.log(`[LiveMarketScanner] Opportunity ${oppId} is currently dispatched (Status: DISPATCHED, DispatchedAt: ${opp.dispatchedAt}). Suppressing duplicate evolving alert.`);
           this.config.duplicatePrevented = true;
           this.config.lastDecision = signal.signal;
           this.config.lastScanStatus = `تم منع إعادة إصدار الإشعار للفرصة الجارية: ${signal.signal} (${signal.setup})`;

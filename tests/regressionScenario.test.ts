@@ -7,6 +7,8 @@ async function runRegressionScenarioTests() {
   console.log('🧪 RUNNING REGRESSION SCENARIO TEST: 08:47:57 BUY -> 08:53:13 SELL -> 08:53:56 BUY');
   console.log('====================================================\n');
 
+  storage.setTestingMode(true);
+
   let passed = 0;
   let failed = 0;
 
