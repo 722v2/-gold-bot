@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { storage } from './storage.js';
+import { isShadowMode } from './runtimeMode.js';
 
 const GLOBAL_TELEGRAM_SERVICE_KEY = Symbol.for('__GOLD_AI_TELEGRAM_SERVICE__');
 const GLOBAL_TELEGRAM_POLLING_RUNNING = Symbol.for('__GOLD_AI_TELEGRAM_POLLING_RUNNING__');
@@ -58,6 +59,25 @@ export function setApplicationStartedAt(timestamp: number): void {
   } else {
     console.log(`[TELEGRAM] Application event boundary initialized: ${applicationStartedAt}`);
   }
+}
+
+/**
+ * Centralized helper: safely escape dynamic/user-generated values interpolated into
+ * Telegram messages using parse_mode="HTML".
+ * Prevents HTTP 400 "Bad Request: can't parse entities" caused by unescaped
+ * characters (&, <, >, ", ').
+ */
+export function escapeTelegramHtml(value: unknown): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  const str = String(value);
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 export interface TelegramStatus {
@@ -399,6 +419,7 @@ export class TelegramService {
    * Start background retry loop for reliable notification delivery
    */
   private startRetryLoop(): void {
+    if (isShadowMode()) return;
     if (this.retryTimer) return;
     this.retryTimer = setInterval(() => {
       this.processRetryQueue().catch((err) => {
@@ -448,6 +469,11 @@ export class TelegramService {
       const chatId = item.chatId || this.getPrivateChatId();
       if (!chatId) continue;
 
+      // Normalize any unescaped ampersands in stored message before retrying
+      if (item.message && typeof item.message === 'string') {
+        item.message = item.message.replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/gi, '&amp;');
+      }
+
       item.attempts += 1;
       const sentMsg = await this.sendMessageDirectly(chatId, item.message, item.replyMarkup);
       if (sentMsg && sentMsg.message_id) {
@@ -485,6 +511,10 @@ export class TelegramService {
     maxAttempts?: number;
     eventTimestamp?: number;
   }): Promise<{ success: boolean; telegramMessageId?: number; queued?: boolean; suppressed?: boolean }> {
+    if (isShadowMode()) {
+      console.log('[SHADOW MODE] Telegram production dispatch disabled.');
+      return { success: false, suppressed: true };
+    }
     const { notificationId, tradeId, event, message, replyMarkup, maxAttempts = 10 } = options;
     const eventTimestamp = options.eventTimestamp ?? Date.now();
 
@@ -520,7 +550,7 @@ export class TelegramService {
 
     // Genuinely new event
     console.log(`[TELEGRAM] New event dispatched:\nnotificationId=${notificationId}`);
-    this.safelySaveTelegramDispatch(notificationId);
+    // NOTE: Deduplication is ONLY recorded after Telegram API confirms successful delivery (or in recovery queue).
 
     const chatId = this.getPrivateChatId();
     if (!chatId) {
@@ -565,7 +595,7 @@ export class TelegramService {
         };
         this.notificationQueue.set(notificationId, sentItem);
         this.saveNotificationQueue();
-        storage.saveTelegramDispatch(notificationId);
+        this.safelySaveTelegramDispatch(notificationId);
         return { success: true, telegramMessageId: sentMsg.message_id };
       }
     }
@@ -719,6 +749,10 @@ export class TelegramService {
    * Initialize long-polling to detect /start command from the user
    */
   public async init(): Promise<void> {
+    if (isShadowMode()) {
+      console.log('[SHADOW MODE] Telegram production dispatch disabled.');
+      return;
+    }
     const token = this.getBotToken();
     if (!token) {
       console.warn('[Telegram] TELEGRAM_BOT_TOKEN is not configured in Secrets. Telegram service is offline.');
@@ -1012,21 +1046,28 @@ ${pending.originalMessageText || ''}
         const outcomeStr = pending.outcome === 'WIN' ? '🟢 صفقة رابحة (WIN)' : '🔴 صفقة خاسرة (LOSS)';
         this.clearPendingPnlRequest(chatId);
 
+        const sigType = escapeTelegramHtml(pending.signal.signal || 'TRADE');
+        const sigAsset = escapeTelegramHtml(pending.signal.asset || 'XAU/USD');
+        const formattedBal = escapeTelegramHtml(Number(newBal).toFixed(2));
+        const pnlStr = escapeTelegramHtml(`${finalRealizedPnl >= 0 ? '+' : ''}$${finalRealizedPnl.toFixed(2)}`);
+        const timeStr = escapeTelegramHtml(new Date().toLocaleTimeString('ar-EG'));
+
         await this.sendMessageDirectly(
           chatId,
           `
 ✅ <b>تم توثيق الصفقة وتحديث رصيد الحساب بنجاح!</b>
 
-📊 <b>الصفقة:</b> ${pending.signal.signal} (${pending.signal.asset || 'XAU/USD'})
+📊 <b>الصفقة:</b> ${sigType} (${sigAsset})
 📝 <b>النتيجة:</b> ${outcomeStr}
-💵 <b>الـ P&L الفعلي المعتمد:</b> ${finalRealizedPnl >= 0 ? '+' : ''}$${finalRealizedPnl.toFixed(2)}
-🏦 <b>رصيد الحساب الجديد:</b> $${Number(newBal).toFixed(2)}
+💵 <b>الـ P&L الفعلي المعتمد:</b> ${pnlStr}
+🏦 <b>رصيد الحساب الجديد:</b> $${formattedBal}
 
-⏱ <i>الوقت: ${new Date().toLocaleTimeString('ar-EG')}</i>
+⏱ <i>الوقت: ${timeStr}</i>
           `.trim()
         );
       } else {
-        await this.sendMessageDirectly(chatId, `❌ <b>حدث خطأ أثناء حفظ النتيجة:</b> ${res.message || 'فشل التوثيق'}`);
+        const errDesc = escapeTelegramHtml(res.message || 'فشل التوثيق');
+        await this.sendMessageDirectly(chatId, `❌ <b>حدث خطأ أثناء حفظ النتيجة:</b> ${errDesc}`);
       }
       return;
     }
@@ -1036,6 +1077,9 @@ ${pending.originalMessageText || ''}
    * Send text directly to a specific chat ID
    */
   private async sendMessageDirectly(chatId: string, text: string, replyMarkup?: any): Promise<any> {
+    if (isShadowMode()) {
+      return null;
+    }
     if (this.isRateLimited()) {
       return null;
     }
@@ -1046,6 +1090,9 @@ ${pending.originalMessageText || ''}
       return null;
     }
 
+    // Sanitize any unescaped ampersands that might have slipped through in dynamic text
+    const sanitizedText = text.replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/gi, '&amp;');
+
     try {
       this.lastSendError = null;
       const url = `https://api.telegram.org/bot${token}/sendMessage`;
@@ -1054,7 +1101,7 @@ ${pending.originalMessageText || ''}
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id: chatId,
-          text: text,
+          text: sanitizedText,
           parse_mode: 'HTML',
           disable_web_page_preview: true,
           ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
@@ -1076,6 +1123,31 @@ ${pending.originalMessageText || ''}
       }
       
       const errMsg = body?.description || `HTTP ${res.status}`;
+
+      // Fallback defense-in-depth: If Telegram rejected due to HTML parse error, retry with stripped tags
+      if (res.status === 400 && typeof errMsg === 'string' && (errMsg.toLowerCase().includes('parse entities') || errMsg.toLowerCase().includes('entity') || errMsg.toLowerCase().includes('tag'))) {
+        console.warn(`[Telegram Entity Parse Error] Retrying without HTML formatting for chat ${chatId}: ${errMsg}`);
+        const plainText = sanitizedText.replace(/<[^>]+>/g, '');
+        try {
+          const retryRes = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: plainText,
+              disable_web_page_preview: true,
+              ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+            }),
+          });
+          const retryBody = await retryRes.json() as any;
+          if (retryBody && retryBody.ok === true) {
+            return retryBody.result;
+          }
+        } catch (retryErr: any) {
+          console.error('[Telegram Fallback Error]', retryErr);
+        }
+      }
+
       this.lastSendError = `Telegram API Error (${res.status}): ${errMsg}`;
       console.error(`[Telegram Outbound Error] sendMessage to chat ${chatId} failed (HTTP ${res.status}): ${errMsg}`);
       return null;
@@ -1097,6 +1169,9 @@ ${pending.originalMessageText || ''}
     const token = this.getBotToken();
     if (!token) return false;
 
+    // Sanitize any unescaped ampersands that might have slipped through in dynamic text
+    const sanitizedText = text.replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/gi, '&amp;');
+
     try {
       const url = `https://api.telegram.org/bot${token}/editMessageText`;
       const res = await fetch(url, {
@@ -1105,7 +1180,7 @@ ${pending.originalMessageText || ''}
         body: JSON.stringify({
           chat_id: chatId,
           message_id: messageId,
-          text: text,
+          text: sanitizedText,
           parse_mode: 'HTML',
           disable_web_page_preview: true,
           ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
@@ -1125,7 +1200,35 @@ ${pending.originalMessageText || ''}
       if (body && body.ok === true) {
         return true;
       }
-      console.error(`[Telegram Outbound Error] editMessageText ${messageId} in chat ${chatId} failed (HTTP ${res.status}): ${body?.description || 'Unknown error'}`);
+
+      const errMsg = body?.description || `HTTP ${res.status}`;
+
+      // Fallback defense-in-depth: If Telegram rejected due to HTML parse error, retry with stripped tags
+      if (res.status === 400 && typeof errMsg === 'string' && (errMsg.toLowerCase().includes('parse entities') || errMsg.toLowerCase().includes('entity') || errMsg.toLowerCase().includes('tag'))) {
+        console.warn(`[Telegram Entity Parse Error] Retrying edit without HTML formatting for chat ${chatId}: ${errMsg}`);
+        const plainText = sanitizedText.replace(/<[^>]+>/g, '');
+        try {
+          const retryRes = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              message_id: messageId,
+              text: plainText,
+              disable_web_page_preview: true,
+              ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+            }),
+          });
+          const retryBody = await retryRes.json() as any;
+          if (retryBody && retryBody.ok === true) {
+            return true;
+          }
+        } catch (retryErr: any) {
+          console.error('[Telegram Fallback Error in editMessageText]', retryErr);
+        }
+      }
+
+      console.error(`[Telegram Outbound Error] editMessageText ${messageId} in chat ${chatId} failed (HTTP ${res.status}): ${errMsg}`);
       return false;
     } catch (err: any) {
       console.error(`[Telegram Network Error] Error editing message text ${messageId} in chat ${chatId}:`, err?.message || err);
@@ -1472,6 +1575,9 @@ ${message.text}
    * Sends a beautiful test notification to the detected private chat
    */
   public async sendTestNotification(): Promise<{ success: boolean; error?: string }> {
+    if (isShadowMode()) {
+      return { success: false, error: '[SHADOW MODE] Telegram test notification disabled in shadow mode.' };
+    }
     const token = this.getBotToken();
     if (!token) {
       return { success: false, error: 'البوت غير مكوّن. يرجى إدخال TELEGRAM_BOT_TOKEN في متغيرات البيئة (Secrets).' };
@@ -1504,6 +1610,9 @@ ${message.text}
    * Formats and delivers a mock / test trading signal alert
    */
   public async sendMockSignalNotification(): Promise<{ success: boolean; error?: string }> {
+    if (isShadowMode()) {
+      return { success: false, error: '[SHADOW MODE] Telegram mock signal notification disabled in shadow mode.' };
+    }
     const token = this.getBotToken();
     if (!token) {
       return { success: false, error: 'البوت غير مكوّن. يرجى إدخال TELEGRAM_BOT_TOKEN في متغيرات البيئة (Secrets).' };
@@ -1532,17 +1641,17 @@ ${message.text}
 
 🟢 <b>الصفقة المقترحة:</b> شراء تجريبي (TEST BUY NOW)
 📊 <b>الأصل:</b> XAU/USD (الذهب)
-📈 <b>سعر الدخول التجريبي:</b> $${mockSignal.entry.toFixed(2)}
-🛑 <b>وقف الخسارة التجريبي (SL):</b> $${mockSignal.stopLoss.toFixed(2)} (${mockSignal.slPoints} نقطة)
-🎯 <b>الهدف الأول التجريبي (TP1):</b> $${mockSignal.tp1.toFixed(2)}
-🎯 <b>الهدف الثاني التجريبي (TP2):</b> $${mockSignal.tp2.toFixed(2)}
-⚖️ <b>المخاطرة المحاكية:</b> ${mockSignal.riskPercent}% ($${mockSignal.riskAmount.toFixed(2)})
-🧠 <b>نسبة الثقة:</b> ${mockSignal.confidence}%
-🛠️ <b>النموذج الفني:</b> ${mockSignal.setup}
+📈 <b>سعر الدخول التجريبي:</b> $${escapeTelegramHtml(mockSignal.entry.toFixed(2))}
+🛑 <b>وقف الخسارة التجريبي (SL):</b> $${escapeTelegramHtml(mockSignal.stopLoss.toFixed(2))} (${escapeTelegramHtml(mockSignal.slPoints)} نقطة)
+🎯 <b>الهدف الأول التجريبي (TP1):</b> $${escapeTelegramHtml(mockSignal.tp1.toFixed(2))}
+🎯 <b>الهدف الثاني التجريبي (TP2):</b> ${escapeTelegramHtml(mockSignal.tp2.toFixed(2))}
+⚖️ <b>المخاطرة المحاكية:</b> ${escapeTelegramHtml(mockSignal.riskPercent)}% ($${escapeTelegramHtml(mockSignal.riskAmount.toFixed(2))})
+🧠 <b>نسبة الثقة:</b> ${escapeTelegramHtml(mockSignal.confidence)}%
+🛠️ <b>النموذج الفني:</b> ${escapeTelegramHtml(mockSignal.setup)}
 
 📢 <i>هذه الرسالة تهدف فقط لاختبار جودة وسرعة تسليم إشعارات الصفقات عبر التليجرام. لم يتم فتح أو تنفيذ أي صفقات حقيقية في حسابك.</i>
 
-⏱ <i>الوقت: ${new Date().toLocaleTimeString('ar-EG')}</i>
+⏱ <i>الوقت: ${escapeTelegramHtml(new Date().toLocaleTimeString('ar-EG'))}</i>
     `.trim();
 
     const result = await this.sendMessageDirectly(chatId, text);
@@ -1556,27 +1665,41 @@ ${message.text}
    * Formats and delivers a newly qualified trade signal alert
    */
   public async sendSignalNotification(signal: any): Promise<boolean> {
-    const chatId = this.getPrivateChatId();
-    if (!chatId) return false;
+    if (isShadowMode()) {
+      console.log(`[SHADOW MODE] Telegram signal dispatch blocked for signal: ${signal.signal} (${signal.setup})`);
+      return false;
+    }
 
     const isBuy = String(signal.signal).toUpperCase().includes('BUY');
     const actionEmoji = isBuy ? '🟢' : '🔴';
     const actionText = isBuy ? 'شراء الآن (BUY NOW)' : 'بيع الآن (SELL NOW)';
 
+    const entryStr = !isNaN(Number(signal.entry)) ? Number(signal.entry).toFixed(2) : String(signal.entry ?? '0.00');
+    const slStr = !isNaN(Number(signal.stopLoss)) ? Number(signal.stopLoss).toFixed(2) : String(signal.stopLoss ?? '0.00');
+    const slPointsStr = signal.slPoints !== undefined ? String(signal.slPoints) : '0';
+    const tp1Str = !isNaN(Number(signal.tp1)) ? Number(signal.tp1).toFixed(2) : String(signal.tp1 ?? '0.00');
+    const tp2Str = signal.tp2 && !isNaN(Number(signal.tp2)) ? '$' + escapeTelegramHtml(Number(signal.tp2).toFixed(2)) : 'غير محدد';
+    const riskPercentStr = escapeTelegramHtml(signal.riskPercent ?? 15);
+    const riskAmountStr = !isNaN(Number(signal.riskAmount)) ? Number(signal.riskAmount).toFixed(2) : '1.50';
+    const confidenceStr = escapeTelegramHtml(signal.confidence ?? 0);
+    const setupStr = escapeTelegramHtml(signal.setup || 'غير محدد');
+    const assetStr = escapeTelegramHtml(signal.asset || 'XAU/USD (الذهب)');
+    const timeStr = escapeTelegramHtml(new Date().toLocaleTimeString('ar-EG'));
+
     const text = `
 <b>🔔 إشارة تداول جديدة من Gold AI Scanner!</b>
 
-${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
-📊 <b>الأصل:</b> XAU/USD (الذهب)
-📈 <b>سعر الدخول:</b> $${Number(signal.entry).toFixed(2)}
-🛑 <b>وقف الخسارة (SL):</b> $${Number(signal.stopLoss).toFixed(2)} (${signal.slPoints} نقطة)
-🎯 <b>الهدف الأول (TP1):</b> $${Number(signal.tp1).toFixed(2)}
-🎯 <b>الهدف الثاني (TP2):</b> ${signal.tp2 ? '$' + Number(signal.tp2).toFixed(2) : 'غير محدد'}
-⚖️ <b>المخاطرة:</b> ${signal.riskPercent || 15}% ($${Number(signal.riskAmount || 1.5).toFixed(2)})
-🧠 <b>نسبة الثقة:</b> ${signal.confidence}%
-🛠️ <b>النموذج الفني:</b> ${signal.setup || 'غير محدد'}
+${actionEmoji} <b>الصفقة المقترحة:</b> ${escapeTelegramHtml(actionText)}
+📊 <b>الأصل:</b> ${assetStr}
+📈 <b>سعر الدخول:</b> $${escapeTelegramHtml(entryStr)}
+🛑 <b>وقف الخسارة (SL):</b> $${escapeTelegramHtml(slStr)} (${escapeTelegramHtml(slPointsStr)} نقطة)
+🎯 <b>الهدف الأول (TP1):</b> $${escapeTelegramHtml(tp1Str)}
+🎯 <b>الهدف الثاني (TP2):</b> ${tp2Str}
+⚖️ <b>المخاطرة:</b> ${riskPercentStr}% ($${escapeTelegramHtml(riskAmountStr)})
+🧠 <b>نسبة الثقة:</b> ${confidenceStr}%
+🛠️ <b>النموذج الفني:</b> ${setupStr}
 
-⏱ <i>الوقت: ${new Date().toLocaleTimeString('ar-EG')}</i>
+⏱ <i>الوقت: ${timeStr}</i>
     `.trim();
 
     // Attach entry & outcome buttons linked to this signal ID
@@ -1608,7 +1731,8 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
       this.signalMessageIds[signal.id] = result.telegramMessageId;
       this.saveMessageMapping();
     }
-    return result.success;
+    // Return true ONLY if delivery was confirmed by Telegram API (result.success is true only on successful delivery)
+    return Boolean(result.success);
   }
 
   /**
@@ -1618,6 +1742,10 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
     formattedMessage: string,
     options?: { notificationId?: string; tradeId?: string; event?: string; eventTimestamp?: number }
   ): Promise<boolean> {
+    if (isShadowMode()) {
+      console.log('[SHADOW MODE] Telegram management notification blocked.');
+      return false;
+    }
     const tradeId = options?.tradeId || 'general';
     const notificationId = options?.notificationId || `mgmt_${tradeId}_${options?.event || 'general'}`;
     const result = await this.dispatchReliableNotification({
@@ -1627,7 +1755,7 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
       message: formattedMessage,
       eventTimestamp: options?.eventTimestamp || Date.now(),
     });
-    return result.success;
+    return Boolean(result.success);
   }
 
   /**
@@ -1648,17 +1776,20 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
     trade: any,
     options?: { notificationId?: string; eventTimestamp?: number }
   ): Promise<boolean> {
+    if (isShadowMode()) {
+      console.log('[SHADOW MODE] Telegram outcome notification blocked.');
+      return false;
+    }
     const chatId = this.getPrivateChatId();
-    if (!chatId) return false;
-
-    // Remove inline outcome buttons on the original signal message to prevent late manual callbacks
-    const signalId = outcome.signalId || trade?.signalId || trade?.id || outcome.tradeId;
-    const tradeId = trade?.id || outcome.tradeId || signalId || 'trade';
-    if (signalId && this.signalMessageIds[signalId]) {
-      const origMsgId = this.signalMessageIds[signalId];
-      this.removeInlineKeyboard(chatId, origMsgId).catch(() => {});
-      delete this.signalMessageIds[signalId];
-      this.saveMessageMapping();
+    if (chatId) {
+      // Remove inline outcome buttons on the original signal message to prevent late manual callbacks
+      const signalId = outcome.signalId || trade?.signalId || trade?.id || outcome.tradeId;
+      if (signalId && this.signalMessageIds[signalId]) {
+        const origMsgId = this.signalMessageIds[signalId];
+        this.removeInlineKeyboard(chatId, origMsgId).catch(() => {});
+        delete this.signalMessageIds[signalId];
+        this.saveMessageMapping();
+      }
     }
 
     const isWin = outcome.outcome === 'WIN';
@@ -1667,30 +1798,37 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${actionText}
     const outcomeText = isWin ? 'صفقة رابحة (WIN)' : isBreakEven ? 'نقطة الدخول / تعادل (BREAK EVEN)' : 'صفقة خاسرة (LOSS)';
     const pnlSign = outcome.realizedPnl >= 0 ? '+' : '';
 
+    const pnlVal = !isNaN(Number(outcome.realizedPnl)) ? Number(outcome.realizedPnl).toFixed(2) : '0.00';
+    const entryVal = !isNaN(Number(outcome.entry || trade?.entry)) ? Number(outcome.entry || trade?.entry).toFixed(2) : '0.00';
+    const exitPriceVal = !isNaN(Number(outcome.exitPrice || trade?.exitPrice)) ? Number(outcome.exitPrice || trade?.exitPrice).toFixed(2) : '0.00';
+    const closeReasonVal = escapeTelegramHtml(outcome.closeReason || trade?.closeReason || 'تصفية يدوية أو نظام الوقف');
+    const assetVal = escapeTelegramHtml(trade?.asset || outcome.asset || 'XAU/USD (الذهب)');
+    const timeVal = escapeTelegramHtml(new Date().toLocaleTimeString('ar-EG'));
+
     const text = `
 <b>${outcomeEmoji} توثيق نتيجة صفقة من Gold AI!</b>
 
-📊 <b>الأصل:</b> XAU/USD (الذهب)
-🎯 <b>النتيجة:</b> ${outcomeText}
-💰 <b>الربح/الخسارة المحققة:</b> ${pnlSign}$${Number(outcome.realizedPnl || 0).toFixed(2)}
-📈 <b>سعر الدخول:</b> $${Number(outcome.entry || trade?.entry || 0).toFixed(2)}
-📉 <b>سعر الخروج:</b> $${Number(outcome.exitPrice || trade?.exitPrice || 0).toFixed(2)}
-ℹ️ <b>سبب الإغلاق:</b> ${outcome.closeReason || trade?.closeReason || 'تصفية يدوية أو نظام الوقف'}
+📊 <b>الأصل:</b> ${assetVal}
+🎯 <b>النتيجة:</b> ${escapeTelegramHtml(outcomeText)}
+💰 <b>الربح/الخسارة المحققة:</b> ${pnlSign}$${escapeTelegramHtml(pnlVal)}
+📈 <b>سعر الدخول:</b> $${escapeTelegramHtml(entryVal)}
+📉 <b>سعر الخروج:</b> $${escapeTelegramHtml(exitPriceVal)}
+ℹ️ <b>سبب الإغلاق:</b> ${closeReasonVal}
 
-⏱ <i>الوقت: ${new Date().toLocaleTimeString('ar-EG')}</i>
+⏱ <i>الوقت: ${timeVal}</i>
     `.trim();
 
-    const notificationId = options?.notificationId || `close_${tradeId}`;
+    const notificationId = options?.notificationId || `close_${trade?.id || outcome.tradeId || 'trade'}`;
     const eventTimestamp = options?.eventTimestamp || outcome.timestamp || (trade?.exitTime ? new Date(trade.exitTime).getTime() : Date.now());
 
     const result = await this.dispatchReliableNotification({
       notificationId,
-      tradeId,
+      tradeId: trade?.id || outcome.tradeId,
       event: 'OUTCOME_CLOSE',
       message: text,
       eventTimestamp,
     });
-    return result.success;
+    return Boolean(result.success);
   }
 
   /**

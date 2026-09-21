@@ -11,6 +11,33 @@ import { tradeManagementEngine } from './tradeManagementEngine.js';
 import { checkStructuralSameSetupIdentity, generateOpportunityId } from './tradeQualityEngine.js';
 import { telegramService } from './telegram.js';
 import { experienceMemoryEngine } from './experienceMemory.js';
+import { isShadowMode, shadowDiagnosticsStore, logShadowScanDiagnostic, ShadowScanDiagnostic } from './runtimeMode.js';
+
+/**
+ * Minimum cooldown duration between consecutive market scans (in milliseconds).
+ * 45 seconds ensures that standard once-per-minute cron triggers (every 60s) pass seamlessly,
+ * while preventing duplicate automatic scans within the same 45-second window.
+ */
+export const SCAN_MIN_COOLDOWN_MS = 45000;
+
+/**
+ * Determines whether the internal Node.js setInterval() scanner loop is enabled.
+ * In production (e.g. Render), the external cron scheduler is authoritative, so
+ * internal timer can be disabled via ENABLE_INTERNAL_SCANNER=false or SCANNER_TRIGGER_MODE=cron.
+ */
+export function isInternalTimerEnabled(): boolean {
+  if (process.env.ENABLE_INTERNAL_SCANNER === 'false' || process.env.ENABLE_INTERNAL_SCANNER === '0') {
+    return false;
+  }
+  if (process.env.SCANNER_TRIGGER_MODE === 'cron' || process.env.SCANNER_TRIGGER_MODE === 'external') {
+    return false;
+  }
+  if (process.env.ENABLE_INTERNAL_SCANNER === 'true' || process.env.ENABLE_INTERNAL_SCANNER === '1') {
+    return true;
+  }
+  // Default to true for standard autonomous background scanning if not specified
+  return true;
+}
 
 class LiveMarketScanner {
   private config: ScannerConfig = {
@@ -45,13 +72,36 @@ class LiveMarketScanner {
   private activeSignal: TradeSignal | null = null;
   private isScanRunning: boolean = false;
   private scanStartTime: number = 0;
+  private lastScanCompletedTime: number = 0;
   private lastKnownPrice: number = 0;
 
   constructor() {
-    // Automatically start the server-side scanner background worker on creation
-    setTimeout(() => {
-      this.start();
-    }, 1500);
+    const internalEnabled = isInternalTimerEnabled();
+    console.log(`[SCANNER] Trigger mode: ${internalEnabled ? 'AUTONOMOUS_TIMER' : 'CRON_ONLY'}`);
+    console.log(`[SCANNER] Internal timer: ${internalEnabled ? 'ACTIVE' : 'DISABLED'}`);
+
+    // Only start the internal timer loop if internal autonomous timer is enabled
+    if (internalEnabled) {
+      setTimeout(() => {
+        this.start();
+      }, 1500);
+    }
+  }
+
+  public isInternalTimerActive(): boolean {
+    return this.timer !== null;
+  }
+
+  public getTriggerMode(): 'CRON_ONLY' | 'AUTONOMOUS_TIMER' {
+    return isInternalTimerEnabled() ? 'AUTONOMOUS_TIMER' : 'CRON_ONLY';
+  }
+
+  public getLastScanCompletedTime(): number {
+    return this.lastScanCompletedTime;
+  }
+
+  public setLastScanCompletedTimeForTesting(timeMs: number): void {
+    this.lastScanCompletedTime = timeMs;
   }
 
   public getConfig(): ScannerConfig {
@@ -92,6 +142,10 @@ class LiveMarketScanner {
   }
 
   public cancelActiveSignal(oppId: string): boolean {
+    if (isShadowMode()) {
+      console.warn('[SHADOW MODE] Blocked cancelActiveSignal in shadow mode.');
+      return false;
+    }
     // 1. Locate opportunity by signal ID, direct opportunity ID, restored ID fallback, or active/dispatched status fallback
     let opp = storage.getOpportunity(oppId) || 
               storage.getOpportunities().find(o => o.signalId === oppId || o.id === oppId);
@@ -155,25 +209,36 @@ class LiveMarketScanner {
     this.onSignalFoundCallback = callback;
   }
 
-  public start() {
+  public start(forceStartTimer = false) {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
     }
 
     this.config.enabled = true;
+    const internalEnabled = forceStartTimer || isInternalTimerEnabled();
+
+    if (!internalEnabled) {
+      this.config.lastScanStatus = 'المسح المباشر يعمل بنظام المشغّل الخارجي (CRON_ONLY)';
+      this.config.nextScanTime = null;
+      console.log('[SCANNER] Trigger mode: CRON_ONLY');
+      console.log('[SCANNER] Internal timer: DISABLED (external Cron is authoritative trigger)');
+      return;
+    }
+
     const intervalSec = this.config.intervalSeconds || 60;
     this.config.nextScanTime = Date.now() + intervalSec * 1000;
     this.config.lastScanStatus = `المسح المباشر نشط في الخلفية (فحص تلقائي مستقل كل ${intervalSec} ثانية)`;
+    console.log('[SCANNER] Trigger mode: AUTONOMOUS_TIMER');
     console.log(`[SCANNER] started (interval: ${intervalSec}s for XAU/USD via Biquote)`);
 
     // Immediate initial scan
-    this.runScan('XAU/USD');
+    this.runScan('XAU/USD', { source: 'timer' });
 
     // Recurring scan every interval seconds (default: 60s)
     this.timer = setInterval(() => {
       console.log('[SCANNER] tick');
-      this.runScan('XAU/USD');
+      this.runScan('XAU/USD', { source: 'timer' });
     }, intervalSec * 1000);
   }
 
@@ -199,7 +264,13 @@ class LiveMarketScanner {
    * 6. Prevent duplicate signals if same setup is still active
    * 7. Store every scan and every generated signal in persistent storage
    */
-  public async runScan(asset: AssetType = 'XAU/USD'): Promise<TradeSignal | null> {
+  public async runScan(
+    asset: AssetType = 'XAU/USD',
+    options?: { source?: 'cron' | 'manual' | 'timer' | 'startup'; force?: boolean }
+  ): Promise<TradeSignal | null> {
+    const source = options?.source || 'cron';
+    const force = options?.force || false;
+
     if (this.isScanRunning) {
       const runningDuration = Date.now() - (this.scanStartTime || 0);
       if (runningDuration > 35000) {
@@ -207,9 +278,35 @@ class LiveMarketScanner {
         this.isScanRunning = false;
         this.config.isScanning = false;
       } else {
-        console.log('[SCANNER] Scan already in progress, skipping concurrent call');
+        if (source === 'cron') {
+          console.log('[SCANNER] Cron tick: SKIPPED_IN_FLIGHT (Scan already in progress)');
+        } else if (source === 'manual') {
+          console.log('[SCANNER] Manual scan: SKIPPED (Scan already in progress)');
+        } else {
+          console.log(`[SCANNER] ${source}: SKIPPED_IN_FLIGHT (Scan already in progress)`);
+        }
         return this.config.lastSignal || null;
       }
+    }
+
+    const now = Date.now();
+    const elapsedSinceLastScan = now - this.lastScanCompletedTime;
+    if (!force && this.lastScanCompletedTime > 0 && elapsedSinceLastScan < SCAN_MIN_COOLDOWN_MS) {
+      const remainingSec = Math.ceil((SCAN_MIN_COOLDOWN_MS - elapsedSinceLastScan) / 1000);
+      if (source === 'cron') {
+        console.log(`[SCANNER] Cron tick: SKIPPED_COOLDOWN (${elapsedSinceLastScan}ms elapsed < 45s cooldown, ${remainingSec}s remaining)`);
+      } else if (source === 'manual') {
+        console.log(`[SCANNER] Manual scan: SKIPPED (Cooldown active: ${remainingSec}s remaining)`);
+      } else {
+        console.log(`[SCANNER] ${source}: SKIPPED_COOLDOWN (${remainingSec}s remaining)`);
+      }
+      return this.config.lastSignal || null;
+    }
+
+    if (source === 'cron') {
+      console.log('[SCANNER] Cron tick: EXECUTING');
+    } else if (source === 'manual') {
+      console.log('[SCANNER] Manual scan: EXECUTING');
     }
 
     this.isScanRunning = true;
@@ -218,7 +315,7 @@ class LiveMarketScanner {
     this.config.lastScanTime = Date.now();
     const intervalSec = this.config.intervalSeconds || 60;
     this.config.nextScanTime = Date.now() + intervalSec * 1000;
-    console.log(`[SCANNER] scan started for ${asset}`);
+    console.log(`[SCANNER] scan started for ${asset} (source: ${source})`);
 
     try {
       this.config.lastScanStatus = `جارٍ فحص الذهب XAU/USD مباشرة عبر Biquote MT5...`;
@@ -329,95 +426,97 @@ class LiveMarketScanner {
       const openTrades = allTrades.filter((t) => t.result === 'OPEN' && t.isActive !== false);
       const outcomes = storage.getTradeOutcomes();
 
-      // Reconcile stale/orphan opportunities against authoritative trade ledger & trade outcomes
-      const activeOrDispatchedOpps = storage.getOpportunities().filter(
-        (o) => o.status === 'ACTIVE' || o.status === 'DISPATCHED'
-      );
-
-      for (const opp of activeOrDispatchedOpps) {
-        // Check if there is an authoritative trade resolution in trade_ledger or trade_outcomes
-        const matchingTrade = allTrades.find(
-          (t) =>
-            t.id === opp.id ||
-            t.id === opp.signalId ||
-            (t as any).signalId === opp.id ||
-            (t as any).signalId === opp.signalId
-        );
-        const matchingOutcome = outcomes.find(
-          (out) =>
-            out.signalId === opp.signalId ||
-            out.signalId === opp.id ||
-            out.tradeId === opp.signalId ||
-            out.tradeId === opp.id
+      // Reconcile stale/orphan opportunities against authoritative trade ledger & trade outcomes (Production only)
+      if (!isShadowMode()) {
+        const activeOrDispatchedOpps = storage.getOpportunities().filter(
+          (o) => o.status === 'ACTIVE' || o.status === 'DISPATCHED'
         );
 
-        const isResolvedInLedger = matchingTrade && matchingTrade.result !== 'OPEN';
-        const isResolvedInOutcomes = matchingOutcome && !!matchingOutcome.outcome;
+        for (const opp of activeOrDispatchedOpps) {
+          // Check if there is an authoritative trade resolution in trade_ledger or trade_outcomes
+          const matchingTrade = allTrades.find(
+            (t) =>
+              t.id === opp.id ||
+              t.id === opp.signalId ||
+              (t as any).signalId === opp.id ||
+              (t as any).signalId === opp.signalId
+          );
+          const matchingOutcome = outcomes.find(
+            (out) =>
+              out.signalId === opp.signalId ||
+              out.signalId === opp.id ||
+              out.tradeId === opp.signalId ||
+              out.tradeId === opp.id
+          );
 
-        if (isResolvedInLedger || isResolvedInOutcomes) {
-          const isNotEntered =
-            (matchingOutcome && matchingOutcome.outcome === 'NOT_ENTERED') ||
-            (matchingTrade && (matchingTrade.result as any) === 'NOT_ENTERED');
+          const isResolvedInLedger = matchingTrade && matchingTrade.result !== 'OPEN';
+          const isResolvedInOutcomes = matchingOutcome && !!matchingOutcome.outcome;
 
-          if (isNotEntered) {
-            opp.status = 'NOT_ENTERED';
+          if (isResolvedInLedger || isResolvedInOutcomes) {
+            const isNotEntered =
+              (matchingOutcome && matchingOutcome.outcome === 'NOT_ENTERED') ||
+              (matchingTrade && (matchingTrade.result as any) === 'NOT_ENTERED');
+
+            if (isNotEntered) {
+              opp.status = 'NOT_ENTERED';
+              opp.lastUpdatedTime = Date.now();
+              storage.saveOpportunity(opp);
+              console.log(
+                `[LiveMarketScanner] Reconciled unentered opportunity ${opp.id} (signal: ${opp.signalId}) as NOT_ENTERED.`
+              );
+              continue;
+            }
+
+            const isWin =
+              (matchingTrade && matchingTrade.result === 'WIN') ||
+              (matchingOutcome && matchingOutcome.outcome === 'WIN');
+            const isCancelled =
+              (matchingTrade && (matchingTrade.result === 'CANCELLED' || matchingTrade.result === 'VOID')) ||
+              (matchingOutcome && ((matchingOutcome.outcome as string) === 'VOID' || (matchingOutcome.outcome as string) === 'CANCELLED'));
+
+            opp.status = isWin ? 'COMPLETED' : (isCancelled ? 'CANCELLED' : 'FAILED');
+            if (isWin) opp.completedAt = opp.completedAt || Date.now();
+            else opp.failedAt = opp.failedAt || Date.now();
             opp.lastUpdatedTime = Date.now();
             storage.saveOpportunity(opp);
             console.log(
-              `[LiveMarketScanner] Reconciled unentered opportunity ${opp.id} (signal: ${opp.signalId}) as NOT_ENTERED.`
+              `[LiveMarketScanner] Reconciled stale opportunity ${opp.id} (signal: ${opp.signalId}) with authoritative closed trade -> ${opp.status}`
             );
             continue;
           }
 
-          const isWin =
-            (matchingTrade && matchingTrade.result === 'WIN') ||
-            (matchingOutcome && matchingOutcome.outcome === 'WIN');
-          const isCancelled =
-            (matchingTrade && (matchingTrade.result === 'CANCELLED' || matchingTrade.result === 'VOID')) ||
-            (matchingOutcome && ((matchingOutcome.outcome as string) === 'VOID' || (matchingOutcome.outcome as string) === 'CANCELLED'));
-
-          opp.status = isWin ? 'COMPLETED' : (isCancelled ? 'CANCELLED' : 'FAILED');
-          if (isWin) opp.completedAt = opp.completedAt || Date.now();
-          else opp.failedAt = opp.failedAt || Date.now();
-          opp.lastUpdatedTime = Date.now();
-          storage.saveOpportunity(opp);
-          console.log(
-            `[LiveMarketScanner] Reconciled stale opportunity ${opp.id} (signal: ${opp.signalId}) with authoritative closed trade -> ${opp.status}`
+          // Check if there is an authoritative active open trade in openTrades
+          const hasOpenTrade = openTrades.some(
+            (t) =>
+              t.id === opp.id ||
+              t.id === opp.signalId ||
+              (t as any).signalId === opp.id ||
+              (t as any).signalId === opp.signalId
           );
-          continue;
-        }
 
-        // Check if there is an authoritative active open trade in openTrades
-        const hasOpenTrade = openTrades.some(
-          (t) =>
-            t.id === opp.id ||
-            t.id === opp.signalId ||
-            (t as any).signalId === opp.id ||
-            (t as any).signalId === opp.signalId
-        );
+          if (!hasOpenTrade) {
+            // A recently dispatched or active opportunity must NOT be demoted to NOT_ENTERED immediately,
+            // because it may be awaiting the user's manual trade entry or Telegram action (WIN / LOSS / NOT ENTERED).
+            // Only genuinely stale opportunities (e.g. older than 4 hours without an open trade or resolution)
+            // should be automatically cleaned up as NOT_ENTERED.
+            const oppAgeMs = Date.now() - (opp.dispatchedAt || opp.firstObservedTime || opp.lastUpdatedTime || 0);
+            const STALE_UNENTERED_THRESHOLD_MS = 4 * 60 * 60 * 1000; // 4 hours
 
-        if (!hasOpenTrade) {
-          // A recently dispatched or active opportunity must NOT be demoted to NOT_ENTERED immediately,
-          // because it may be awaiting the user's manual trade entry or Telegram action (WIN / LOSS / NOT ENTERED).
-          // Only genuinely stale opportunities (e.g. older than 4 hours without an open trade or resolution)
-          // should be automatically cleaned up as NOT_ENTERED.
-          const oppAgeMs = Date.now() - (opp.dispatchedAt || opp.firstObservedTime || opp.lastUpdatedTime || 0);
-          const STALE_UNENTERED_THRESHOLD_MS = 4 * 60 * 60 * 1000; // 4 hours
-
-          if (oppAgeMs > STALE_UNENTERED_THRESHOLD_MS) {
-            // Truly stale unentered opportunity from a prior session or hours ago without execution.
-            // Mark it NOT_ENTERED to clean up stale state.
-            opp.status = 'NOT_ENTERED';
-            opp.lastUpdatedTime = Date.now();
-            storage.saveOpportunity(opp);
-            console.log(
-              `[LiveMarketScanner] Stale unentered opportunity ${opp.id} (signal: ${opp.signalId}, age: ${Math.round(oppAgeMs / 60000)}m) marked NOT_ENTERED (exceeded stale threshold with no open trade).`
-            );
-          } else {
-            // Keep recent ACTIVE / DISPATCHED opportunity protected while awaiting trade action.
-            console.log(
-              `[LiveMarketScanner] Preserving active/dispatched opportunity ${opp.id} (signal: ${opp.signalId}, age: ${Math.round(oppAgeMs / 60000)}m) awaiting execution/user action.`
-            );
+            if (oppAgeMs > STALE_UNENTERED_THRESHOLD_MS) {
+              // Truly stale unentered opportunity from a prior session or hours ago without execution.
+              // Mark it NOT_ENTERED to clean up stale state.
+              opp.status = 'NOT_ENTERED';
+              opp.lastUpdatedTime = Date.now();
+              storage.saveOpportunity(opp);
+              console.log(
+                `[LiveMarketScanner] Stale unentered opportunity ${opp.id} (signal: ${opp.signalId}, age: ${Math.round(oppAgeMs / 60000)}m) marked NOT_ENTERED (exceeded stale threshold with no open trade).`
+              );
+            } else {
+              // Keep recent ACTIVE / DISPATCHED opportunity protected while awaiting trade action.
+              console.log(
+                `[LiveMarketScanner] Preserving active/dispatched opportunity ${opp.id} (signal: ${opp.signalId}, age: ${Math.round(oppAgeMs / 60000)}m) awaiting execution/user action.`
+              );
+            }
           }
         }
       }
@@ -668,8 +767,8 @@ class LiveMarketScanner {
       let isExecutionBlocked = false;
       let blockReason = '';
 
-      // Phase 4: Continuous Trade Lifecycle & Health Management for active open trades
-      if (openTrades.length > 0 && settings.enableTradeManagement !== false) {
+      // Phase 4: Continuous Trade Lifecycle & Health Management for active open trades (Production only)
+      if (!isShadowMode() && openTrades.length > 0 && settings.enableTradeManagement !== false) {
         tradeManagementEngine
           .evaluateActiveTrades(
             currentPrice,
@@ -700,6 +799,12 @@ class LiveMarketScanner {
       } else if (activeCapital <= 0) {
         isExecutionBlocked = true;
         blockReason = 'Manual capital must be greater than $0.00. Execution blocked.';
+      }
+
+      if (isShadowMode()) {
+        // In shadow audit mode, MT5 is intentionally decoupled. Allow strategy evaluation with fallback shadow capital.
+        isExecutionBlocked = false;
+        activeCapital = activeCapital > 0 ? activeCapital : (settings.manualCapital > 0 ? settings.manualCapital : 10.0);
       }
 
       this.currentBalance = activeCapital;
@@ -1015,6 +1120,55 @@ class LiveMarketScanner {
           }
         }
 
+        // In Shadow Mode, do not dispatch to Telegram, do not mutate production opportunities, and do not execute auto-trades
+        if (isShadowMode()) {
+          console.log(`[SHADOW ACCEPTED] ${signal.setup} ${signal.signal} @ ${signal.entry} SL=${signal.stopLoss} TP1=${signal.tp1} Confidence=${signal.confidence}%`);
+          const shadowDiag: ShadowScanDiagnostic = {
+            id: `shadow_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            timestamp: Date.now(),
+            timestampIso: new Date().toISOString(),
+            price: currentPrice,
+            bid: quote?.bid ?? currentPrice,
+            ask: quote?.ask ?? currentPrice,
+            spreadPoints: spreadPoints,
+            closedCandles: {
+              '1H': candles1h[candles1h.length - 1]?.timestamp ? new Date(candles1h[candles1h.length - 1].timestamp).toISOString() : undefined,
+              '15M': candles15m[candles15m.length - 1]?.timestamp ? new Date(candles15m[candles15m.length - 1].timestamp).toISOString() : undefined,
+              '5M': candles5m[candles5m.length - 1]?.timestamp ? new Date(candles5m[candles5m.length - 1].timestamp).toISOString() : undefined,
+              '1M': candles1m[candles1m.length - 1]?.timestamp ? new Date(candles1m[candles1m.length - 1].timestamp).toISOString() : undefined,
+            },
+            marketRegime: (signal as any).marketRegime || 'NORMAL',
+            candidateStrategy: signal.setup,
+            candidateDirection: signal.signal.toUpperCase().includes('BUY') ? 'BUY' : 'SELL',
+            levels: {
+              entry: signal.entry,
+              sl: signal.stopLoss,
+              tp1: signal.tp1,
+              tp2: signal.tp2,
+              confidence: signal.confidence,
+              rr: Number(signal.tp1Rr) || Number(signal.rr) || 1.5,
+            },
+            gates: {
+              spread: liveSpread > 35 ? 'FAIL' : 'PASS',
+              quality: 'PASS',
+              qualityScore: signal.confidence,
+              antiChase: (signal as any).antiChasePassed === false ? 'CHASED' : 'PASS',
+              risk: 'PASS',
+            },
+            finalDecision: 'SHADOW_ACCEPTED',
+            telegramDispatch: 'DISABLED_SHADOW_MODE',
+            productionStateMutation: 'BLOCKED_SHADOW_MODE',
+          };
+          shadowDiagnosticsStore.recordScan(shadowDiag);
+          logShadowScanDiagnostic(shadowDiag);
+
+          this.config.lastDecision = signal.signal;
+          this.config.lastSignal = signal;
+          this.config.lastScanStatus = `[SHADOW MODE] تم رصد صفقة مؤكدة: ${signal.signal} (${signal.setup}) بنسبة ثقة ${signal.confidence}% - بدون إرسال لتليجرام`;
+          console.log('[SCANNER] shadow scan completed (accepted setup, no telegram, no state mutation)');
+          return signal;
+        }
+
         // New genuine setup qualified!
         this.activeSignal = signal;
         this.config.activeSetupName = signal.setup;
@@ -1143,6 +1297,42 @@ class LiveMarketScanner {
         return signal;
       } else {
         // Returned NO TRADE (or confidence < minConfidence)
+        if (isShadowMode()) {
+          console.log(`[SHADOW REJECTED] ${signal.setup || 'NO_SETUP'} Reason=${dynamicRejectionReason || 'No setup qualified'}`);
+          const shadowDiag: ShadowScanDiagnostic = {
+            id: `shadow_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            timestamp: Date.now(),
+            timestampIso: new Date().toISOString(),
+            price: currentPrice,
+            bid: quote?.bid ?? currentPrice,
+            ask: quote?.ask ?? currentPrice,
+            spreadPoints: spreadPoints,
+            closedCandles: {
+              '1H': candles1h[candles1h.length - 1]?.timestamp ? new Date(candles1h[candles1h.length - 1].timestamp).toISOString() : undefined,
+              '15M': candles15m[candles15m.length - 1]?.timestamp ? new Date(candles15m[candles15m.length - 1].timestamp).toISOString() : undefined,
+              '5M': candles5m[candles5m.length - 1]?.timestamp ? new Date(candles5m[candles5m.length - 1].timestamp).toISOString() : undefined,
+              '1M': candles1m[candles1m.length - 1]?.timestamp ? new Date(candles1m[candles1m.length - 1].timestamp).toISOString() : undefined,
+            },
+            marketRegime: (signal as any).marketRegime || 'NORMAL',
+            candidateStrategy: signal.setup !== 'CAPITAL_GUARD_BLOCK' ? signal.setup : undefined,
+            candidateDirection: signal.signal && signal.signal !== 'NO TRADE' ? (signal.signal.toUpperCase().includes('BUY') ? 'BUY' : 'SELL') : undefined,
+            gates: {
+              spread: liveSpread > 35 ? 'FAIL' : 'PASS',
+              quality: signal.signal !== 'NO TRADE' ? 'PASS' : 'FAIL',
+              qualityScore: signal.confidence,
+              antiChase: (signal as any).antiChasePassed === false ? 'CHASED' : 'PASS',
+              risk: signal.signal !== 'NO TRADE' && (signal.slPoints < 40 || signal.slPoints > 50) ? 'FAIL' : 'PASS',
+            },
+            rejectionReason: dynamicRejectionReason,
+            firstRejectionReason: dynamicRejectionReason,
+            finalDecision: 'SHADOW_REJECTED',
+            telegramDispatch: 'DISABLED_SHADOW_MODE',
+            productionStateMutation: 'BLOCKED_SHADOW_MODE',
+          };
+          shadowDiagnosticsStore.recordScan(shadowDiag);
+          logShadowScanDiagnostic(shadowDiag);
+        }
+
         // If an active trade was previously running and is still between SL and TP, maintain it
         if (this.activeSignal && this.activeSignal.signal !== 'NO TRADE') {
           this.config.duplicatePrevented = true;
@@ -1242,18 +1432,29 @@ class LiveMarketScanner {
     } finally {
       this.isScanRunning = false;
       this.config.isScanning = false;
+      this.lastScanCompletedTime = Date.now();
     }
   }
 
   /**
    * Triggers an immediate scan and resets the 60-second timer
    */
-  public async triggerManualScan(): Promise<TradeSignal | null> {
+  public async triggerManualScan(force = false): Promise<TradeSignal | null> {
     if (this.isScanRunning) {
-      console.log('[SCANNER] Manual scan requested while another scan is in progress. Avoiding concurrent AI request.');
+      console.log('[SCANNER] Manual scan: SKIPPED (Scan already in progress)');
       return this.config.lastSignal || null;
     }
-    const res = await this.runScan('XAU/USD');
+
+    const now = Date.now();
+    const elapsed = now - this.lastScanCompletedTime;
+    if (!force && this.lastScanCompletedTime > 0 && elapsed < SCAN_MIN_COOLDOWN_MS) {
+      const remainingSec = Math.ceil((SCAN_MIN_COOLDOWN_MS - elapsed) / 1000);
+      console.log(`[SCANNER] Manual scan: SKIPPED (Cooldown active: ${remainingSec}s remaining)`);
+      return this.config.lastSignal || null;
+    }
+
+    console.log('[SCANNER] Manual scan: EXECUTING');
+    const res = await this.runScan('XAU/USD', { source: 'manual', force });
     // Reset next scan time countdown to full interval
     const intervalSec = this.config.intervalSeconds || 60;
     this.config.nextScanTime = Date.now() + intervalSec * 1000;
@@ -1265,10 +1466,47 @@ class LiveMarketScanner {
    * Used by cloud schedulers, external cron services (cron-job.org / Cloud Scheduler)
    * to guarantee 24/7 scanning even when the browser is offline or the container sleeps.
    */
-  public async triggerCronTick(): Promise<{ signal: TradeSignal | null; health: any }> {
-    const signal = await this.runScan('XAU/USD');
+  public async triggerCronTick(): Promise<{
+    signal: TradeSignal | null;
+    health: any;
+    status: 'EXECUTED' | 'SKIPPED_COOLDOWN' | 'SKIPPED_IN_FLIGHT';
+    skipped: boolean;
+    reason?: string;
+  }> {
+    const now = Date.now();
+    if (this.isScanRunning) {
+      console.log('[SCANNER] Cron tick: SKIPPED_IN_FLIGHT');
+      return {
+        signal: this.config.lastSignal || null,
+        health: this.getHealthReport(),
+        status: 'SKIPPED_IN_FLIGHT',
+        skipped: true,
+        reason: 'Previous scan still running',
+      };
+    }
+
+    const elapsed = now - this.lastScanCompletedTime;
+    if (this.lastScanCompletedTime > 0 && elapsed < SCAN_MIN_COOLDOWN_MS) {
+      const remainingSec = Math.ceil((SCAN_MIN_COOLDOWN_MS - elapsed) / 1000);
+      console.log(`[SCANNER] Cron tick: SKIPPED_COOLDOWN (${elapsed}ms elapsed < 45s cooldown, ${remainingSec}s remaining)`);
+      return {
+        signal: this.config.lastSignal || null,
+        health: this.getHealthReport(),
+        status: 'SKIPPED_COOLDOWN',
+        skipped: true,
+        reason: `Cooldown active (${remainingSec}s remaining)`,
+      };
+    }
+
+    console.log('[SCANNER] Cron tick: EXECUTING');
+    const signal = await this.runScan('XAU/USD', { source: 'cron' });
     const health = this.getHealthReport();
-    return { signal, health };
+    return {
+      signal,
+      health,
+      status: 'EXECUTED',
+      skipped: false,
+    };
   }
 
   /**
@@ -1289,9 +1527,13 @@ class LiveMarketScanner {
 
     return {
       scannerStatus: this.config.enabled ? 'ONLINE' : 'OFFLINE',
+      triggerMode: this.getTriggerMode(),
+      internalTimerActive: this.isInternalTimerActive(),
       lastScanTime: this.config.lastScanTime,
       lastScanTimeIso: this.config.lastScanTime ? new Date(this.config.lastScanTime).toISOString() : null,
       lastScanTimeFormatted: this.config.lastScanTime ? new Date(this.config.lastScanTime).toLocaleTimeString() : 'N/A',
+      lastScanCompletedTime: this.lastScanCompletedTime,
+      lastScanCompletedTimeIso: this.lastScanCompletedTime ? new Date(this.lastScanCompletedTime).toISOString() : null,
       nextScanTime: this.config.nextScanTime,
       nextScanTimeIso: this.config.nextScanTime ? new Date(this.config.nextScanTime).toISOString() : null,
       nextScanTimeFormatted: this.config.nextScanTime ? new Date(this.config.nextScanTime).toLocaleTimeString() : 'N/A',

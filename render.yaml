@@ -9,6 +9,12 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: TRADING_RUNTIME_MODE
+        value: production
+      - key: ENABLE_INTERNAL_SCANNER
+        value: "false"
+      - key: SCANNER_TRIGGER_MODE
+        value: cron
       - key: NVIDIA_BASE_URL
         value: https://integrate.api.nvidia.com/v1
       - key: NVIDIA_API_KEY

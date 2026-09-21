@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import path from 'path';
 import { TelegramService, telegramService, setApplicationStartedAt } from '../server/telegram.js';
+import { setTradingRuntimeModeForTesting } from '../server/runtimeMode.js';
 
 test('Telegram Restart & Retry Lifecycle Verification Suite', async (t) => {
+  setTradingRuntimeModeForTesting('production');
   const testQueuePath = path.resolve(process.cwd(), 'data', 'telegram_retry_queue_lifecycle_test.json');
   const now = Date.now();
   setApplicationStartedAt(now);
@@ -264,6 +266,101 @@ test('Telegram Restart & Retry Lifecycle Verification Suite', async (t) => {
     // Process retry queue -> still 0 additional messages
     await telegramService.processRetryQueue();
     assert.equal(sentMessages.length, 1, 'Retry processor produces 0 additional messages');
+  });
+
+  await t.test('7. escapeTelegramHtml properly escapes HTML special characters in signal messages', async () => {
+    sentMessages = [];
+    shouldFailSends = false;
+
+    const signalWithSpecialChars = {
+      id: `sig_special_${Date.now()}`,
+      signal: 'BUY NOW',
+      asset: 'XAU/USD & Commodities <Gold>',
+      entry: 4346.61,
+      stopLoss: 4340.00,
+      slPoints: 66,
+      tp1: 4355.00,
+      tp2: 4360.00,
+      riskPercent: 1.5,
+      riskAmount: 15.00,
+      confidence: 95,
+      setup: 'Horizontal Support Breakout & Retest "Confirmed" <M5>',
+      createdAt: Date.now(),
+    };
+
+    const sent = await telegramService.sendSignalNotification(signalWithSpecialChars);
+    assert.equal(sent, true, 'sendSignalNotification must succeed');
+    assert.equal(sentMessages.length, 1, 'One message must be sent');
+    
+    const sentText = sentMessages[0].text;
+    assert.ok(sentText.includes('Horizontal Support Breakout &amp; Retest &quot;Confirmed&quot; &lt;M5&gt;'), 'Special characters in setup must be safely escaped');
+    assert.ok(!sentText.includes('Breakout & Retest'), 'Raw unescaped & must not exist in output');
+  });
+
+  await t.test('8. Failed send does NOT mark dispatch in persistent storage until confirmed delivery', async () => {
+    sentMessages = [];
+    shouldFailSends = true;
+
+    const notifId = `sig_fail_nodedup_${Date.now()}`;
+    const res = await telegramService.dispatchReliableNotification({
+      notificationId: notifId,
+      tradeId: 'real_trade_fail_dedup',
+      event: 'SIGNAL_NEW',
+      message: 'Failed notification test',
+      eventTimestamp: Date.now(),
+    });
+
+    assert.equal(res.success, false, 'Initial send must fail');
+
+    // Deduplication store MUST NOT have this notification recorded yet!
+    assert.equal(
+      (telegramService as any).safelyIsTelegramDispatched(notifId),
+      false,
+      'Failed notification must NOT be marked as dispatched in deduplication store'
+    );
+
+    // Now connection recovers and retry succeeds
+    shouldFailSends = false;
+    const q = (telegramService as any).notificationQueue as Map<string, any>;
+    const item = q.get(notifId);
+    if (item) item.nextRetryAt = 0;
+
+    await telegramService.processRetryQueue();
+
+    assert.equal(sentMessages.length, 1, 'Message delivered upon retry');
+    assert.equal(
+      (telegramService as any).safelyIsTelegramDispatched(notifId),
+      true,
+      'Successful retry must now record the notification in deduplication store'
+    );
+  });
+
+  await t.test('9. Retry queue normalizes unescaped ampersands before retrying Telegram delivery', async () => {
+    sentMessages = [];
+    shouldFailSends = false;
+
+    const malformedNotifId = `sig_malformed_amp_${Date.now()}`;
+    const rawMessageWithAmp = '<b>Signal:</b> Retest & Breakout with Profit & Loss';
+
+    const q = (telegramService as any).notificationQueue as Map<string, any>;
+    q.set(malformedNotifId, {
+      notificationId: malformedNotifId,
+      tradeId: 'trade_amp_fix',
+      event: 'SIGNAL_NEW',
+      chatId: '999111',
+      message: rawMessageWithAmp,
+      status: 'PENDING',
+      attempts: 1,
+      maxAttempts: 5,
+      nextRetryAt: 0,
+      createdAt: Date.now(),
+    });
+
+    await telegramService.processRetryQueue();
+
+    assert.equal(sentMessages.length, 1, 'Message should be sent on retry');
+    assert.ok(sentMessages[0].text.includes('Retest &amp; Breakout with Profit &amp; Loss'), 'Unescaped & must be normalized to &amp;');
+    assert.equal(q.get(malformedNotifId)?.status, 'SENT', 'Status must be updated to SENT');
   });
 
   // Cleanup test artifacts

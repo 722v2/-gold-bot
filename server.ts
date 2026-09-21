@@ -20,6 +20,7 @@ import { runTradeManagementTests } from './server/tradeManagementTests.js';
 import { runAccountingTests } from './server/accountingTests.js';
 import { globalLifecycleManager, globalPoiTracker } from './server/tradeQualityEngine.js';
 import { telegramService } from './server/telegram.js';
+import { getTradingRuntimeMode, isShadowMode, isProductionMode, shadowDiagnosticsStore } from './server/runtimeMode.js';
 
 async function startServer() {
   const app = express();
@@ -33,6 +34,9 @@ async function startServer() {
     const report = scanner.getHealthReport();
     res.json({
       status: 'ok',
+      runtimeMode: getTradingRuntimeMode(),
+      isShadowMode: isShadowMode(),
+      isProductionMode: isProductionMode(),
       scannerStatus: report.scannerStatus, // 'ONLINE' | 'OFFLINE'
       lastScanTime: report.lastScanTime,
       lastScanTimeFormatted: report.lastScanTimeFormatted,
@@ -66,6 +70,56 @@ async function startServer() {
       hasNvidiaKey: !!process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY !== 'MY_NVIDIA_API_KEY',
       hasGeminiKey: !!process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY !== 'MY_NVIDIA_API_KEY',
     });
+  });
+
+  // Dedicated Shadow Diagnostics endpoint (Requirement 6)
+  app.get('/api/shadow-diagnostics', async (req, res) => {
+    try {
+      const mode = getTradingRuntimeMode();
+      const report = scanner.getHealthReport();
+      const latestScan = shadowDiagnosticsStore.getLatestScan();
+      const recentScans = shadowDiagnosticsStore.getRecentScans(30);
+      const prodSignals = storage.getSignals(50);
+      const prodOpps = storage.getOpportunities();
+      const parity = shadowDiagnosticsStore.compareWithProduction(prodSignals, prodOpps);
+
+      res.json({
+        runtimeMode: mode,
+        isShadowMode: mode === 'shadow',
+        isProductionMode: mode === 'production',
+        authoritativeProductionScanner: 'Render',
+        telegramNotifications: mode === 'production' ? 'ENABLED' : 'DISABLED_SHADOW_MODE',
+        statePersistence: mode === 'production' ? 'ENABLED' : 'DISABLED_SHADOW_MODE',
+        marketConnection: {
+          status: report.biquoteConnection,
+          lastDataTimestamp: report.lastSuccessfulMarketDataTimestamp,
+          lastDataIso: report.lastSuccessfulMarketDataTimeIso,
+          provider: 'Biquote MT5 Feed',
+        },
+        latestShadowScan: latestScan,
+        recentShadowScans: recentScans,
+        parityComparison: parity,
+        productionSignalsSummary: {
+          totalLoaded: prodSignals.length,
+          signals: prodSignals.slice(0, 10).map((s) => ({
+            id: s.id,
+            setup: s.setup,
+            signal: s.signal,
+            entry: s.entry,
+            stopLoss: s.stopLoss,
+            tp1: s.tp1,
+            confidence: s.confidence,
+            timestamp: s.timestamp,
+            isoTime: new Date(s.timestamp).toISOString(),
+          })),
+        },
+        timestamp: Date.now(),
+        timestampIso: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.error('[API] /api/shadow-diagnostics error:', err);
+      res.status(500).json({ error: err?.message || 'Failed to retrieve shadow diagnostics' });
+    }
   });
 
   // Get current live market price with Biquote quote details (bid/ask/spread)
@@ -679,11 +733,11 @@ async function startServer() {
   // Scanner manual trigger
   app.post('/api/scanner/scan-now', async (req, res) => {
     try {
-      const { balance, losingStreak, brokerSpecs } = req.body || {};
+      const { balance, losingStreak, brokerSpecs, force } = req.body || {};
       if (balance !== undefined) {
         scanner.setAccountContext(Number(balance), Number(losingStreak) || 0, brokerSpecs);
       }
-      const signal = await scanner.triggerManualScan();
+      const signal = await scanner.triggerManualScan(Boolean(force));
       res.json({ success: true, signal, config: scanner.getConfig() });
     } catch (error: any) {
       res.status(500).json({ success: false, error: error.message });
@@ -1007,10 +1061,13 @@ async function startServer() {
         success: true,
         timestamp: Date.now(),
         time: new Date().toISOString(),
-        message: '24/7 Server-side scan tick executed successfully',
+        message: result.skipped ? `Scan skipped: ${result.reason || 'cooldown'}` : '24/7 Server-side scan tick executed successfully',
         health: result.health,
         signalDecision: result.signal?.signal || 'NO TRADE',
         signal: result.signal,
+        status: result.status,
+        skipped: result.skipped,
+        reason: result.reason,
       });
     } catch (error: any) {
       console.error('Error in /api/scanner/cron-tick:', error);
