@@ -777,18 +777,25 @@ export function detectHorizontalBreakoutRetest(
       }
 
       if (breakoutIdx !== -1) {
-        // Check current/recent candle returns to touch/retest the level
-        const touch = lastCandle.low <= level + 0.5 * atr14 && lastCandle.low >= level - 0.6 * atr14;
-        const rejectsUp = lastCandle.close >= level - 0.2 * atr14;
+        // Verify no candle after breakout closed back below the level (failed breakout)
+        const candlesAfterBreakout = slice5m.slice(breakoutIdx + 1);
+        const hasFailedBackBelow = candlesAfterBreakout.some((c) => c.close < level - 0.2 * atr14);
 
-        if (touch && rejectsUp) {
-          results.push({
-            found: true,
-            type: 'RESISTANCE_TO_SUPPORT',
-            brokenLevel: level,
-            breakoutCandleClose: slice5m[breakoutIdx].close,
-            retestPrice: lastCandle.low,
-          });
+        if (!hasFailedBackBelow) {
+          // Check current/recent candle returns to touch/retest the level
+          const touch = lastCandle.low <= level + 0.5 * atr14 && lastCandle.low >= level - 0.4 * atr14;
+          // Must hold above the broken level (rejection up / acceptance above)
+          const holdsAbove = lastCandle.close > level;
+
+          if (touch && holdsAbove) {
+            results.push({
+              found: true,
+              type: 'RESISTANCE_TO_SUPPORT',
+              brokenLevel: level,
+              breakoutCandleClose: slice5m[breakoutIdx].close,
+              retestPrice: lastCandle.low,
+            });
+          }
         }
       }
     }
@@ -804,22 +811,108 @@ export function detectHorizontalBreakoutRetest(
       }
 
       if (breakoutIdx !== -1) {
-        const touch = lastCandle.high >= level - 0.5 * atr14 && lastCandle.high <= level + 0.6 * atr14;
-        const rejectsDown = lastCandle.close <= level + 0.2 * atr14;
+        // Verify no candle after breakout closed back above the level (failed breakout)
+        const candlesAfterBreakout = slice5m.slice(breakoutIdx + 1);
+        const hasFailedBackAbove = candlesAfterBreakout.some((c) => c.close > level + 0.2 * atr14);
 
-        if (touch && rejectsDown) {
-          results.push({
-            found: true,
-            type: 'SUPPORT_TO_RESISTANCE',
-            brokenLevel: level,
-            breakoutCandleClose: slice5m[breakoutIdx].close,
-            retestPrice: lastCandle.high,
-          });
+        if (!hasFailedBackAbove) {
+          const touch = lastCandle.high >= level - 0.5 * atr14 && lastCandle.high <= level + 0.4 * atr14;
+          // Must hold below the broken level (rejection down / acceptance below)
+          const holdsBelow = lastCandle.close < level;
+
+          if (touch && holdsBelow) {
+            results.push({
+              found: true,
+              type: 'SUPPORT_TO_RESISTANCE',
+              brokenLevel: level,
+              breakoutCandleClose: slice5m[breakoutIdx].close,
+              retestPrice: lastCandle.high,
+            });
+          }
         }
       }
     }
   }
 
   return results;
+}
+
+/**
+ * Checks if there is explicit confirmed structural reversal in the specified direction.
+ * Requires closed candle confirmation on M15/M5 (e.g. BOS/CHOCH or neckline break).
+ */
+export function hasConfirmedReversalStructure(
+  direction: 'BUY' | 'SELL',
+  indicators15m: TechnicalIndicators,
+  indicators5m: TechnicalIndicators,
+  closedCandles15m: Candle[],
+  closedCandles5m: Candle[],
+  atr14: number
+): boolean {
+  if (direction === 'BUY') {
+    // Bullish reversal confirmation
+    // 1. Confirmed M15 or M5 structural shift / BOS in bullish direction
+    const shift15m = String(indicators15m?.structureShift || '');
+    const shift5m = String(indicators5m?.structureShift || '');
+    if (shift15m.includes('BULLISH') || shift15m.includes('CHOCH_BULLISH') || shift15m.includes('BOS_BULLISH')) {
+      return true;
+    }
+    if (shift5m.includes('BULLISH') || shift5m.includes('CHOCH_BULLISH') || shift5m.includes('BOS_BULLISH')) {
+      return true;
+    }
+
+    // 2. Confirmed Double Bottom neckline break
+    const candleSet = closedCandles15m && closedCandles15m.length >= 15 ? closedCandles15m : (closedCandles5m || []);
+    if (candleSet.length >= 15) {
+      const doubleBottoms = detectDoubleTopBottom(candleSet, atr14 || 1.0);
+      if (doubleBottoms.some((p) => p.type === 'DOUBLE_BOTTOM' && p.confirmationState === 'CONFIRMED_REVERSAL')) {
+        return true;
+      }
+    }
+
+    // 3. 15M closed candle higher high over previous swing high with bullish structure
+    if (closedCandles15m && closedCandles15m.length >= 5) {
+      const last15 = closedCandles15m[closedCandles15m.length - 1];
+      const prevSwings = closedCandles15m.slice(-6, -1);
+      const prevMaxHigh = Math.max(...prevSwings.map((c) => c.high));
+      if (last15.close > prevMaxHigh + 0.2 * (atr14 || 1.0) && indicators15m?.structure === 'BULLISH') {
+        return true;
+      }
+    }
+
+    return false;
+  } else {
+    // Bearish reversal confirmation
+    // 1. Confirmed M15 or M5 structural shift / BOS in bearish direction
+    const shift15m = String(indicators15m?.structureShift || '');
+    const shift5m = String(indicators5m?.structureShift || '');
+    if (shift15m.includes('BEARISH') || shift15m.includes('CHOCH_BEARISH') || shift15m.includes('BOS_BEARISH')) {
+      return true;
+    }
+    if (shift5m.includes('BEARISH') || shift5m.includes('CHOCH_BEARISH') || shift5m.includes('BOS_BEARISH')) {
+      return true;
+    }
+
+    // 2. Confirmed Double Top neckline break
+    const candleSet = closedCandles15m && closedCandles15m.length >= 15 ? closedCandles15m : (closedCandles5m || []);
+    if (candleSet.length >= 15) {
+      const doubleTops = detectDoubleTopBottom(candleSet, atr14 || 1.0);
+      if (doubleTops.some((p) => p.type === 'DOUBLE_TOP' && p.confirmationState === 'CONFIRMED_REVERSAL')) {
+        return true;
+      }
+    }
+
+    // 3. 15M closed candle lower low below previous swing low with bearish structure
+    if (closedCandles15m && closedCandles15m.length >= 5) {
+      const last15 = closedCandles15m[closedCandles15m.length - 1];
+      const prevSwings = closedCandles15m.slice(-6, -1);
+      const prevMinLow = Math.min(...prevSwings.map((c) => c.low));
+      if (last15.close < prevMinLow - 0.2 * (atr14 || 1.0) && indicators15m?.structure === 'BEARISH') {
+        return true;
+      }
+    }
+
+    return false;
+  }
 }
 

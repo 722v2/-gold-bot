@@ -22,6 +22,7 @@ import {
 } from '../src/types.js';
 import { storage } from './storage.js';
 import { partition5mCandles } from './candleUtils.js';
+import { hasConfirmedReversalStructure } from './indicators.js';
 
 // ============================================================================
 // 1. SETUP FRESHNESS & POI MITIGATION ENGINE
@@ -2146,6 +2147,7 @@ export function validateTradeSignalCandidate(
     family === 'BREAK_AND_RETEST' ||
     family === 'BARE_SR' ||
     family === 'FIBONACCI_OTE' ||
+    family === 'COUNTERTREND_SCALP' ||
     family === 'RANGE_BREAKOUT_EXPANSION';
 
   if (!hasStructuralContext) {
@@ -2195,14 +2197,7 @@ export function validateTradeSignalCandidate(
     };
   }
 
-  // 5. Multi-Timeframe Structure Alignment (Fix 1 & Fix 7)
-  const isReversalStrategy =
-    family === 'LIQUIDITY_SWEEP' ||
-    family === 'RANGE_SFP_REVERSAL' ||
-    family === 'COUNTERTREND_SCALP' ||
-    family === 'FAILED_BREAKOUT' ||
-    family === 'DOUBLE_TOP_BOTTOM';
-
+  // 5. Multi-Timeframe Structure Alignment
   if (direction === 'BUY') {
     const isH1Bearish =
       indicators1h.marketRegime === 'STRONG_DOWNTREND' ||
@@ -2211,11 +2206,21 @@ export function validateTradeSignalCandidate(
       indicators15m.marketRegime === 'STRONG_DOWNTREND' ||
       (indicators15m.structure === 'BEARISH' && indicators15m.trendStructure === 'LH_LL');
 
-    if (isH1Bearish && isM15Bearish && !isReversalStrategy) {
-      return {
-        isValid: false,
-        rejectionReason: 'HTF_CONTRADICTION: 1H/15M structure is strongly bearish and contradicts BUY setup without qualified reversal context',
-      };
+    if (isH1Bearish && isM15Bearish) {
+      const isConfirmedReversal = hasConfirmedReversalStructure(
+        'BUY',
+        indicators15m,
+        indicators5m,
+        candles15m || [],
+        candles5m || [],
+        indicators15m.atr14
+      );
+      if (!isConfirmedReversal) {
+        return {
+          isValid: false,
+          rejectionReason: 'HTF_CONTRADICTION: 1H/15M structure is strongly bearish and contradicts BUY setup without confirmed structural reversal',
+        };
+      }
     }
   } else {
     // SELL direction
@@ -2226,11 +2231,21 @@ export function validateTradeSignalCandidate(
       indicators15m.marketRegime === 'STRONG_UPTREND' ||
       (indicators15m.structure === 'BULLISH' && indicators15m.trendStructure === 'HH_HL');
 
-    if (isH1Bullish && isM15Bullish && !isReversalStrategy) {
-      return {
-        isValid: false,
-        rejectionReason: 'HTF_CONTRADICTION: 1H/15M structure is strongly bullish and contradicts SELL setup without qualified reversal context',
-      };
+    if (isH1Bullish && isM15Bullish) {
+      const isConfirmedReversal = hasConfirmedReversalStructure(
+        'SELL',
+        indicators15m,
+        indicators5m,
+        candles15m || [],
+        candles5m || [],
+        indicators15m.atr14
+      );
+      if (!isConfirmedReversal) {
+        return {
+          isValid: false,
+          rejectionReason: 'HTF_CONTRADICTION: 1H/15M structure is strongly bullish and contradicts SELL setup without confirmed structural reversal',
+        };
+      }
     }
   }
 
@@ -2269,7 +2284,8 @@ export function validateTradeSignalCandidate(
     family !== 'COUNTERTREND_SCALP' &&
     family !== 'DOUBLE_TOP_BOTTOM' &&
     family !== 'BARE_SR' &&
-    family !== 'STRUCTURE_ENGULFING'
+    family !== 'STRUCTURE_ENGULFING' &&
+    family !== 'MARKET_STRUCTURE'
   ) {
     return {
       isValid: false,

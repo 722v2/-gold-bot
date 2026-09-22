@@ -18,6 +18,7 @@ import {
   detectDoubleTopBottom,
   detectBareSRLevels,
   detectHorizontalBreakoutRetest,
+  hasConfirmedReversalStructure,
 } from './indicators.js';
 import {
   globalPoiTracker,
@@ -523,14 +524,22 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       family !== 'COUNTERTREND_SCALP' &&
       family !== 'DOUBLE_TOP_BOTTOM' &&
       family !== 'BARE_SR' &&
-      family !== 'STRUCTURE_ENGULFING'
+      family !== 'STRUCTURE_ENGULFING' &&
+      family !== 'MARKET_STRUCTURE'
     ) {
       console.log(`[StrategyEngine] Disqualified ${setupName} due to invalid pullback structure (${pullbackAssessment.reasons.join(', ')})`);
       return null;
     }
 
     // 6. Phase 3: Entry Timing & Overextension / Anti-Chase Assessment
-    const poiRef = direction === 'BUY' ? poiTop : poiBottom;
+    let poiRef = direction === 'BUY' ? poiTop : poiBottom;
+    let pTop = poiTop;
+    let pBottom = poiBottom;
+    if (family === 'DOUBLE_TOP_BOTTOM' && patternMetadata?.neckline && isFinite(patternMetadata.neckline)) {
+      poiRef = patternMetadata.neckline;
+      pTop = patternMetadata.neckline + 0.3 * atr5m;
+      pBottom = patternMetadata.neckline - 0.3 * atr5m;
+    }
     const timingAssessment = assessEntryTimingAndAntiChase(
       direction,
       family,
@@ -540,8 +549,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       indicators5m,
       indicators15m.marketRegime || 'UNCLEAR',
       {
-        top: poiTop,
-        bottom: poiBottom,
+        top: pTop,
+        bottom: pBottom,
         poiPrice: poiRef,
         type: poiType,
       },
@@ -1282,6 +1291,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   const doubleTopBottomPatterns = detectDoubleTopBottom(partition5m.closedCandles, atr5m);
   for (const pat of doubleTopBottomPatterns) {
     const isConfirmed = pat.confirmationState === 'CONFIRMED_REVERSAL';
+    if (!isConfirmed) continue; // PRE_CONFIRMATION setups are developing patterns and must NOT generate market-entry signals
     if (pat.type === 'DOUBLE_TOP') {
       const setupTitle = isConfirmed
         ? 'Double Top Reversal (Confirmed M-Formation)'
@@ -1657,31 +1667,31 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   // =========================================================================
   const regimeFilteredCandidates = candidates.filter((cand) => {
     if (isStrongUptrend && cand.direction === 'SELL') {
-      const isAllowedException =
-        cand.strategyFamily === 'COUNTERTREND_SCALP' ||
-        cand.strategyFamily === 'LIQUIDITY_SWEEP' ||
-        cand.strategyFamily === 'RANGE_SFP_REVERSAL' ||
-        cand.strategyFamily === 'DOUBLE_TOP_BOTTOM' ||
-        cand.strategyFamily === 'BARE_SR' ||
-        cand.strategyFamily === 'STRUCTURE_ENGULFING' ||
-        (cand.strategyFamily === 'MARKET_STRUCTURE' && cand.setupName.includes('CHOCH'));
-      if (!isAllowedException) {
-        console.log(`[StrategyEngine] Scorer Conflict Filter: Disqualified ${cand.setupName} (${cand.direction}) opposing STRONG_UPTREND`);
+      const isConfirmedReversal = hasConfirmedReversalStructure(
+        'SELL',
+        indicators15m,
+        indicators5m,
+        partition15m.closedCandles,
+        partition5m.closedCandles,
+        atr5m
+      );
+      if (!isConfirmedReversal) {
+        console.log(`[StrategyEngine] Scorer Conflict Filter: Disqualified ${cand.setupName} (${cand.direction}) opposing STRONG_UPTREND due to missing confirmed reversal structure`);
         return false;
       }
     }
 
     if (isStrongDowntrend && cand.direction === 'BUY') {
-      const isAllowedException =
-        cand.strategyFamily === 'COUNTERTREND_SCALP' ||
-        cand.strategyFamily === 'LIQUIDITY_SWEEP' ||
-        cand.strategyFamily === 'RANGE_SFP_REVERSAL' ||
-        cand.strategyFamily === 'DOUBLE_TOP_BOTTOM' ||
-        cand.strategyFamily === 'BARE_SR' ||
-        cand.strategyFamily === 'STRUCTURE_ENGULFING' ||
-        (cand.strategyFamily === 'MARKET_STRUCTURE' && cand.setupName.includes('CHOCH'));
-      if (!isAllowedException) {
-        console.log(`[StrategyEngine] Scorer Conflict Filter: Disqualified ${cand.setupName} (${cand.direction}) opposing STRONG_DOWNTREND`);
+      const isConfirmedReversal = hasConfirmedReversalStructure(
+        'BUY',
+        indicators15m,
+        indicators5m,
+        partition15m.closedCandles,
+        partition5m.closedCandles,
+        atr5m
+      );
+      if (!isConfirmedReversal) {
+        console.log(`[StrategyEngine] Scorer Conflict Filter: Disqualified ${cand.setupName} (${cand.direction}) opposing STRONG_DOWNTREND due to missing confirmed reversal structure`);
         return false;
       }
     }
