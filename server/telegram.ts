@@ -1,7 +1,6 @@
 import fs from 'fs';
 import path from 'path';
 import { storage } from './storage.js';
-import { isShadowMode } from './runtimeMode.js';
 
 const GLOBAL_TELEGRAM_SERVICE_KEY = Symbol.for('__GOLD_AI_TELEGRAM_SERVICE__');
 const GLOBAL_TELEGRAM_POLLING_RUNNING = Symbol.for('__GOLD_AI_TELEGRAM_POLLING_RUNNING__');
@@ -419,7 +418,6 @@ export class TelegramService {
    * Start background retry loop for reliable notification delivery
    */
   private startRetryLoop(): void {
-    if (isShadowMode()) return;
     if (this.retryTimer) return;
     this.retryTimer = setInterval(() => {
       this.processRetryQueue().catch((err) => {
@@ -476,13 +474,11 @@ export class TelegramService {
 
       const isTestItem = Boolean(
         item.tradeId?.startsWith('test_') ||
-        item.tradeId?.startsWith('shadow_test_') ||
-        item.notificationId?.startsWith('signal_test_') ||
-        item.event === 'SHADOW_TEST_SIGNAL'
+        item.notificationId?.startsWith('signal_test_')
       );
 
       item.attempts += 1;
-      const sentMsg = await this.sendMessageDirectly(chatId, item.message, item.replyMarkup, { allowShadowTest: isTestItem });
+      const sentMsg = await this.sendMessageDirectly(chatId, item.message, item.replyMarkup);
       if (sentMsg && sentMsg.message_id) {
         item.status = 'SENT';
         item.sentAt = Date.now();
@@ -521,35 +517,31 @@ export class TelegramService {
     replyMarkup?: any;
     maxAttempts?: number;
     eventTimestamp?: number;
-    allowShadowTest?: boolean;
+    allowTestDispatch?: boolean;
   }): Promise<{ success: boolean; telegramMessageId?: number; queued?: boolean; suppressed?: boolean; error?: string }> {
-    const isShadow = isShadowMode();
-    const isTestAllowed = Boolean(
-      options.allowShadowTest === true &&
-      (options.tradeId?.startsWith('test_') || options.tradeId?.startsWith('shadow_test_') || options.event === 'SHADOW_TEST_SIGNAL')
-    );
-
-    if (isShadow && !isTestAllowed) {
-      console.log('[SHADOW MODE] Telegram production dispatch disabled.');
-      return { success: false, suppressed: true };
-    }
     const { notificationId, tradeId, event, message, replyMarkup, maxAttempts = 10 } = options;
     const eventTimestamp = options.eventTimestamp ?? Date.now();
 
-    // 1. STARTUP BOUNDARY CHECK:
+    // 1. CHECK PERSISTENT DEDUPLICATION FIRST:
+    // If already marked as SENT in notificationQueue or in storage.isTelegramDispatched, idempotent return success!
+    const existing = this.notificationQueue.get(notificationId);
+    if ((existing && existing.status === 'SENT') || this.safelyIsTelegramDispatched(notificationId)) {
+      console.log(`[Telegram Queue] Idempotent duplicate prevented for notification ${notificationId}. Already sent.`);
+      return { success: true, telegramMessageId: existing?.telegramMessageId };
+    }
+
+    const isTestAllowed = Boolean(
+      options.allowTestDispatch === true &&
+      (options.tradeId?.startsWith('test_') ||
+        options.event === 'PRODUCTION_VERIFY_SIGNAL')
+    );
+
+    // 2. STARTUP BOUNDARY CHECK:
     // If the event timestamp is prior to the application start time,
     // this is a historical event (restored from DB/storage/reconciliation). Suppress it!
     if (eventTimestamp < this.applicationStartedAt) {
       console.log(`[TELEGRAM] Historical event suppressed:\nnotificationId=${notificationId}\neventTimestamp=${eventTimestamp}\napplicationStartedAt=${this.applicationStartedAt}`);
       return { success: false, suppressed: true };
-    }
-
-    // 2. CHECK PERSISTENT DEDUPLICATION:
-    // If already marked as SENT in notificationQueue or in storage.isTelegramDispatched, prevent duplicate!
-    const existing = this.notificationQueue.get(notificationId);
-    if ((existing && existing.status === 'SENT') || this.safelyIsTelegramDispatched(notificationId)) {
-      console.log(`[Telegram Queue] Idempotent duplicate prevented for notification ${notificationId}. Already sent.`);
-      return { success: true, telegramMessageId: existing?.telegramMessageId };
     }
 
     // 3. EXPERIMENTAL / TEST TRADE SUPPRESSION
@@ -594,7 +586,7 @@ export class TelegramService {
 
     // Attempt immediate delivery if not rate limited
     if (!this.isRateLimited()) {
-      const sentMsg = await this.sendMessageDirectly(chatId, message, replyMarkup, { allowShadowTest: isTestAllowed });
+      const sentMsg = await this.sendMessageDirectly(chatId, message, replyMarkup);
       if (sentMsg && sentMsg.message_id) {
         const sentItem: QueuedTelegramNotification = {
           notificationId,
@@ -767,10 +759,6 @@ export class TelegramService {
    * Initialize long-polling to detect /start command from the user
    */
   public async init(): Promise<void> {
-    if (isShadowMode()) {
-      console.log('[SHADOW MODE] Telegram production dispatch disabled.');
-      return;
-    }
     const token = this.getBotToken();
     if (!token) {
       console.warn('[Telegram] TELEGRAM_BOT_TOKEN is not configured in Secrets. Telegram service is offline.');
@@ -1094,10 +1082,7 @@ ${pending.originalMessageText || ''}
   /**
    * Send text directly to a specific chat ID
    */
-  private async sendMessageDirectly(chatId: string, text: string, replyMarkup?: any, options?: { allowShadowTest?: boolean }): Promise<any> {
-    if (isShadowMode() && !options?.allowShadowTest) {
-      return null;
-    }
+  private async sendMessageDirectly(chatId: string, text: string, replyMarkup?: any): Promise<any> {
     if (this.isRateLimited()) {
       return null;
     }
@@ -1592,19 +1577,12 @@ ${message.text}
   /**
    * Sends a simple direct test message to verify connectivity (e.g. for /api/telegram/test-signal)
    */
-  public async sendSimpleTestMessage(customText?: string, options?: { allowShadowTest?: boolean }): Promise<{
+  public async sendSimpleTestMessage(customText?: string, options?: { allowTestDispatch?: boolean }): Promise<{
     success: boolean;
     telegramMessageId?: number;
     chatId?: string;
     error?: string;
   }> {
-    const isShadow = isShadowMode();
-    const isTestAllowed = Boolean(options?.allowShadowTest === true);
-
-    if (isShadow && !isTestAllowed) {
-      return { success: false, error: '[SHADOW MODE] Telegram test message blocked in shadow mode.' };
-    }
-
     const token = this.getBotToken();
     if (!token) {
       return { success: false, error: 'TELEGRAM_BOT_TOKEN is not configured in environment.' };
@@ -1616,7 +1594,7 @@ ${message.text}
     }
 
     const text = customText || '✅ Telegram connection test successful';
-    const result = await this.sendMessageDirectly(chatId, text, undefined, { allowShadowTest: isTestAllowed });
+    const result = await this.sendMessageDirectly(chatId, text);
 
     if (result && result.message_id) {
       return {
@@ -1636,9 +1614,6 @@ ${message.text}
    * Sends a beautiful test notification to the detected private chat
    */
   public async sendTestNotification(): Promise<{ success: boolean; error?: string }> {
-    if (isShadowMode()) {
-      return { success: false, error: '[SHADOW MODE] Telegram test notification disabled in shadow mode.' };
-    }
     const token = this.getBotToken();
     if (!token) {
       return { success: false, error: 'البوت غير مكوّن. يرجى إدخال TELEGRAM_BOT_TOKEN في متغيرات البيئة (Secrets).' };
@@ -1671,9 +1646,6 @@ ${message.text}
    * Formats and delivers a mock / test trading signal alert
    */
   public async sendMockSignalNotification(): Promise<{ success: boolean; error?: string }> {
-    if (isShadowMode()) {
-      return { success: false, error: '[SHADOW MODE] Telegram mock signal notification disabled in shadow mode.' };
-    }
     const token = this.getBotToken();
     if (!token) {
       return { success: false, error: 'البوت غير مكوّن. يرجى إدخال TELEGRAM_BOT_TOKEN في متغيرات البيئة (Secrets).' };
@@ -1725,17 +1697,11 @@ ${message.text}
   /**
    * Formats and delivers a newly qualified trade signal alert
    */
-  public async sendSignalNotification(signal: any, options?: { allowShadowTest?: boolean }): Promise<boolean> {
-    const isShadow = isShadowMode();
+  public async sendSignalNotification(signal: any, options?: { allowTestDispatch?: boolean }): Promise<boolean> {
     const isTestAllowed = Boolean(
-      options?.allowShadowTest === true &&
-      (signal.isTest === true || String(signal.id).startsWith('test_') || String(signal.id).startsWith('shadow_test_'))
+      options?.allowTestDispatch === true &&
+      (signal.isTest === true || String(signal.id).startsWith('test_'))
     );
-
-    if (isShadow && !isTestAllowed) {
-      console.log(`[SHADOW MODE] Telegram signal dispatch blocked for signal: ${signal.signal} (${signal.setup})`);
-      return false;
-    }
 
     const isBuy = String(signal.signal).toUpperCase().includes('BUY');
     const actionEmoji = isBuy ? '🟢' : '🔴';
@@ -1788,11 +1754,11 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${escapeTelegramHtml(action
     const result = await this.dispatchReliableNotification({
       notificationId,
       tradeId: signal.id,
-      event: isTestAllowed ? 'SHADOW_TEST_SIGNAL' : 'SIGNAL_NEW',
+      event: isTestAllowed ? 'TEST_SIGNAL' : 'SIGNAL_NEW',
       message: text,
       replyMarkup,
       eventTimestamp,
-      allowShadowTest: isTestAllowed,
+      allowTestDispatch: isTestAllowed,
     });
 
     if (result.telegramMessageId) {
@@ -1810,10 +1776,6 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${escapeTelegramHtml(action
     formattedMessage: string,
     options?: { notificationId?: string; tradeId?: string; event?: string; eventTimestamp?: number }
   ): Promise<boolean> {
-    if (isShadowMode()) {
-      console.log('[SHADOW MODE] Telegram management notification blocked.');
-      return false;
-    }
     const tradeId = options?.tradeId || 'general';
     const notificationId = options?.notificationId || `mgmt_${tradeId}_${options?.event || 'general'}`;
     const result = await this.dispatchReliableNotification({
@@ -1844,10 +1806,6 @@ ${actionEmoji} <b>الصفقة المقترحة:</b> ${escapeTelegramHtml(action
     trade: any,
     options?: { notificationId?: string; eventTimestamp?: number }
   ): Promise<boolean> {
-    if (isShadowMode()) {
-      console.log('[SHADOW MODE] Telegram outcome notification blocked.');
-      return false;
-    }
     const chatId = this.getPrivateChatId();
     if (chatId) {
       // Remove inline outcome buttons on the original signal message to prevent late manual callbacks

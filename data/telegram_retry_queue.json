@@ -1,38 +1,187 @@
 [
   {
-    "notificationId": "notif_test_1790063895676",
-    "event": "PRODUCTION_VERIFY_SIGNAL",
-    "chatId": "1189889156",
-    "message": "Duplicate attempt for test notification",
-    "status": "PENDING",
-    "attempts": 2,
+    "notificationId": "sig_immediate_1790067744848",
+    "tradeId": "real_trade_001",
+    "event": "SIGNAL_NEW",
+    "chatId": "999111",
+    "message": "Immediate signal test",
+    "status": "SENT",
+    "attempts": 1,
     "maxAttempts": 10,
-    "nextRetryAt": 1790063899682,
-    "createdAt": 1790063895676,
-    "lastError": "TELEGRAM_BOT_TOKEN is not configured."
+    "nextRetryAt": 0,
+    "telegramMessageId": 888001,
+    "createdAt": 1790067744848,
+    "sentAt": 1790067744849
   },
   {
-    "notificationId": "notif_test_1790064065668",
-    "event": "PRODUCTION_VERIFY_SIGNAL",
-    "chatId": "1189889156",
-    "message": "Duplicate attempt for test notification",
-    "status": "PENDING",
+    "notificationId": "sig_failed_then_retry_1790067744876",
+    "tradeId": "real_trade_002",
+    "event": "SIGNAL_NEW",
+    "chatId": "999111",
+    "message": "Failed then retry message",
+    "status": "SENT",
     "attempts": 2,
     "maxAttempts": 10,
-    "nextRetryAt": 1790064069671,
-    "createdAt": 1790064065668,
-    "lastError": "TELEGRAM_BOT_TOKEN is not configured."
+    "nextRetryAt": 0,
+    "createdAt": 1790067744876,
+    "lastError": "Simulated Network Failure (HTTP 500)",
+    "sentAt": 1790067744877,
+    "telegramMessageId": 888001
   },
   {
-    "notificationId": "notif_test_1790064123166",
+    "notificationId": "sig_restart_survive_1790067744878",
+    "tradeId": "real_trade_003",
+    "event": "SIGNAL_NEW",
+    "chatId": "999111",
+    "message": "Message surviving restart",
+    "status": "SUPPRESSED",
+    "attempts": 1,
+    "maxAttempts": 10,
+    "nextRetryAt": 1790067746878,
+    "createdAt": 1790067744878,
+    "lastError": "Historical event suppressed: exceeded actionability window"
+  },
+  {
+    "notificationId": "sig_duplicate_check_1790067744885",
+    "tradeId": "real_trade_dup_1",
+    "event": "SIGNAL_NEW",
+    "chatId": "999111",
+    "message": "Unique signal alert",
+    "status": "SENT",
+    "attempts": 1,
+    "maxAttempts": 10,
+    "nextRetryAt": 0,
+    "telegramMessageId": 888001,
+    "createdAt": 1790067744885,
+    "sentAt": 1790067744885
+  },
+  {
+    "notificationId": "signal_sig_special_1790067744886",
+    "tradeId": "sig_special_1790067744886",
+    "event": "SIGNAL_NEW",
+    "chatId": "999111",
+    "message": "<b>🔔 إشارة تداول جديدة من Gold AI Scanner!</b>\n\n🟢 <b>الصفقة المقترحة:</b> شراء الآن (BUY NOW)\n📊 <b>الأصل:</b> XAU/USD &amp; Commodities &lt;Gold&gt;\n📈 <b>سعر الدخول:</b> $4346.61\n🛑 <b>وقف الخسارة (SL):</b> $4340.00 (66 نقطة)\n🎯 <b>الهدف الأول (TP1):</b> $4355.00\n🎯 <b>الهدف الثاني (TP2):</b> $4360.00\n⚖️ <b>المخاطرة:</b> 1.5% ($15.00)\n🧠 <b>نسبة الثقة:</b> 95%\n🛠️ <b>النموذج الفني:</b> Horizontal Support Breakout &amp; Retest &quot;Confirmed&quot; &lt;M5&gt;\n\n⏱ <i>الوقت: ٩:٠٢:٢٤ ص</i>",
+    "replyMarkup": {
+      "inline_keyboard": [
+        [
+          {
+            "text": "🟢 دخلت الصفقة (ENTERED)",
+            "callback_data": "entered:sig_special_1790067744886"
+          },
+          {
+            "text": "⚪ لم أدخل (NOT ENTERED)",
+            "callback_data": "not_entered:sig_special_1790067744886"
+          }
+        ],
+        [
+          {
+            "text": "✅ WIN",
+            "callback_data": "win:sig_special_1790067744886"
+          },
+          {
+            "text": "❌ LOSS",
+            "callback_data": "loss:sig_special_1790067744886"
+          }
+        ]
+      ]
+    },
+    "status": "SENT",
+    "attempts": 1,
+    "maxAttempts": 10,
+    "nextRetryAt": 0,
+    "telegramMessageId": 888001,
+    "createdAt": 1790067744886,
+    "sentAt": 1790067744911
+  },
+  {
+    "notificationId": "sig_fail_nodedup_1790067744912",
+    "tradeId": "real_trade_fail_dedup",
+    "event": "SIGNAL_NEW",
+    "chatId": "999111",
+    "message": "Failed notification test",
+    "status": "SENT",
+    "attempts": 2,
+    "maxAttempts": 10,
+    "nextRetryAt": 0,
+    "createdAt": 1790067744912,
+    "lastError": "Simulated Network Failure (HTTP 500)",
+    "sentAt": 1790067744913,
+    "telegramMessageId": 888001
+  },
+  {
+    "notificationId": "sig_malformed_amp_1790067744914",
+    "tradeId": "trade_amp_fix",
+    "event": "SIGNAL_NEW",
+    "chatId": "999111",
+    "message": "<b>Signal:</b> Retest &amp; Breakout with Profit &amp; Loss",
+    "status": "SENT",
+    "attempts": 2,
+    "maxAttempts": 5,
+    "nextRetryAt": 0,
+    "createdAt": 1790067744914,
+    "sentAt": 1790067744914,
+    "telegramMessageId": 888001
+  },
+  {
+    "notificationId": "notif_test_1790067765439",
     "event": "PRODUCTION_VERIFY_SIGNAL",
     "chatId": "1189889156",
     "message": "Duplicate attempt for test notification",
-    "status": "PENDING",
+    "status": "SUPPRESSED",
     "attempts": 2,
     "maxAttempts": 10,
-    "nextRetryAt": 1790064127167,
-    "createdAt": 1790064123166,
-    "lastError": "TELEGRAM_BOT_TOKEN is not configured."
+    "nextRetryAt": 1790067769440,
+    "createdAt": 1790067765439,
+    "lastError": "Historical event suppressed: exceeded actionability window"
+  },
+  {
+    "notificationId": "close_trade_b9_1790067770255",
+    "tradeId": "trade_b9_1790067770255",
+    "event": "OUTCOME_CLOSE",
+    "chatId": "1189889156",
+    "message": "<b>🟢 توثيق نتيجة صفقة من Gold AI!</b>\n\n📊 <b>الأصل:</b> XAU/USD\n🎯 <b>النتيجة:</b> صفقة رابحة (WIN)\n💰 <b>الربح/الخسارة المحققة:</b> +$6.00\n📈 <b>سعر الدخول:</b> $2650.00\n📉 <b>سعر الخروج:</b> $2656.00\nℹ️ <b>سبب الإغلاق:</b> Closed via Unified TradeManagementEngine [Trigger: TP1 @ $2656.00]\n\n⏱ <i>الوقت: ٩:٠٢:٥٠ ص</i>",
+    "status": "SUPPRESSED",
+    "attempts": 1,
+    "maxAttempts": 10,
+    "nextRetryAt": 1790067772287,
+    "createdAt": 1790067770285,
+    "lastError": "Historical event suppressed: exceeded actionability window"
+  },
+  {
+    "notificationId": "signal_sig_1790068166814_u2cru",
+    "tradeId": "sig_1790068166814_u2cru",
+    "event": "SIGNAL_NEW",
+    "chatId": "1189889156",
+    "message": "<b>🔔 إشارة تداول جديدة من Gold AI Scanner!</b>\n\n🟢 <b>الصفقة المقترحة:</b> شراء الآن (BUY NOW)\n📊 <b>الأصل:</b> XAU/USD\n📈 <b>سعر الدخول:</b> $4320.64\n🛑 <b>وقف الخسارة (SL):</b> $4315.64 (50 نقطة)\n🎯 <b>الهدف الأول (TP1):</b> $4333.67\n🎯 <b>الهدف الثاني (TP2):</b> $4335.78\n⚖️ <b>المخاطرة:</b> 20% ($5.00)\n🧠 <b>نسبة الثقة:</b> 75%\n🛠️ <b>النموذج الفني:</b> Horizontal Resistance Breakout &amp; Retest\n\n⏱ <i>الوقت: ٩:٠٩:٢٦ ص</i>",
+    "replyMarkup": {
+      "inline_keyboard": [
+        [
+          {
+            "text": "🟢 دخلت الصفقة (ENTERED)",
+            "callback_data": "entered:sig_1790068166814_u2cru"
+          },
+          {
+            "text": "⚪ لم أدخل (NOT ENTERED)",
+            "callback_data": "not_entered:sig_1790068166814_u2cru"
+          }
+        ],
+        [
+          {
+            "text": "✅ WIN",
+            "callback_data": "win:sig_1790068166814_u2cru"
+          },
+          {
+            "text": "❌ LOSS",
+            "callback_data": "loss:sig_1790068166814_u2cru"
+          }
+        ]
+      ]
+    },
+    "status": "SUPPRESSED",
+    "attempts": 1,
+    "maxAttempts": 10,
+    "nextRetryAt": 1790068168862,
+    "createdAt": 1790068166814,
+    "lastError": "Historical event suppressed: exceeded actionability window"
   }
 ]

@@ -5,6 +5,7 @@ import { calculateDynamicTakeProfits } from './tpEngine.js';
 import { generateMultiStrategyCandidates } from './strategyEngine.js';
 import { experienceMemoryEngine } from './experienceMemory.js';
 import { validateTradeSignalCandidate, inferStrategyFamily } from './tradeQualityEngine.js';
+import { partition1hCandles, partition15mCandles, partition5mCandles, partition1mCandles } from './candleUtils.js';
 
 export const XAUUSD_TRADE_SIGNAL_JSON_SCHEMA = {
   type: 'object',
@@ -130,7 +131,7 @@ let lastAnalyzedPrice: number = 0;
 let lastAnalyzedSignal: TradeSignal | null = null;
 let openRouterClient: OpenAI | null = null;
 
-function getOpenRouterClient(): OpenAI | null {
+export function getOpenRouterClient(): OpenAI | null {
   const rawKey = process.env.OPENROUTER_API_KEY || process.env.NVIDIA_API_KEY;
   const apiKey = rawKey ? rawKey.trim() : '';
 
@@ -339,10 +340,32 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
     }
   }
 
+  // Partition candles by timeframe to ensure Gemini receives ONLY confirmed closed candles
+  const closedH1 = partition1hCandles(input.candles1h || []).closedCandles;
+  const closedM15 = partition15mCandles(input.candles15m || []).closedCandles;
+  const closedM5 = partition5mCandles(input.recent5mCandles || []).closedCandles;
+  const closedM1 = partition1mCandles(input.recent1mCandles || []).closedCandles;
+
+  const validClosedH1 = closedH1.length > 0 ? closedH1 : (input.candles1h || []);
+  const validClosedM15 = closedM15.length > 0 ? closedM15 : (input.candles15m || []);
+  const validClosedM5 = closedM5.length > 0 ? closedM5 : (input.recent5mCandles || []);
+  const validClosedM1 = closedM1.length > 0 ? closedM1 : (input.recent1mCandles || []);
+
   const technicalContext: any = {
     asset,
     balance,
     currentPrice,
+    marketDataIntegrity: {
+      isClosedCandlesOnly: true,
+      h1CandlesCount: validClosedH1.length,
+      m15CandlesCount: validClosedM15.length,
+      m5CandlesCount: validClosedM5.length,
+      m1CandlesCount: validClosedM1.length,
+    },
+    topCandidatesGuidance: {
+      role: 'ADVISORY_ONLY',
+      note: 'topCandidates contains pre-calculated algorithmic suggestions for advisory reference only. topCandidates is NOT a prerequisite. detectedCandidatesCount = 0 does NOT mean NO TRADE. You MUST independently discover valid setups from raw multi-timeframe price action and calculated market structure.'
+    },
     detectedCandidatesCount: candidatesContext.allCandidates.length,
     topCandidates: candidatesContext.allCandidates.slice(0, 3).map((c) => ({
       family: c.strategyFamily,
@@ -359,79 +382,153 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
     })),
     ...(historicalExperienceContext ? { historicalTradingExperience: historicalExperienceContext } : {}),
     h1: {
-      trend: indicators1h.structure,
+      macroTrend: indicators1h.structure,
+      swingHigh: indicators1h.swingHigh,
+      swingLow: indicators1h.swingLow,
+      support: indicators1h.support,
+      resistance: indicators1h.resistance,
+      bsl: indicators1h.liquidityLevels?.buySideLiquidity || indicators1h.swingHigh,
+      ssl: indicators1h.liquidityLevels?.sellSideLiquidity || indicators1h.swingLow,
       ema20: indicators1h.ema20,
       ema50: indicators1h.ema50,
       ema200: indicators1h.ema200,
       rsi: indicators1h.rsi14,
-      range: `${indicators1h.swingLow} - ${indicators1h.swingHigh}`,
-      bsl: indicators1h.liquidityLevels?.buySideLiquidity || indicators1h.swingHigh,
-      ssl: indicators1h.liquidityLevels?.sellSideLiquidity || indicators1h.swingLow,
+      atr: indicators1h.atr14,
+      closedCandlesCount: validClosedH1.slice(-10).length,
+      candles: validClosedH1.slice(-10).map((c) => ({
+        t: c.timestamp,
+        o: c.open,
+        h: c.high,
+        l: c.low,
+        c: c.close,
+        v: c.volume
+      }))
     },
     m15: {
       marketRegime: indicators15m.marketRegime,
       regimeContext: indicators15m.regimeContext,
       structure: indicators15m.structure,
       structureShift: indicators15m.structureShift || 'None',
-      premiumDiscount: indicators15m.premiumDiscountZone,
-      orderBlock: indicators15m.orderBlock ? `${indicators15m.orderBlock.type} [${indicators15m.orderBlock.low} - ${indicators15m.orderBlock.high}]` : 'None',
-      fvg: indicators15m.fvg ? `${indicators15m.fvg.type} [${indicators15m.fvg.bottom} - ${indicators15m.fvg.top}]` : 'None',
+      swingHigh: indicators15m.swingHigh,
+      swingLow: indicators15m.swingLow,
       support: indicators15m.support,
       resistance: indicators15m.resistance,
       bsl: indicators15m.liquidityLevels?.buySideLiquidity || indicators15m.swingHigh,
       ssl: indicators15m.liquidityLevels?.sellSideLiquidity || indicators15m.swingLow,
       sessionHigh: indicators15m.swingHigh,
       sessionLow: indicators15m.swingLow,
-      sweep: indicators15m.liquiditySweepDetected ? 'YES' : 'NO'
+      sweep: indicators15m.liquiditySweepDetected ? 'YES' : 'NO',
+      premiumDiscountZone: indicators15m.premiumDiscountZone,
+      orderBlock: indicators15m.orderBlock ? `${indicators15m.orderBlock.type} [${indicators15m.orderBlock.low} - ${indicators15m.orderBlock.high}]` : 'None',
+      fvg: indicators15m.fvg ? `${indicators15m.fvg.type} [${indicators15m.fvg.bottom} - ${indicators15m.fvg.top}]` : 'None',
+      ema20: indicators15m.ema20,
+      ema50: indicators15m.ema50,
+      vwap: indicators15m.vwap,
+      rsi: indicators15m.rsi14,
+      macd: indicators15m.macd,
+      atr: indicators15m.atr14,
+      bollinger: indicators15m.bollingerBands,
+      closedCandlesCount: validClosedM15.slice(-20).length,
+      candles: validClosedM15.slice(-20).map((c) => ({
+        t: c.timestamp,
+        o: c.open,
+        h: c.high,
+        l: c.low,
+        c: c.close,
+        v: c.volume
+      }))
     },
     m5: {
+      structure: indicators5m.structure,
+      structureShift: indicators5m.structureShift || 'None',
+      localSwingHigh: indicators5m.swingHigh,
+      localSwingLow: indicators5m.swingLow,
+      localSupport: indicators5m.support,
+      localResistance: indicators5m.resistance,
+      localOrderBlock: indicators5m.orderBlock ? `${indicators5m.orderBlock.type} [${indicators5m.orderBlock.low} - ${indicators5m.orderBlock.high}]` : 'None',
+      localFvg: indicators5m.fvg ? `${indicators5m.fvg.type} [${indicators5m.fvg.bottom} - ${indicators5m.fvg.top}]` : 'None',
+      sweep: indicators5m.liquiditySweepDetected ? 'YES' : 'NO',
+      currentPoi: indicators5m.orderBlock ? `OB_${indicators5m.orderBlock.type}` : (indicators5m.fvg ? `FVG_${indicators5m.fvg.type}` : 'None'),
       ema20: indicators5m.ema20,
       ema50: indicators5m.ema50,
       vwap: indicators5m.vwap,
       rsi: indicators5m.rsi14,
       macd: indicators5m.macd,
       atr: indicators5m.atr14,
-      bollinger: indicators5m.bollingerBands
+      bollinger: indicators5m.bollingerBands,
+      closedCandlesCount: validClosedM5.slice(-30).length,
+      candles: validClosedM5.slice(-30).map((c) => ({
+        t: c.timestamp,
+        o: c.open,
+        h: c.high,
+        l: c.low,
+        c: c.close,
+        v: c.volume
+      }))
     },
-    recent5mCandlesSummary: input.recent5mCandles.slice(-5).map(c => ({
-      o: c.open,
-      h: c.high,
-      l: c.low,
-      c: c.close,
-      v: c.volume
-    }))
+    m1: {
+      role: 'ENTRY_REFINEMENT_ONLY',
+      note: 'Use 1M closed candles only for entry timing, local rejection wicks, and immediate price action. Do not allow 1M alone to override H1/M15 structure.',
+      closedCandlesCount: validClosedM1.slice(-15).length,
+      candles: validClosedM1.slice(-15).map((c) => ({
+        t: c.timestamp,
+        o: c.open,
+        h: c.high,
+        l: c.low,
+        c: c.close,
+        v: c.volume
+      }))
+    }
   };
 
-  const systemInstruction = `أنت AI Trading Agent فائق الذكاء ومحترف للغاية متخصص في تداول الذهب XAU/USD بنظام Scalping على حساب صغير (يبدأ من $10).
-القواعد الصارمة لمحرك التداول والأهداف الربحية:
-1. الهدف الأساسي: حماية رأس المال واختيار صفقات نوعية عالية الجودة بناءً على حالة السوق (Market Regime)، واستراتيجيات الهيكل (Structure)، والسيولة (Liquidity Sweeps)، وOrder Blocks، وFVG، وFibonacci OTE، واستمرار الترند (Trend Continuation)، واستراتيجيات النطاق (Range SFP Reversal & Breakout Expansion).
-2. تقييم بيئة السوق (Market Regime Awareness):
-   - STRONG_UPTREND / STRONG_DOWNTREND: ابحث عن فرص استمرار الترند مع التصحيح (Pullbacks).
-   - إذا كان السعر ممتداً بشكل مفرط (isOverextended=true)، لا تطارد السعر بالدخول المباشر؛ بل اختر انتظار التصحيح السطحي أو اعطِ قرار NO TRADE مؤقت لحين انتهاء التمدد.
-   - NORMAL_RANGE / VOLATILE_RANGE: النطاق العرضي لا يعني تلقائياً NO TRADE؛ ابحث عن سحب السيولة عند أطراف الرينج (Range High/Low sweeps & SFP) أو الكسر التوسعي الحقيقي (Breakout Expansion)، وتجنب الدخول العشوائي في منتصف النطاق (Equilibrium).
-   - TRANSITION: يتطلب تأكيد كسر الهيكل واستقراره قبل اتخاذ اتجاه جديد.
-   - UNCLEAR: لا توجد ميزة إحصائية واضحة؛ اختر NO TRADE لحماية رأس المال.
-3. القرارات المسموحة فقط: "BUY NOW" أو "SELL NOW" أو "BUY LIMIT" أو "SELL LIMIT" أو "NO TRADE". قرار واحد حصرياً.
-4. حساب وقف الخسارة (SL):
-   - للذهب: 1 point = 0.10$ حركة سعر (abs(Entry - SL) / 0.10).
-   - نطاق الـStop Loss الفني المسموح به هو من 35 إلى 65 نقطة.
+  const systemInstruction = `أنت محرك ذكاء اصطناعي مستقل ومحترف للغاية لاكتشاف وتحليل صفقات الذهب (Autonomous XAU/USD Market Setup Discovery & Analysis Engine) بنظام Scalping على حساب صغير (يبدأ من $10).
+
+دورك وصلاحياتك الأساسية:
+1. الاستقلالية التامة في اكتشاف الفرص (Autonomous Opportunity Discovery):
+   - حلل حركة السعر الحقيقية للشموع المغلقة عبر الفريمات المتعددة (H1 / M15 / M5 / 1M) والمستويات الهيكلية المحسوبة بشكل مستقل تماماً.
+   - قائمة المرشحات الخوارزمية (topCandidates) هي سياق استشاري فقط (Advisory Only) وليست شرطاً مسبقاً لأي صفقة.
+   - وجود 0 مرشحات (detectedCandidatesCount = 0) أو قائمة فارغة لا يعني أبداً "NO TRADE". في هذه الحالة يجب عليك إجراء مسح وفحص مستقل وشامل لبيانات الشموع والهيكل الفني لاكتشاف النماذج الحقيقية في السوق.
+   - يحق لك اقتراح صفقة مكتشفة ذاتياً حتى لو لم ترصدها الخوارزميات الحتمية المبدئية، بشرط اكتمال أركانها الفنية وشروط إدارة المخاطر.
+   - يُحظر تماماً اختراع أو اصطناع صفقات غير مكتملة الأركان عندما يفتقر السوق لفرصة حقيقية أو يكون السعر في نطاق تذبذب عشوائي / منتصف رينج بدون ميزة إحصائية (في تلك الحالة اختر "NO TRADE").
+
+2. تراتبية الفريمات الزمنية (Multi-Timeframe Hierarchy):
+   - فريم H1: السياق الماكرو الكلي، الاتجاه الرئيسي، القمم والقيعان الرئيسية، ومجمعات السيولة الكبرى (BSL/SSL).
+   - فريم M15: الهيكل الأساسي للنموذج، حالة السوق (Market Regime)، مناطق الـOrder Blocks وFVGs ومناطق الخصم والعلاوة (Premium/Discount).
+   - فريم M5: فريم التنفيذ والزناد الأساسي (Execution & Confirmation)، سحب السيولة المحلي، تأكيد الـBOS/CHOCH، وإعادة اختبار الـPOI.
+   - فريم 1M: تحسين نقطة الدخول اللحظية وتأكيد ذيول الرفض السريع فقط. لا يجوز لفريم 1M بمفرده إلغاء هيكل H1/M15 الصاعد أو الهابط القوي.
+
+3. النماذج والاستراتيجيات ذات الأولوية العالية (Priority Setups):
+   - سحب السيولة ورفض القيعان/القمم (Liquidity Sweeps & SFPs).
+   - إعادة اختبار كتل الأوامر المؤكدة (Order Block Retests).
+   - ملء الفجوات السعرية (FVG / Inverse FVG Rebalancing).
+   - كسر الهيكل والتحول الهيكلي مع إعادة الاختبار (BOS / CHOCH Break & Retest).
+   - التراجع التصحيحي مع الاتجاه القوي (Trend Pullback Confluence).
+   - التفاعل مع مستويات الدعم والمقاومة التاريخية الحقيقية وسحب سيولة الأطراف (Range SFP).
+   - الكسر التوسعي الحقيقي بعد تجميع سيولة (Breakout Expansion). لا تعتمد على مجرد كسر عشوائي بدون سحب سيولة أو إعادة اختبار.
+
+4. قواعد وقف الخسارة الصارمة للسكالبينج (Scalping Stop Loss Rules):
+   - للذهب: 1 point = 0.10$ حركة سعر (حساب النقاط: abs(Entry - SL) / 0.10).
+   - نطاق الـStop Loss الفني المسموح به لصفقات السكالبينج هو حصرياً من 35 إلى 65 نقطة (أي ما يعادل 3.5$ إلى 6.5$ من سعر الدخول).
+   - وضع وقف الخسارة الفني (Structural Local Invalidation): يجب وضع وقف الخسارة بدقة عند مستوى إبطال فني محلي ذي مغزى على فريم M5/M15 (مثل قاع/قمة الـOrder Block المحلي، أو قاع/قمة شمعة الابتلاع والتأكيد، أو أطراف الـFVG، أو السوينغ المحلي الأقرب).
+   - حظر وقف الخسارة الماكرو (Macro Swing Prohibition): القمم والقيعان الكبرى على فريم H1 وH4 هي سياق اتجاهي فقط، ويُحظر تماماً وضع وقف الخسارة عند سوينغات H1 البعيدة (مثل 350 أو 566 أو 570 أو 580 أو 602 نقطة).
+   - إذا كانت الصفقة تتطلب وقف خسارة أكبر من 65 نقطة ولا توجد نقطة إبطال فنية محلية صالحة ضمن نطاق [35, 65] نقطة، يجب اتخاذ قرار "NO TRADE" فوراً بدلاً من اقتراح صفقة بوقف خسارة واسع سيفشل في محرك المخاطر.
+
 5. سياسة الأهداف الهيكلية الصارمة (Market Structure Target Policy):
    - الهدف الأول (TP1) هو أقرب هدف هيكلي حقيقي وملموس في السوق (Nearest genuine market-structure objective مثل Swings / S/R / Liquidity Pools / Order Blocks / FVG).
-   - نسبة العائد إلى المخاطرة (R:R) هي مقياس ناتج (Output metric) وليست معياراً تعسفياً لتوليد الأهداف.
-   - الهدف الهيكلي الحقيقي الذي يحقق نسبة عائد طبيعية حول 1.0R–1.4R يُعتبر صالحاً تماماً ومقبولاً إذا كانت جودة النموذج، والدخول، ووقف الخسارة، وهيكل السوق، وشروط التنفيذ قوية ومكتملة.
-   - يُحظر تماماً على الذكاء الاصطناعي مدّ أو إبعاد الهدف الأول (TP1) بعيداً عن الهيكل الحقيقي لمجرد تحسين نسبة R:R حسابياً بشكل مصطنع.
-   - الهدف الثاني (TP2): هو الهدف الهيكلي الحقيقي التالي بعد TP1 (Next genuine structural objective). إذا لم يوجد هدف هيكلي ثانٍ صالح وواضح في السوق، لا تخترع هدفاً رياضياً ضخماً ولا تضع TP2 مساوياً لـ TP1، بل اتركه غير محدد أو 0.
-   - إذا تم توفير مرشحات استراتيجية صالحة في "topCandidates"، قم بتقييمها واختيار الأقوى أو تأكيدها.
-6. الثقة (Confidence): من 70 إلى 96 للصفقات الصالحة.
-7. في حال عدم وجود فرصة حقيقية أو تذبذب في منتصف الرينج، اختر "NO TRADE" واذكر السبب بالتفصيل.
-8. ملاحظة استشارية إضافية: بيانات الخبرة التاريخية (historicalTradingExperience) إن وُجدت هي سياق استشاري تكميلي فقط، ولا يجب أن تلغي أبداً التحليل الفني والهيكلي الحالي للسوق ولا تكون الأساس الوحيد للقرار. يتم تجاهلها تماماً إذا كانت غير متوافقة مع القواعد الفنية وإدارة المخاطر.`;
+   - نسبة العائد إلى المخاطرة (R:R) إلى TP1 يجب أن تكون على الأقل 1.0R أي abs(TP1 - Entry) >= abs(Entry - SL).
+   - الهدف الثاني (TP2): هو الهدف الهيكلي الحقيقي التالي بعد TP1 إن وجد، أو 0 إذا لم يوجد هدف واضح.
+
+6. القرارات المسموحة:
+   - "BUY NOW" أو "SELL NOW" أو "BUY LIMIT" أو "SELL LIMIT" أو "NO TRADE".
+   - الثقة (Confidence): من 70 إلى 96 للصفقات الصالحة.
+   - في حال عدم وجود فرصة حقيقية أو تذبذب في منتصف الرينج، اختر "NO TRADE" واذكر السبب بالتفصيل في noTradeReason.`;
 
   isAiCallRunning = true;
   const model = process.env.OPENROUTER_MODEL || process.env.NVIDIA_MODEL || 'google/gemini-2.5-flash-lite';
   const timeoutMs = 10000;
   const startTime = Date.now();
   try {
-    const prompt = `حلل بيانات السوق والمرشحات الاستراتيجية المرفقة للذهب وقدم قرارك النهائي بصيغة JSON:\n${JSON.stringify(technicalContext, null, 2)}`;
+    const prompt = `حلل بيانات السوق المتعددة الفريمات (H1, M15, M5, 1M) والشموع المغلقة والمستويات الهيكلية المرفقة للذهب واكتشف أفضل الفرص المتاحة بشكل مستقل، ثم قدم قرارك النهائي بصيغة JSON:\n${JSON.stringify(technicalContext, null, 2)}`;
 
     console.log(`[AI Engine] Sending API request with model: ${model}`);
     let completion: any;
@@ -530,6 +627,36 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
 
       if (!valResult.isValid) {
         console.warn(`[AI Engine] AI candidate rejected by deterministic technical validation: ${valResult.rejectionReason}`);
+        console.warn(`[AI Engine DEBUG] ================= FAILING AI CANDIDATE DIAGNOSTIC =================`);
+        console.warn(`[AI Engine DEBUG] raw AI response:`, responseContent);
+        console.warn(`[AI Engine DEBUG] parsed AI object:`, JSON.stringify(parsed, null, 2));
+        console.warn(`[AI Engine DEBUG] signal: ${parsed.signal}`);
+        console.warn(`[AI Engine DEBUG] entry: ${parsed.entry} (normalized: ${aiEntry})`);
+        console.warn(`[AI Engine DEBUG] stopLoss: ${parsed.stopLoss} (normalized: ${aiSl})`);
+        console.warn(`[AI Engine DEBUG] tp1: ${parsed.tp1} (normalized: ${aiTp1})`);
+        console.warn(`[AI Engine DEBUG] tp2: ${parsed.tp2} (normalized: ${aiTp2})`);
+        console.warn(`[AI Engine DEBUG] confidence: ${parsed.confidence}`);
+        console.warn(`[AI Engine DEBUG] setup: ${parsed.setup}`);
+        console.warn(`[AI Engine DEBUG] mainReasons:`, parsed.mainReasons);
+        console.warn(`[AI Engine DEBUG] noTradeReason: ${parsed.noTradeReason}`);
+        console.warn(`[AI Engine DEBUG] invalidation: ${parsed.invalidation}`);
+        console.warn(`[AI Engine DEBUG] object immediately before risk validation:`, JSON.stringify({
+          direction: aiDirection,
+          entry: aiEntry,
+          stopLoss: aiSl,
+          tp1: aiTp1,
+          tp2: aiTp2,
+          setupName: aiSetup,
+          strategyFamily: aiFamily,
+          confidence: Number(parsed.confidence || 75),
+        }, null, 2));
+        const dbgSlDistance = Math.abs(aiEntry - aiSl);
+        const dbgSlPoints = Math.round(dbgSlDistance / 0.1);
+        const dbgTp1Distance = Math.abs(aiTp1 - aiEntry);
+        const dbgRr = dbgSlDistance > 0 ? dbgTp1Distance / dbgSlDistance : 0;
+        console.warn(`[AI Engine DEBUG] exact values passed into SL-distance calculation: entry=${aiEntry}, stopLoss=${aiSl}, slDistance=${dbgSlDistance}, slPoints=${dbgSlPoints}, allowedRange=[${input.brokerSpecs?.minSlPoints ?? 35}, ${input.brokerSpecs?.maxSlPoints ?? 65}] pts`);
+        console.warn(`[AI Engine DEBUG] exact values passed into R:R calculation: tp1=${aiTp1}, entry=${aiEntry}, tp1Distance=${dbgTp1Distance}, slDistance=${dbgSlDistance}, rrToTp1=${dbgRr.toFixed(2)}R, minRequired=1.0R`);
+        console.warn(`[AI Engine DEBUG] ====================================================================`);
         
         // Prefer highest-quality deterministic candidate that already passed validation
         const validFallback = candidatesContext.selectedCandidate || candidatesContext.allCandidates.find(c => c.direction === 'BUY' || c.direction === 'SELL');

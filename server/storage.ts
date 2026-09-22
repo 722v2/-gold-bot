@@ -8,7 +8,6 @@ import {
   executeSupabaseQuery,
 } from './supabase.js';
 import { telegramService } from './telegram.js';
-import { isShadowMode } from './runtimeMode.js';
 
 import {
   AppSettings,
@@ -177,7 +176,7 @@ export class PersistentStorage {
   private lastScannerTimestamp = 0;
   private lastScannerStatus = 'IDLE';
   private isReady = false;
-  private isTesting = false;
+  private isTesting = process.env.IS_TESTING === 'true' || process.env.NODE_ENV === 'test';
   private readyPromise: Promise<void>;
 
   constructor() {
@@ -383,17 +382,11 @@ export class PersistentStorage {
   }
 
   private safeSupabase(fn: (client: any) => any, context?: string): void {
-    if (isShadowMode()) {
-      return;
-    }
     if (!isSupabaseConfigured() || !this.shouldPersist()) return;
     executeSupabaseQuery(fn, context).catch(() => {});
   }
 
   private async safeSupabaseAsync(fn: (client: any) => any, context?: string): Promise<any> {
-    if (isShadowMode()) {
-      return null;
-    }
     if (!isSupabaseConfigured() || !this.shouldPersist()) return null;
     return executeSupabaseQuery(fn, context);
   }
@@ -419,7 +412,7 @@ export class PersistentStorage {
         if (!isNaN(startBal) && startBal > 0) {
           this.inMemoryStartingBalance = startBal;
         }
-      } else if (res && !res.data && !res.error && !isShadowMode()) {
+      } else if (res && !res.data && !res.error) {
         // Table exists but record does not: Seed with preserved balance
         await executeSupabaseQuery(
           (c) =>
@@ -445,7 +438,7 @@ export class PersistentStorage {
       );
       if (res && res.data?.data) {
         this.inMemorySettings = { ...this.inMemorySettings, ...res.data.data };
-      } else if (res && !res.data && this.inMemorySettings && !isShadowMode()) {
+      } else if (res && !res.data && this.inMemorySettings) {
         // Seed settings
         await executeSupabaseQuery(
           (c) =>
@@ -475,7 +468,7 @@ export class PersistentStorage {
       );
       if (res && Array.isArray(res.data) && res.data.length > 0) {
         this.inMemoryTrades = res.data.map((r) => this.parseTradeRow(r));
-      } else if (res && res.data?.length === 0 && this.inMemoryTrades.length > 0 && !isShadowMode()) {
+      } else if (res && res.data?.length === 0 && this.inMemoryTrades.length > 0) {
         // Seed remote with existing local trades
         for (const t of this.inMemoryTrades) {
           if (!isSupabaseAvailable()) break;
@@ -500,7 +493,7 @@ export class PersistentStorage {
       );
       if (res && Array.isArray(res.data) && res.data.length > 0) {
         this.inMemoryOutcomes = res.data.map((r) => this.parseOutcomeRow(r));
-      } else if (res && res.data?.length === 0 && this.inMemoryOutcomes.length > 0 && !isShadowMode()) {
+      } else if (res && res.data?.length === 0 && this.inMemoryOutcomes.length > 0) {
         for (const out of this.inMemoryOutcomes) {
           if (!isSupabaseAvailable()) break;
           await executeSupabaseQuery((c) => c.from('trade_outcomes').upsert(this.formatOutcomeRow(out)), 'initSupabaseData:seed_outcome');
@@ -524,7 +517,7 @@ export class PersistentStorage {
       );
       if (res && Array.isArray(res.data) && res.data.length > 0) {
         this.inMemorySignals = res.data.map((r) => r.raw_data || r);
-      } else if (res && res.data?.length === 0 && this.inMemorySignals.length > 0 && !isShadowMode()) {
+      } else if (res && res.data?.length === 0 && this.inMemorySignals.length > 0) {
         for (const s of this.inMemorySignals) {
           if (!isSupabaseAvailable()) break;
           await executeSupabaseQuery(
@@ -551,7 +544,7 @@ export class PersistentStorage {
       );
       if (res && Array.isArray(res.data) && res.data.length > 0) {
         this.inMemoryScans = res.data.map((r) => r.raw_data || r);
-      } else if (res && res.data?.length === 0 && this.inMemoryScans.length > 0 && !isShadowMode()) {
+      } else if (res && res.data?.length === 0 && this.inMemoryScans.length > 0) {
         for (const sc of this.inMemoryScans) {
           if (!isSupabaseAvailable()) break;
           await executeSupabaseQuery(
@@ -588,7 +581,7 @@ export class PersistentStorage {
             this.inMemoryOpportunities.set(opp.id, opp);
           }
         }
-      } else if (res && res.data?.length === 0 && this.inMemoryOpportunities.size > 0 && !isShadowMode()) {
+      } else if (res && res.data?.length === 0 && this.inMemoryOpportunities.size > 0) {
         for (const opp of this.inMemoryOpportunities.values()) {
           if (!isSupabaseAvailable()) break;
           await executeSupabaseQuery(
@@ -610,7 +603,7 @@ export class PersistentStorage {
       );
       if (res && res.data?.chat_id) {
         this.inMemoryTelegramChatId = String(res.data.chat_id);
-      } else if (res && this.inMemoryTelegramChatId && !isShadowMode()) {
+      } else if (res && this.inMemoryTelegramChatId) {
         await executeSupabaseQuery(
           (c) =>
             c.from('telegram_config').upsert({
@@ -634,7 +627,7 @@ export class PersistentStorage {
         for (const r of res.data) {
           if (r.setup_key) this.inMemoryTerminalSetups.add(r.setup_key);
         }
-      } else if (res && this.inMemoryTerminalSetups.size > 0 && !isShadowMode()) {
+      } else if (res && this.inMemoryTerminalSetups.size > 0) {
         for (const key of this.inMemoryTerminalSetups) {
           if (!isSupabaseAvailable()) break;
           await executeSupabaseQuery(
@@ -691,7 +684,7 @@ export class PersistentStorage {
         this.inMemoryExperienceRecords = Array.from(existingMap.values())
           .sort((a, b) => (a.completedAt || 0) - (b.completedAt || 0))
           .slice(-1000);
-      } else if (res && res.data?.length === 0 && this.inMemoryExperienceRecords.length > 0 && !isShadowMode()) {
+      } else if (res && res.data?.length === 0 && this.inMemoryExperienceRecords.length > 0) {
         // Seed Supabase with local records if Supabase table is empty
         for (const rec of this.inMemoryExperienceRecords) {
           if (!isSupabaseAvailable()) break;
@@ -885,7 +878,7 @@ export class PersistentStorage {
   }
 
   private syncJsonBackups(): void {
-    if (!this.shouldPersist() || isShadowMode()) return;
+    if (!this.shouldPersist()) return;
     try {
       this.ensureDataDirectory();
       fs.writeFileSync(SCANS_FILE, JSON.stringify(this.inMemoryScans, null, 2), 'utf-8');
@@ -999,9 +992,6 @@ export class PersistentStorage {
   // Signals Persistence
   // =========================================================================
   public saveSignal(signal: TradeSignal): TradeSignal[] {
-    if (isShadowMode() && !this.isTesting) {
-      return [...this.inMemorySignals];
-    }
     try {
       const existingIdx = this.inMemorySignals.findIndex((s) => s.id === signal.id);
       if (existingIdx >= 0) {
@@ -1133,10 +1123,6 @@ export class PersistentStorage {
   // Trade Ledger Persistence
   // =========================================================================
   public saveTrade(trade: TradeLedgerItem): TradeLedgerItem[] {
-    if (isShadowMode() && !this.isTesting) {
-      console.warn('[SHADOW MODE] Blocked saveTrade in shadow mode.');
-      return [...this.inMemoryTrades];
-    }
     try {
       const isResultOpen = trade.result === 'OPEN';
       const highestNum = Math.max(0, ...this.inMemoryTrades.map((t) => t.tradeNumber || 0));
@@ -1187,10 +1173,6 @@ export class PersistentStorage {
   }
 
   public async saveTradeAsync(trade: TradeLedgerItem): Promise<TradeLedgerItem[]> {
-    if (isShadowMode() && !this.isTesting) {
-      console.warn('[SHADOW MODE] Blocked saveTradeAsync in shadow mode.');
-      return [...this.inMemoryTrades];
-    }
     try {
       const isResultOpen = trade.result === 'OPEN';
       const highestNum = Math.max(0, ...this.inMemoryTrades.map((t) => t.tradeNumber || 0));
@@ -1294,15 +1276,6 @@ export class PersistentStorage {
     trade?: TradeLedgerItem;
     message?: string;
   } {
-    if (isShadowMode() && !this.isTesting) {
-      console.warn('[SHADOW MODE] Blocked recordTradeOutcome in shadow mode.');
-      return {
-        success: false,
-        isDuplicate: false,
-        outcome: record,
-        message: '[SHADOW MODE] Blocked trade outcome mutation in shadow mode.',
-      };
-    }
     try {
       const existing = this.getTradeOutcome(record.signalId) || (record.tradeId ? this.getTradeOutcome(record.tradeId) : undefined);
       const existingTrade = this.inMemoryTrades.find(
@@ -1580,15 +1553,6 @@ export class PersistentStorage {
     trade?: TradeLedgerItem;
     message?: string;
   }> {
-    if (isShadowMode() && !this.isTesting) {
-      console.warn('[SHADOW MODE] Blocked recordTradeOutcomeAsync in shadow mode.');
-      return {
-        success: false,
-        isDuplicate: false,
-        outcome: record,
-        message: '[SHADOW MODE] Blocked trade outcome mutation in shadow mode.',
-      };
-    }
     const res = this.recordTradeOutcome(record, signalData);
     if (res.success && res.trade) {
       await Promise.all([
@@ -1786,10 +1750,6 @@ export class PersistentStorage {
   }
 
   public updateBalance(current: number, starting?: number): { currentBalance: number; startingBalance: number } {
-    if (isShadowMode() && !this.isTesting) {
-      console.warn('[SHADOW MODE] Blocked updateBalance in shadow mode.');
-      return this.getBalance();
-    }
     this.inMemoryCurrentBalance = Number(current.toFixed(2));
     if (typeof starting === 'number' && !isNaN(starting) && starting > 0) {
       this.inMemoryStartingBalance = Number(starting.toFixed(2));
@@ -1955,10 +1915,6 @@ export class PersistentStorage {
     exitPrice?: number,
     notes?: string
   ): TradeLedgerItem[] {
-    if (isShadowMode() && !this.isTesting) {
-      console.warn('[SHADOW MODE] Blocked closeTrade in shadow mode.');
-      return [...this.inMemoryTrades];
-    }
     try {
       const idx = this.inMemoryTrades.findIndex((t) => t.id === id);
       if (idx >= 0) {
@@ -2157,7 +2113,7 @@ export class PersistentStorage {
   // Trade Opportunity State Persistence
   // =========================================================================
   public saveOpportunity(opp: TradeOpportunity): void {
-    if (!opp.id || (isShadowMode() && !this.isTesting)) return;
+    if (!opp.id) return;
     this.inMemoryOpportunities.set(opp.id, opp);
     this.safeSupabase(
       (c) =>
@@ -2200,10 +2156,6 @@ export class PersistentStorage {
     signal?: TradeSignal;
     opportunity?: TradeOpportunity;
   } {
-    if (isShadowMode() && !this.isTesting) {
-      console.warn('[SHADOW MODE] Blocked markSignalOrOpportunityNotEntered in shadow mode.');
-      return { success: false };
-    }
     let updatedSignal: TradeSignal | undefined;
     let updatedOpp: TradeOpportunity | undefined;
 
@@ -2323,10 +2275,6 @@ export class PersistentStorage {
   }
 
   public async resetTradingState(): Promise<any> {
-    if (isShadowMode()) {
-      console.warn('[SHADOW MODE] Blocked resetTradingState in shadow mode.');
-      return { success: false, message: '[SHADOW MODE] Mutating trading state blocked in shadow mode.' };
-    }
     try {
       const auditBefore = {
         signalsCount: this.inMemorySignals.length,

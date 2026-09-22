@@ -42,5 +42,17 @@
   "signal_test_shadow_success_1789999136861_91356",
   "signal_test_shadow_retry_1789999136896_78493",
   "setup_M5_DT_1789408486000_SELL_REPLAY",
-  "M5_DT_1789408486000_SELL_REPLAY"
+  "M5_DT_1789408486000_SELL_REPLAY",
+  "signal_test_shadow_success_1790065472181_20683",
+  "signal_test_shadow_retry_1790065472232_20220",
+  "signal_test_shadow_success_1790065747254_40413",
+  "signal_test_shadow_retry_1790065747283_40101",
+  "sig_immediate_1790067744848",
+  "sig_failed_then_retry_1790067744876",
+  "sig_restart_survive_1790067744878",
+  "sent_already_1790067744882",
+  "sig_duplicate_check_1790067744885",
+  "signal_sig_special_1790067744886",
+  "sig_fail_nodedup_1790067744912",
+  "sig_malformed_amp_1790067744914"
 ]

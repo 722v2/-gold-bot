@@ -1,1 +1,23 @@
-{}
+{
+  "sig_1790068166814_u2cru": {
+    "signalId": "sig_1790068166814_u2cru",
+    "setupFamily": "Horizontal Resistance Breakout & Retest",
+    "direction": "BUY",
+    "factors": {
+      "setupFamily": "Horizontal Resistance Breakout & Retest",
+      "direction": "BUY",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND",
+      "liquidity": "SWEEP_SELL_SIDE",
+      "orderBlock": "BULLISH_OB",
+      "fvg": "BEARISH_FVG",
+      "zone": "EQUILIBRIUM",
+      "rsi": "NEUTRAL",
+      "macd": "BULLISH",
+      "volatility": "HIGH"
+    },
+    "combinationKey": "direction=BUY|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=SWEEP_SELL_SIDE|m15Structure=BEARISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Horizontal Resistance Breakout & Retest|volatility=HIGH|zone=EQUILIBRIUM",
+    "createdAt": 1790068166814
+  }
+}

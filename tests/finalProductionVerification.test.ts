@@ -100,6 +100,7 @@ function assert(condition: boolean, testName: string, details?: any) {
 }
 
 async function runAllProductionVerifications() {
+  storage.setTestingMode(true);
   console.log('====================================================');
   console.log('🧪 FINAL COMPREHENSIVE PRODUCTION VERIFICATION SUITE');
   console.log('====================================================\n');
@@ -688,6 +689,7 @@ async function runAllProductionVerifications() {
     event: 'PRODUCTION_VERIFY_SIGNAL',
     message: 'Test notification from production verification suite',
     maxAttempts: 5,
+    allowTestDispatch: true,
   });
 
   assert(

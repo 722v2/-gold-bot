@@ -11,7 +11,6 @@ import { tradeManagementEngine } from './tradeManagementEngine.js';
 import { checkStructuralSameSetupIdentity, generateOpportunityId } from './tradeQualityEngine.js';
 import { telegramService } from './telegram.js';
 import { experienceMemoryEngine } from './experienceMemory.js';
-import { isShadowMode, shadowDiagnosticsStore, logShadowScanDiagnostic, ShadowScanDiagnostic } from './runtimeMode.js';
 
 /**
  * Minimum cooldown duration between consecutive market scans (in milliseconds).
@@ -158,10 +157,6 @@ class LiveMarketScanner {
   }
 
   public cancelActiveSignal(oppId: string): boolean {
-    if (isShadowMode()) {
-      console.warn('[SHADOW MODE] Blocked cancelActiveSignal in shadow mode.');
-      return false;
-    }
     // 1. Locate opportunity by signal ID, direct opportunity ID, restored ID fallback, or active/dispatched status fallback
     let opp = storage.getOpportunity(oppId) || 
               storage.getOpportunities().find(o => o.signalId === oppId || o.id === oppId);
@@ -442,8 +437,8 @@ class LiveMarketScanner {
       const openTrades = allTrades.filter((t) => t.result === 'OPEN' && t.isActive !== false);
       const outcomes = storage.getTradeOutcomes();
 
-      // Reconcile stale/orphan opportunities against authoritative trade ledger & trade outcomes (Production only)
-      if (!isShadowMode()) {
+      // Reconcile stale/orphan opportunities against authoritative trade ledger & trade outcomes
+      {
         const activeOrDispatchedOpps = storage.getOpportunities().filter(
           (o) => o.status === 'ACTIVE' || o.status === 'DISPATCHED'
         );
@@ -783,8 +778,8 @@ class LiveMarketScanner {
       let isExecutionBlocked = false;
       let blockReason = '';
 
-      // Phase 4: Continuous Trade Lifecycle & Health Management for active open trades (Production only)
-      if (!isShadowMode() && openTrades.length > 0 && settings.enableTradeManagement !== false) {
+      // Phase 4: Continuous Trade Lifecycle & Health Management for active open trades
+      if (openTrades.length > 0 && settings.enableTradeManagement !== false) {
         tradeManagementEngine
           .evaluateActiveTrades(
             currentPrice,
@@ -815,12 +810,6 @@ class LiveMarketScanner {
       } else if (activeCapital <= 0) {
         isExecutionBlocked = true;
         blockReason = 'Manual capital must be greater than $0.00. Execution blocked.';
-      }
-
-      if (isShadowMode()) {
-        // In shadow audit mode, MT5 is intentionally decoupled. Allow strategy evaluation with fallback shadow capital.
-        isExecutionBlocked = false;
-        activeCapital = activeCapital > 0 ? activeCapital : (settings.manualCapital > 0 ? settings.manualCapital : 10.0);
       }
 
       this.currentBalance = activeCapital;
@@ -1149,55 +1138,6 @@ class LiveMarketScanner {
           }
         }
 
-        // In Shadow Mode, do not dispatch to Telegram, do not mutate production opportunities, and do not execute auto-trades
-        if (isShadowMode()) {
-          console.log(`[SHADOW ACCEPTED] ${signal.setup} ${signal.signal} @ ${signal.entry} SL=${signal.stopLoss} TP1=${signal.tp1} Confidence=${signal.confidence}%`);
-          const shadowDiag: ShadowScanDiagnostic = {
-            id: `shadow_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-            timestamp: Date.now(),
-            timestampIso: new Date().toISOString(),
-            price: currentPrice,
-            bid: quote?.bid ?? currentPrice,
-            ask: quote?.ask ?? currentPrice,
-            spreadPoints: spreadPoints,
-            closedCandles: {
-              '1H': candles1h[candles1h.length - 1]?.timestamp ? new Date(candles1h[candles1h.length - 1].timestamp).toISOString() : undefined,
-              '15M': candles15m[candles15m.length - 1]?.timestamp ? new Date(candles15m[candles15m.length - 1].timestamp).toISOString() : undefined,
-              '5M': candles5m[candles5m.length - 1]?.timestamp ? new Date(candles5m[candles5m.length - 1].timestamp).toISOString() : undefined,
-              '1M': candles1m[candles1m.length - 1]?.timestamp ? new Date(candles1m[candles1m.length - 1].timestamp).toISOString() : undefined,
-            },
-            marketRegime: (signal as any).marketRegime || 'NORMAL',
-            candidateStrategy: signal.setup,
-            candidateDirection: signal.signal.toUpperCase().includes('BUY') ? 'BUY' : 'SELL',
-            levels: {
-              entry: signal.entry,
-              sl: signal.stopLoss,
-              tp1: signal.tp1,
-              tp2: signal.tp2,
-              confidence: signal.confidence,
-              rr: Number(signal.tp1Rr) || Number(signal.rr) || 1.5,
-            },
-            gates: {
-              spread: liveSpread > 35 ? 'FAIL' : 'PASS',
-              quality: 'PASS',
-              qualityScore: signal.confidence,
-              antiChase: (signal as any).antiChasePassed === false ? 'CHASED' : 'PASS',
-              risk: 'PASS',
-            },
-            finalDecision: 'SHADOW_ACCEPTED',
-            telegramDispatch: 'DISABLED_SHADOW_MODE',
-            productionStateMutation: 'BLOCKED_SHADOW_MODE',
-          };
-          shadowDiagnosticsStore.recordScan(shadowDiag);
-          logShadowScanDiagnostic(shadowDiag);
-
-          this.config.lastDecision = signal.signal;
-          this.config.lastSignal = signal;
-          this.config.lastScanStatus = `[SHADOW MODE] تم رصد صفقة مؤكدة: ${signal.signal} (${signal.setup}) بنسبة ثقة ${signal.confidence}% - بدون إرسال لتليجرام`;
-          console.log('[SCANNER] shadow scan completed (accepted setup, no telegram, no state mutation)');
-          return signal;
-        }
-
         // New genuine setup qualified!
         this.activeSignal = signal;
         this.config.activeSetupName = signal.setup;
@@ -1326,42 +1266,6 @@ class LiveMarketScanner {
         return signal;
       } else {
         // Returned NO TRADE (or confidence < minConfidence)
-        if (isShadowMode()) {
-          console.log(`[SHADOW REJECTED] ${signal.setup || 'NO_SETUP'} Reason=${dynamicRejectionReason || 'No setup qualified'}`);
-          const shadowDiag: ShadowScanDiagnostic = {
-            id: `shadow_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-            timestamp: Date.now(),
-            timestampIso: new Date().toISOString(),
-            price: currentPrice,
-            bid: quote?.bid ?? currentPrice,
-            ask: quote?.ask ?? currentPrice,
-            spreadPoints: spreadPoints,
-            closedCandles: {
-              '1H': candles1h[candles1h.length - 1]?.timestamp ? new Date(candles1h[candles1h.length - 1].timestamp).toISOString() : undefined,
-              '15M': candles15m[candles15m.length - 1]?.timestamp ? new Date(candles15m[candles15m.length - 1].timestamp).toISOString() : undefined,
-              '5M': candles5m[candles5m.length - 1]?.timestamp ? new Date(candles5m[candles5m.length - 1].timestamp).toISOString() : undefined,
-              '1M': candles1m[candles1m.length - 1]?.timestamp ? new Date(candles1m[candles1m.length - 1].timestamp).toISOString() : undefined,
-            },
-            marketRegime: (signal as any).marketRegime || 'NORMAL',
-            candidateStrategy: signal.setup !== 'CAPITAL_GUARD_BLOCK' ? signal.setup : undefined,
-            candidateDirection: signal.signal && signal.signal !== 'NO TRADE' ? (signal.signal.toUpperCase().includes('BUY') ? 'BUY' : 'SELL') : undefined,
-            gates: {
-              spread: liveSpread > 35 ? 'FAIL' : 'PASS',
-              quality: signal.signal !== 'NO TRADE' ? 'PASS' : 'FAIL',
-              qualityScore: signal.confidence,
-              antiChase: (signal as any).antiChasePassed === false ? 'CHASED' : 'PASS',
-              risk: signal.signal !== 'NO TRADE' && (signal.slPoints < 40 || signal.slPoints > 50) ? 'FAIL' : 'PASS',
-            },
-            rejectionReason: dynamicRejectionReason,
-            firstRejectionReason: dynamicRejectionReason,
-            finalDecision: 'SHADOW_REJECTED',
-            telegramDispatch: 'DISABLED_SHADOW_MODE',
-            productionStateMutation: 'BLOCKED_SHADOW_MODE',
-          };
-          shadowDiagnosticsStore.recordScan(shadowDiag);
-          logShadowScanDiagnostic(shadowDiag);
-        }
-
         // If an active trade was previously running and is still between SL and TP, maintain it
         if (this.activeSignal && this.activeSignal.signal !== 'NO TRADE') {
           this.config.duplicatePrevented = true;

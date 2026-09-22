@@ -3,10 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import path from 'path';
 import { TelegramService, telegramService, setApplicationStartedAt } from '../server/telegram.js';
-import { setTradingRuntimeModeForTesting } from '../server/runtimeMode.js';
 
 test('Telegram Restart & Retry Lifecycle Verification Suite', async (t) => {
-  setTradingRuntimeModeForTesting('production');
   const testQueuePath = path.resolve(process.cwd(), 'data', 'telegram_retry_queue_lifecycle_test.json');
   const now = Date.now();
   setApplicationStartedAt(now);

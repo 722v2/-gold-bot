@@ -5,19 +5,13 @@ import {
   isInternalTimerEnabled,
   SCAN_MIN_COOLDOWN_MS,
 } from '../server/scanner.js';
-import { setTradingRuntimeModeForTesting, isShadowMode } from '../server/runtimeMode.js';
 
 describe('Authoritative Production Scanner & Cooldown Test Suite', () => {
   const originalEnv = { ...process.env };
 
-  before(() => {
-    setTradingRuntimeModeForTesting('shadow');
-  });
-
   after(() => {
     scanner.stop();
     process.env = originalEnv;
-    setTradingRuntimeModeForTesting(null);
   });
 
   beforeEach(() => {
@@ -124,14 +118,9 @@ describe('Authoritative Production Scanner & Cooldown Test Suite', () => {
     assert.ok('lastScanCompletedTime' in health, 'health must contain lastScanCompletedTime');
   });
 
-  it('Requirement 5.1: Shadow mode isolation remains preserved and active', () => {
-    assert.strictEqual(isShadowMode(), true, 'Shadow mode must remain active in test environment');
-  });
-
   after(() => {
     scanner.stop();
     process.env = originalEnv;
-    setTradingRuntimeModeForTesting(null);
     setTimeout(() => process.exit(0), 100);
   });
 });

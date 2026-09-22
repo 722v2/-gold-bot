@@ -111,7 +111,7 @@ function hashTrace(records: DecisionRecord[]): string {
 
 export async function runBatch9DeterministicReplay() {
   console.log('====================================================');
-  console.log('🧪 RUNNING BATCH 9 DETERMINISTIC SHADOW REPLAY SUITE');
+  console.log('🧪 RUNNING BATCH 9 DETERMINISTIC REPLAY SUITE');
   console.log('====================================================\n');
 
   storage.setTestingMode(true);
