@@ -183,5 +183,54 @@
     "nextRetryAt": 1790068168862,
     "createdAt": 1790068166814,
     "lastError": "Historical event suppressed: exceeded actionability window"
+  },
+  {
+    "notificationId": "signal_sig_1790077324159_w7by4",
+    "tradeId": "sig_1790077324159_w7by4",
+    "event": "SIGNAL_NEW",
+    "chatId": "1189889156",
+    "message": "<b>🔔 إشارة تداول جديدة من Gold AI Scanner!</b>\n\n🔴 <b>الصفقة المقترحة:</b> بيع الآن (SELL NOW)\n📊 <b>الأصل:</b> XAU/USD\n📈 <b>سعر الدخول:</b> $4319.95\n🛑 <b>وقف الخسارة (SL):</b> $4324.53 (45.8 نقطة)\n🎯 <b>الهدف الأول (TP1):</b> $4309.02\n🎯 <b>الهدف الثاني (TP2):</b> $4291.49\n⚖️ <b>المخاطرة:</b> 18.32% ($4.58)\n🧠 <b>نسبة الثقة:</b> 90%\n🛠️ <b>النموذج الفني:</b> Double Top Reversal (M-Formation)\n\n⏱ <i>الوقت: ١١:٤٢:٠٤ ص</i>",
+    "replyMarkup": {
+      "inline_keyboard": [
+        [
+          {
+            "text": "🟢 دخلت الصفقة (ENTERED)",
+            "callback_data": "entered:sig_1790077324159_w7by4"
+          },
+          {
+            "text": "⚪ لم أدخل (NOT ENTERED)",
+            "callback_data": "not_entered:sig_1790077324159_w7by4"
+          }
+        ],
+        [
+          {
+            "text": "✅ WIN",
+            "callback_data": "win:sig_1790077324159_w7by4"
+          },
+          {
+            "text": "❌ LOSS",
+            "callback_data": "loss:sig_1790077324159_w7by4"
+          }
+        ]
+      ]
+    },
+    "status": "PENDING",
+    "attempts": 1,
+    "maxAttempts": 10,
+    "nextRetryAt": 1790077326206,
+    "createdAt": 1790077324159,
+    "lastError": "TELEGRAM_BOT_TOKEN is not configured."
+  },
+  {
+    "notificationId": "notif_test_1790077894737",
+    "event": "PRODUCTION_VERIFY_SIGNAL",
+    "chatId": "1189889156",
+    "message": "Duplicate attempt for test notification",
+    "status": "PENDING",
+    "attempts": 2,
+    "maxAttempts": 10,
+    "nextRetryAt": 1790077898739,
+    "createdAt": 1790077894737,
+    "lastError": "TELEGRAM_BOT_TOKEN is not configured."
   }
 ]

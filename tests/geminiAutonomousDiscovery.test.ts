@@ -221,4 +221,143 @@ describe('Gemini Autonomous Setup Discovery & Context Verification', () => {
       'NO TRADE',
     ]);
   });
+
+  it('H. Custom brokerSpecs with minGoldSlPoints, maxGoldSlPoints, and minRr are strictly respected', () => {
+    const candles5m = createMockCandles(35, 5, 2700.0, now);
+    const ind5m = createMockIndicators(2700.0);
+    const ind15m = createMockIndicators(2700.0);
+    const ind1h = createMockIndicators(2700.0);
+
+    // Candidate with 40 points SL (4.00) and 1.2R TP1 (4.80 -> 2704.8)
+    const customCandidate = {
+      direction: 'BUY' as const,
+      entry: 2700.0,
+      stopLoss: 2696.0, // 40 points
+      tp1: 2704.8,      // 48 points -> 1.2R
+      setupName: 'Bullish Order Block Retest',
+      strategyFamily: 'ORDER_BLOCK' as StrategyFamily,
+      confidence: 85,
+    };
+
+    // Should FAIL when minGoldSlPoints is set to 45 (40 < 45)
+    const failSlResult = validateTradeSignalCandidate(
+      customCandidate,
+      {
+        currentPrice: 2700.0,
+        candles5m,
+        candles15m: createMockCandles(25, 15, 2700.0, now),
+        candles1h: createMockCandles(15, 60, 2700.0, now),
+        candles1m: createMockCandles(20, 1, 2700.0, now),
+        indicators5m: ind5m,
+        indicators15m: ind15m,
+        indicators1h: ind1h,
+        brokerSpecs: { minGoldSlPoints: 45, maxGoldSlPoints: 70, minRr: 1.0 },
+        currentSpread: 0.15,
+      }
+    );
+    assert.strictEqual(failSlResult.isValid, false);
+    assert.ok(failSlResult.rejectionReason?.includes('INVALID_SL_DISTANCE'));
+
+    // Should FAIL when minRr is set to 1.5R (1.2R < 1.5R)
+    const failRrResult = validateTradeSignalCandidate(
+      customCandidate,
+      {
+        currentPrice: 2700.0,
+        candles5m,
+        candles15m: createMockCandles(25, 15, 2700.0, now),
+        candles1h: createMockCandles(15, 60, 2700.0, now),
+        candles1m: createMockCandles(20, 1, 2700.0, now),
+        indicators5m: ind5m,
+        indicators15m: ind15m,
+        indicators1h: ind1h,
+        brokerSpecs: { minGoldSlPoints: 35, maxGoldSlPoints: 70, minRr: 1.5 },
+        currentSpread: 0.15,
+      }
+    );
+    assert.strictEqual(failRrResult.isValid, false);
+    assert.ok(failRrResult.rejectionReason?.includes('INSUFFICIENT_RR'));
+
+    // Should PASS when minGoldSlPoints = 35, maxGoldSlPoints = 70, minRr = 1.0
+    const passResult = validateTradeSignalCandidate(
+      customCandidate,
+      {
+        currentPrice: 2700.0,
+        candles5m,
+        candles15m: createMockCandles(25, 15, 2700.0, now),
+        candles1h: createMockCandles(15, 60, 2700.0, now),
+        candles1m: createMockCandles(20, 1, 2700.0, now),
+        indicators5m: ind5m,
+        indicators15m: ind15m,
+        indicators1h: ind1h,
+        brokerSpecs: { minGoldSlPoints: 35, maxGoldSlPoints: 70, minRr: 1.0 },
+        currentSpread: 0.15,
+      }
+    );
+    assert.strictEqual(passResult.isValid, true);
+  });
+
+  it('I. AI response parser handles autonomous discovery fields correctly', () => {
+    const autonomousBuyJson = JSON.stringify({
+      signal: 'BUY NOW',
+      entry: 2702.50,
+      stopLoss: 2697.50, // 50 points
+      tp1: 2710.00,      // 75 points -> 1.5R
+      tp2: 2717.50,      // 150 points -> 3.0R
+      confidence: 90,
+      timeframe: '5M',
+      setup: 'Autonomous Liquidity Sweep Reversal',
+      mainReasons: [
+        'SSL swept below 2698.00 on M5 with strong displacement',
+        'M15 bullish divergence on RSI at key structural support',
+      ],
+      invalidation: 'Close candle below 2697.50',
+    });
+
+    const parsed = parseAndValidateAiResponse(autonomousBuyJson);
+    assert.strictEqual(parsed.signal, 'BUY NOW');
+    assert.strictEqual(parsed.entry, 2702.50);
+    assert.strictEqual(parsed.stopLoss, 2697.50);
+    assert.strictEqual(parsed.tp1, 2710.00);
+    assert.strictEqual(parsed.tp2, 2717.50);
+    assert.strictEqual(parsed.confidence, 90);
+    assert.strictEqual(parsed.setup, 'Autonomous Liquidity Sweep Reversal');
+    assert.strictEqual(parsed.mainReasons?.length, 2);
+  });
+
+  it('J. Strict R:R enforcement rejects sub-1.0R trades unconditionally', () => {
+    const candles5m = createMockCandles(35, 5, 2700.0, now);
+    const ind5m = createMockIndicators(2700.0);
+    const ind15m = createMockIndicators(2700.0);
+    const ind1h = createMockIndicators(2700.0);
+
+    // Entry: 2700, SL: 2695 (50 pts), TP1: 2704.5 (45 pts -> 0.90R)
+    const subRrCandidate = {
+      direction: 'BUY' as const,
+      entry: 2700.0,
+      stopLoss: 2695.0, // 50 points
+      tp1: 2704.5,      // 45 points -> 0.90R (below 1.0R)
+      setupName: 'Bullish Order Block Retest',
+      strategyFamily: 'ORDER_BLOCK' as StrategyFamily,
+      confidence: 85,
+    };
+
+    const valResult = validateTradeSignalCandidate(
+      subRrCandidate,
+      {
+        currentPrice: 2700.0,
+        candles5m,
+        candles15m: createMockCandles(25, 15, 2700.0, now),
+        candles1h: createMockCandles(15, 60, 2700.0, now),
+        candles1m: createMockCandles(20, 1, 2700.0, now),
+        indicators5m: ind5m,
+        indicators15m: ind15m,
+        indicators1h: ind1h,
+        brokerSpecs: { minSlPoints: 35, maxSlPoints: 65, minRr: 1.0 },
+        currentSpread: 0.15,
+      }
+    );
+
+    assert.strictEqual(valResult.isValid, false);
+    assert.ok(valResult.rejectionReason?.includes('INSUFFICIENT_RR'));
+  });
 });

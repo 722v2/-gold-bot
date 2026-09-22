@@ -346,10 +346,10 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
   const closedM5 = partition5mCandles(input.recent5mCandles || []).closedCandles;
   const closedM1 = partition1mCandles(input.recent1mCandles || []).closedCandles;
 
-  const validClosedH1 = closedH1.length > 0 ? closedH1 : (input.candles1h || []);
-  const validClosedM15 = closedM15.length > 0 ? closedM15 : (input.candles15m || []);
-  const validClosedM5 = closedM5.length > 0 ? closedM5 : (input.recent5mCandles || []);
-  const validClosedM1 = closedM1.length > 0 ? closedM1 : (input.recent1mCandles || []);
+  const validClosedH1 = closedH1;
+  const validClosedM15 = closedM15;
+  const validClosedM5 = closedM5;
+  const validClosedM1 = closedM1;
 
   const technicalContext: any = {
     asset,
@@ -357,10 +357,10 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
     currentPrice,
     marketDataIntegrity: {
       isClosedCandlesOnly: true,
-      h1CandlesCount: validClosedH1.length,
-      m15CandlesCount: validClosedM15.length,
-      m5CandlesCount: validClosedM5.length,
-      m1CandlesCount: validClosedM1.length,
+      h1CandlesCount: validClosedH1.slice(-10).length,
+      m15CandlesCount: validClosedM15.slice(-20).length,
+      m5CandlesCount: validClosedM5.slice(-30).length,
+      m1CandlesCount: validClosedM1.slice(-15).length,
     },
     topCandidatesGuidance: {
       role: 'ADVISORY_ONLY',
@@ -654,8 +654,11 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
         const dbgSlPoints = Math.round(dbgSlDistance / 0.1);
         const dbgTp1Distance = Math.abs(aiTp1 - aiEntry);
         const dbgRr = dbgSlDistance > 0 ? dbgTp1Distance / dbgSlDistance : 0;
-        console.warn(`[AI Engine DEBUG] exact values passed into SL-distance calculation: entry=${aiEntry}, stopLoss=${aiSl}, slDistance=${dbgSlDistance}, slPoints=${dbgSlPoints}, allowedRange=[${input.brokerSpecs?.minSlPoints ?? 35}, ${input.brokerSpecs?.maxSlPoints ?? 65}] pts`);
-        console.warn(`[AI Engine DEBUG] exact values passed into R:R calculation: tp1=${aiTp1}, entry=${aiEntry}, tp1Distance=${dbgTp1Distance}, slDistance=${dbgSlDistance}, rrToTp1=${dbgRr.toFixed(2)}R, minRequired=1.0R`);
+        const dbgAllowedMinSl = Number(input.brokerSpecs?.minGoldSlPoints ?? input.brokerSpecs?.minSlPoints ?? 35);
+        const dbgAllowedMaxSl = Number(input.brokerSpecs?.maxGoldSlPoints ?? input.brokerSpecs?.maxSlPoints ?? 65);
+        const dbgAllowedMinRr = Number(input.brokerSpecs?.minRr ?? 1.0);
+        console.warn(`[AI Engine DEBUG] exact values passed into SL-distance calculation: entry=${aiEntry}, stopLoss=${aiSl}, slDistance=${dbgSlDistance}, slPoints=${dbgSlPoints}, allowedRange=[${dbgAllowedMinSl}, ${dbgAllowedMaxSl}] pts`);
+        console.warn(`[AI Engine DEBUG] exact values passed into R:R calculation: tp1=${aiTp1}, entry=${aiEntry}, tp1Distance=${dbgTp1Distance}, slDistance=${dbgSlDistance}, rrToTp1=${dbgRr.toFixed(2)}R, minRequired=${dbgAllowedMinRr.toFixed(2)}R`);
         console.warn(`[AI Engine DEBUG] ====================================================================`);
         
         // Prefer highest-quality deterministic candidate that already passed validation

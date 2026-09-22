@@ -7,6 +7,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { AssetType } from './src/types.js';
 import { analyzeTechnicals } from './server/indicators.js';
+import { partition1hCandles, partition15mCandles, partition5mCandles, partition1mCandles } from './server/candleUtils.js';
 import { fetchCandles, fetchCurrentPrice, fetchLiveQuote, getMultiTimeframeData } from './server/marketData.js';
 import { runAIAnalysis } from './server/geminiTrader.js';
 import { runXauusdBacktest } from './server/backtestEngine.js';
@@ -121,9 +122,14 @@ async function startServer() {
     try {
       const asset = ((req.query.asset as string) || 'XAU/USD') as AssetType;
       const mtfData = await getMultiTimeframeData(asset);
-      const ind1h = analyzeTechnicals(mtfData.candles1h);
-      const ind15m = analyzeTechnicals(mtfData.candles15m);
-      const ind5m = analyzeTechnicals(mtfData.candles5m);
+      const quoteTime = typeof mtfData.quote?.timestamp === 'number' ? mtfData.quote.timestamp : Date.now();
+      const closedH1 = partition1hCandles(mtfData.candles1h, quoteTime).closedCandles;
+      const closedM15 = partition15mCandles(mtfData.candles15m, quoteTime).closedCandles;
+      const closedM5 = partition5mCandles(mtfData.candles5m, quoteTime).closedCandles;
+
+      const ind1h = analyzeTechnicals(closedH1.length > 0 ? closedH1 : mtfData.candles1h);
+      const ind15m = analyzeTechnicals(closedM15.length > 0 ? closedM15 : mtfData.candles15m);
+      const ind5m = analyzeTechnicals(closedM5.length > 0 ? closedM5 : mtfData.candles5m);
 
       // Determine overall market state
       let marketState: 'TREND' | 'RANGE' | 'CONSOLIDATION' = 'RANGE';
@@ -176,11 +182,21 @@ async function startServer() {
 
       // Gather multi-timeframe live market data
       const marketData = await getMultiTimeframeData(asset);
+      const quoteTime = typeof marketData.quote?.timestamp === 'number' ? marketData.quote.timestamp : Date.now();
+      const closedH1 = partition1hCandles(marketData.candles1h, quoteTime).closedCandles;
+      const closedM15 = partition15mCandles(marketData.candles15m, quoteTime).closedCandles;
+      const closedM5 = partition5mCandles(marketData.candles5m, quoteTime).closedCandles;
+      const closedM1 = partition1mCandles(marketData.candles1m, quoteTime).closedCandles;
+
+      const validClosedH1 = closedH1.length > 0 ? closedH1 : marketData.candles1h;
+      const validClosedM15 = closedM15.length > 0 ? closedM15 : marketData.candles15m;
+      const validClosedM5 = closedM5.length > 0 ? closedM5 : marketData.candles5m;
+      const validClosedM1 = closedM1.length > 0 ? closedM1 : marketData.candles1m;
 
       // Run technical & market structure analysis
-      const ind1h = analyzeTechnicals(marketData.candles1h);
-      const ind15m = analyzeTechnicals(marketData.candles15m);
-      const ind5m = analyzeTechnicals(marketData.candles5m);
+      const ind1h = analyzeTechnicals(validClosedH1);
+      const ind15m = analyzeTechnicals(validClosedM15);
+      const ind5m = analyzeTechnicals(validClosedM5);
 
       // Run AI Trading Agent (Gemini + Risk Manager + Selective rule check)
       const signal = await runAIAnalysis({
@@ -190,10 +206,10 @@ async function startServer() {
         indicators1h: ind1h,
         indicators15m: ind15m,
         indicators5m: ind5m,
-        candles1h: marketData.candles1h,
-        candles15m: marketData.candles15m,
-        recent5mCandles: marketData.candles5m,
-        recent1mCandles: marketData.candles1m,
+        candles1h: validClosedH1,
+        candles15m: validClosedM15,
+        recent5mCandles: validClosedM5,
+        recent1mCandles: validClosedM1,
         losingStreak: Number(losingStreak) || 0,
         brokerSpecs,
       });

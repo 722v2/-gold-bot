@@ -1,6 +1,6 @@
 import { AssetType, ScannerConfig, SignalDecision, TradeSignal, TradeOpportunity } from '../src/types.js';
 import { analyzeTechnicals } from './indicators.js';
-import { partition5mCandles } from './candleUtils.js';
+import { partition1hCandles, partition15mCandles, partition5mCandles, partition1mCandles } from './candleUtils.js';
 import { fetchCandles, fetchLiveQuote } from './marketData.js';
 import { runAIAnalysis } from './geminiTrader.js';
 import { BrokerContractSpecs } from './riskManager.js';
@@ -421,15 +421,30 @@ class LiveMarketScanner {
       console.log(`[SCANNER] market data loaded: price=${currentPrice}, 1h=${candles1h.length}, 15m=${candles15m.length}, 5m=${candles5m.length}`);
 
       // Step 3: Calculate required technical/market-structure data
-      // Partition 5M candles so 5M technical analysis receives ONLY closed candles
+      // Partition candles across all timeframes so technical analysis and AI receive ONLY closed candles
       const quoteTime = typeof quote.timestamp === 'number' ? quote.timestamp : (Number(quote.timestamp) || Date.now());
+      const partition1h = partition1hCandles(candles1h, quoteTime);
+      const closedCandles1h = partition1h.isValid && partition1h.closedCandles.length > 0
+        ? partition1h.closedCandles
+        : candles1h;
+
+      const partition15m = partition15mCandles(candles15m, quoteTime);
+      const closedCandles15m = partition15m.isValid && partition15m.closedCandles.length > 0
+        ? partition15m.closedCandles
+        : candles15m;
+
       const partition5m = partition5mCandles(candles5m, quoteTime);
       const closedCandles5m = partition5m.isValid && partition5m.closedCandles.length > 0
         ? partition5m.closedCandles
         : candles5m;
 
-      const ind1h = analyzeTechnicals(candles1h);
-      const ind15m = analyzeTechnicals(candles15m);
+      const partition1m = partition1mCandles(candles1m, quoteTime);
+      const closedCandles1m = partition1m.isValid && partition1m.closedCandles.length > 0
+        ? partition1m.closedCandles
+        : candles1m;
+
+      const ind1h = analyzeTechnicals(closedCandles1h);
+      const ind15m = analyzeTechnicals(closedCandles15m);
       const ind5m = analyzeTechnicals(closedCandles5m);
 
       // Synchronize in-flight trade state with TradeLedger & TradeMonitor
@@ -783,10 +798,10 @@ class LiveMarketScanner {
         tradeManagementEngine
           .evaluateActiveTrades(
             currentPrice,
-            candles1h,
-            candles15m,
-            candles5m,
-            candles1m,
+            closedCandles1h,
+            closedCandles15m,
+            closedCandles5m,
+            closedCandles1m,
             ind1h,
             ind15m,
             ind5m,
@@ -901,10 +916,10 @@ class LiveMarketScanner {
         indicators1h: ind1h,
         indicators15m: ind15m,
         indicators5m: ind5m,
-        candles1h,
-        candles15m,
-        recent5mCandles: candles5m,
-        recent1mCandles: candles1m,
+        candles1h: closedCandles1h,
+        candles15m: closedCandles15m,
+        recent5mCandles: closedCandles5m,
+        recent1mCandles: closedCandles1m,
         losingStreak: this.losingStreak,
         brokerSpecs: this.brokerSpecs,
         activeTradeDirection,

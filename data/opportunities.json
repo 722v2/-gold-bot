@@ -1,4 +1,41 @@
 {
+  "opp_double_top_reversal__m_formation__SELL_4320": {
+    "id": "opp_double_top_reversal__m_formation__SELL_4320",
+    "tp1": 4309.02,
+    "tp2": 4291.49,
+    "entry": 4319.95,
+    "status": "ACTIVE",
+    "signalId": "sig_1790077324159_w7by4",
+    "stopLoss": 4324.53,
+    "direction": "SELL",
+    "setupName": "Double Top Reversal (M-Formation)",
+    "timeframe": "15M / 5M",
+    "confidence": 77,
+    "factorSnapshot": {
+      "factors": {
+        "fvg": "BEARISH_FVG",
+        "rsi": "NEUTRAL",
+        "macd": "BEARISH",
+        "zone": "EQUILIBRIUM",
+        "direction": "SELL",
+        "liquidity": "NONE",
+        "orderBlock": "BEARISH_OB",
+        "volatility": "HIGH",
+        "setupFamily": "Double Top Reversal (M-Formation)",
+        "htfStructure": "DOWNTREND",
+        "m15Structure": "BEARISH",
+        "marketRegime": "STRONG_TREND"
+      },
+      "signalId": "sig_1790077324159_w7by4",
+      "createdAt": 1790077324159,
+      "direction": "SELL",
+      "setupFamily": "Double Top Reversal (M-Formation)",
+      "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Double Top Reversal (M-Formation)|volatility=HIGH|zone=EQUILIBRIUM"
+    },
+    "strategyFamily": "UNKNOWN",
+    "lastUpdatedTime": 1790077763695,
+    "firstObservedTime": 1790077324169
+  },
   "opp_horizontal_resistance_breakout___retest_BUY_4320": {
     "id": "opp_horizontal_resistance_breakout___retest_BUY_4320",
     "tp1": 4333.67,

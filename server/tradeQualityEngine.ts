@@ -2063,8 +2063,8 @@ export function validateTradeSignalCandidate(
 
   const slDistance = Math.abs(entry - stopLoss);
   const slPoints = Math.round(slDistance / 0.1);
-  const minSlPoints = brokerSpecs?.minSlPoints ?? 35;
-  const maxSlPoints = brokerSpecs?.maxSlPoints ?? 65;
+  const minSlPoints = Number(brokerSpecs?.minGoldSlPoints ?? brokerSpecs?.minSlPoints ?? 35);
+  const maxSlPoints = Number(brokerSpecs?.maxGoldSlPoints ?? brokerSpecs?.maxSlPoints ?? 65);
 
   if (slPoints < minSlPoints || slPoints > maxSlPoints) {
     return { isValid: false, rejectionReason: `INVALID_SL_DISTANCE: Stop loss distance (${slPoints} pts) outside allowed range [${minSlPoints}, ${maxSlPoints}] pts` };
@@ -2072,8 +2072,9 @@ export function validateTradeSignalCandidate(
 
   const tp1Distance = Math.abs(tp1 - entry);
   const rrToTp1 = slDistance > 0 ? tp1Distance / slDistance : 0;
-  if (rrToTp1 < 0.999) {
-    return { isValid: false, rejectionReason: `INSUFFICIENT_RR: R:R to TP1 (${rrToTp1.toFixed(2)}R) is below minimum required 1.0R` };
+  const minRequiredRr = Number(brokerSpecs?.minRr ?? 1.0);
+  if (rrToTp1 < minRequiredRr - 0.0001) {
+    return { isValid: false, rejectionReason: `INSUFFICIENT_RR: R:R to TP1 (${rrToTp1.toFixed(2)}R) is below minimum required ${minRequiredRr.toFixed(2)}R` };
   }
 
   // FIX 4: Spread-aware Entry Quality (Check before active gate or timing)
