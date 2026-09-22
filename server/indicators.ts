@@ -851,13 +851,9 @@ export function hasConfirmedReversalStructure(
 ): boolean {
   if (direction === 'BUY') {
     // Bullish reversal confirmation
-    // 1. Confirmed M15 or M5 structural shift / BOS in bullish direction
+    // 1. Confirmed M15 structural shift / BOS in bullish direction
     const shift15m = String(indicators15m?.structureShift || '');
-    const shift5m = String(indicators5m?.structureShift || '');
     if (shift15m.includes('BULLISH') || shift15m.includes('CHOCH_BULLISH') || shift15m.includes('BOS_BULLISH')) {
-      return true;
-    }
-    if (shift5m.includes('BULLISH') || shift5m.includes('CHOCH_BULLISH') || shift5m.includes('BOS_BULLISH')) {
       return true;
     }
 
@@ -883,13 +879,9 @@ export function hasConfirmedReversalStructure(
     return false;
   } else {
     // Bearish reversal confirmation
-    // 1. Confirmed M15 or M5 structural shift / BOS in bearish direction
+    // 1. Confirmed M15 structural shift / BOS in bearish direction
     const shift15m = String(indicators15m?.structureShift || '');
-    const shift5m = String(indicators5m?.structureShift || '');
     if (shift15m.includes('BEARISH') || shift15m.includes('CHOCH_BEARISH') || shift15m.includes('BOS_BEARISH')) {
-      return true;
-    }
-    if (shift5m.includes('BEARISH') || shift5m.includes('CHOCH_BEARISH') || shift5m.includes('BOS_BEARISH')) {
       return true;
     }
 
