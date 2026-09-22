@@ -4,7 +4,8 @@
     "tp1": 4309.02,
     "tp2": 4291.49,
     "entry": 4319.95,
-    "status": "ACTIVE",
+    "status": "FAILED",
+    "failedAt": 1790078619776,
     "signalId": "sig_1790077324159_w7by4",
     "stopLoss": 4324.53,
     "direction": "SELL",
@@ -33,7 +34,7 @@
       "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Double Top Reversal (M-Formation)|volatility=HIGH|zone=EQUILIBRIUM"
     },
     "strategyFamily": "UNKNOWN",
-    "lastUpdatedTime": 1790077763695,
+    "lastUpdatedTime": 1790078619776,
     "firstObservedTime": 1790077324169
   },
   "opp_horizontal_resistance_breakout___retest_BUY_4320": {

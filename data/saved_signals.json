@@ -57,6 +57,7 @@
       "setupFamily": "Double Top Reversal (M-Formation)",
       "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Double Top Reversal (M-Formation)|volatility=HIGH|zone=EQUILIBRIUM"
     },
+    "lifecycleState": "ENTERED",
     "positionSizing": {
       "lotStep": 0.01,
       "maxLoss": 5.5,
