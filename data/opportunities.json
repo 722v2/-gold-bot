@@ -1,4 +1,42 @@
 {
+  "opp_bullish_order_block_retest___reaction_BUY_4335": {
+    "id": "opp_bullish_order_block_retest___reaction_BUY_4335",
+    "tp1": 4344.03,
+    "tp2": 4376.09,
+    "entry": 4333.66,
+    "status": "FAILED",
+    "failedAt": 1790091526518,
+    "signalId": "sig_1790090985029_gxlpx",
+    "stopLoss": 4328.92,
+    "direction": "BUY",
+    "setupName": "Bullish Order Block Retest & Reaction",
+    "timeframe": "15M / 5M",
+    "confidence": 88,
+    "factorSnapshot": {
+      "factors": {
+        "fvg": "BULLISH_FVG",
+        "rsi": "NEUTRAL",
+        "macd": "BULLISH",
+        "zone": "PREMIUM",
+        "direction": "BUY",
+        "liquidity": "NONE",
+        "orderBlock": "BULLISH_OB",
+        "volatility": "HIGH",
+        "setupFamily": "Bullish Order Block Retest & Reaction",
+        "htfStructure": "DOWNTREND",
+        "m15Structure": "RANGING",
+        "marketRegime": "STRONG_TREND"
+      },
+      "signalId": "sig_1790090985029_gxlpx",
+      "createdAt": 1790090985030,
+      "direction": "BUY",
+      "setupFamily": "Bullish Order Block Retest & Reaction",
+      "combinationKey": "direction=BUY|fvg=BULLISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=RANGING|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Bullish Order Block Retest & Reaction|volatility=HIGH|zone=PREMIUM"
+    },
+    "strategyFamily": "UNKNOWN",
+    "lastUpdatedTime": 1790091526518,
+    "firstObservedTime": 1790090985039
+  },
   "opp_double_top_reversal__confirmed_m_formation__SELL_4340": {
     "id": "opp_double_top_reversal__confirmed_m_formation__SELL_4340",
     "tp1": 4332.23,
