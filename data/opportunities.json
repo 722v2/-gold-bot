@@ -1,4 +1,58 @@
 {
+  "opp_bearish_engulfing_reversal_at_key_structure_SELL_4330": {
+    "id": "opp_bearish_engulfing_reversal_at_key_structure_SELL_4330",
+    "tp1": 4320.21,
+    "tp2": 4291.49,
+    "entry": 4328.99,
+    "status": "DISPATCHED",
+    "signalId": "sig_1790087531239_4m556",
+    "stopLoss": 4333.99,
+    "direction": "SELL",
+    "setupName": "Bearish Engulfing Reversal at Key Structure",
+    "timeframe": "15M / 5M",
+    "confidence": 90,
+    "dispatchedAt": 1790087531874,
+    "factorSnapshot": {
+      "factors": {
+        "fvg": "BULLISH_FVG",
+        "rsi": "NEUTRAL",
+        "macd": "BEARISH",
+        "zone": "PREMIUM",
+        "direction": "SELL",
+        "liquidity": "NONE",
+        "orderBlock": "BULLISH_OB",
+        "volatility": "HIGH",
+        "setupFamily": "Bearish Engulfing Reversal at Key Structure",
+        "htfStructure": "DOWNTREND",
+        "m15Structure": "BEARISH",
+        "marketRegime": "STRONG_TREND"
+      },
+      "signalId": "sig_1790087531239_4m556",
+      "createdAt": 1790087531239,
+      "direction": "SELL",
+      "setupFamily": "Bearish Engulfing Reversal at Key Structure",
+      "combinationKey": "direction=SELL|fvg=BULLISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Bearish Engulfing Reversal at Key Structure|volatility=HIGH|zone=PREMIUM"
+    },
+    "strategyFamily": "UNKNOWN",
+    "lastUpdatedTime": 1790087531247,
+    "firstObservedTime": 1790087531247
+  },
+  "opp_bare_resistance_rejection_SELL_4330": {
+    "id": "opp_bare_resistance_rejection_SELL_4330",
+    "tp1": 4316.88,
+    "tp2": 4291.49,
+    "entry": 4332.01,
+    "status": "ACTIVE",
+    "signalId": "sig_1790086577630_4duv1",
+    "stopLoss": 4336.83,
+    "direction": "SELL",
+    "setupName": "Bare Resistance Rejection",
+    "timeframe": "15M / 5M",
+    "confidence": 88,
+    "strategyFamily": "UNKNOWN",
+    "lastUpdatedTime": 1790086577661,
+    "firstObservedTime": 1790086577651
+  },
   "opp_horizontal_resistance_breakout___retest_BUY_4340": {
     "id": "opp_horizontal_resistance_breakout___retest_BUY_4340",
     "tp1": 4343.94,
@@ -38,21 +92,44 @@
     "lastUpdatedTime": 1790083434233,
     "firstObservedTime": 1790083074638
   },
-  "opp_bare_resistance_rejection_SELL_4330": {
-    "id": "opp_bare_resistance_rejection_SELL_4330",
-    "setupName": "Bare Resistance Rejection",
-    "strategyFamily": "UNKNOWN",
-    "direction": "SELL",
-    "timeframe": "15M / 5M",
-    "status": "ACTIVE",
-    "firstObservedTime": 1790086577651,
-    "lastUpdatedTime": 1790086577661,
-    "entry": 4332.01,
-    "stopLoss": 4336.83,
-    "tp1": 4316.88,
+  "opp_bare_resistance_rejection_SELL_4330_hist_1790081770715": {
+    "id": "opp_bare_resistance_rejection_SELL_4330_hist_1790081770715",
+    "tp1": 4309.02,
     "tp2": 4291.49,
-    "confidence": 88,
-    "signalId": "sig_1790086577630_4duv1"
+    "entry": 4331.89,
+    "status": "FAILED",
+    "failedAt": 1790081770715,
+    "signalId": "sig_1790081590420_0nqis",
+    "stopLoss": 4336.21,
+    "direction": "SELL",
+    "setupName": "Bare Resistance Rejection",
+    "timeframe": "15M / 5M",
+    "confidence": 83,
+    "dispatchedAt": 1790081591065,
+    "factorSnapshot": {
+      "factors": {
+        "fvg": "BEARISH_FVG",
+        "rsi": "NEUTRAL",
+        "macd": "BULLISH",
+        "zone": "PREMIUM",
+        "direction": "SELL",
+        "liquidity": "NONE",
+        "orderBlock": "BEARISH_OB",
+        "volatility": "HIGH",
+        "setupFamily": "Bare Resistance Rejection",
+        "htfStructure": "DOWNTREND",
+        "m15Structure": "RANGING",
+        "marketRegime": "NORMAL_RANGE"
+      },
+      "signalId": "sig_1790081590420_0nqis",
+      "createdAt": 1790081590421,
+      "direction": "SELL",
+      "setupFamily": "Bare Resistance Rejection",
+      "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=RANGING|macd=BULLISH|marketRegime=NORMAL_RANGE|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Bare Resistance Rejection|volatility=HIGH|zone=PREMIUM"
+    },
+    "strategyFamily": "UNKNOWN",
+    "lastUpdatedTime": 1790081770715,
+    "firstObservedTime": 1790081590484
   },
   "opp_double_top_reversal__m_formation__SELL_4320": {
     "id": "opp_double_top_reversal__m_formation__SELL_4320",
@@ -4562,44 +4639,5 @@
     "firstObservedTime": 1789635058216,
     "telegramRetryCount": 0,
     "telegramDeliveryInFlight": false
-  },
-  "opp_bare_resistance_rejection_SELL_4330_hist_1790081770715": {
-    "id": "opp_bare_resistance_rejection_SELL_4330_hist_1790081770715",
-    "tp1": 4309.02,
-    "tp2": 4291.49,
-    "entry": 4331.89,
-    "status": "FAILED",
-    "failedAt": 1790081770715,
-    "signalId": "sig_1790081590420_0nqis",
-    "stopLoss": 4336.21,
-    "direction": "SELL",
-    "setupName": "Bare Resistance Rejection",
-    "timeframe": "15M / 5M",
-    "confidence": 83,
-    "dispatchedAt": 1790081591065,
-    "factorSnapshot": {
-      "factors": {
-        "fvg": "BEARISH_FVG",
-        "rsi": "NEUTRAL",
-        "macd": "BULLISH",
-        "zone": "PREMIUM",
-        "direction": "SELL",
-        "liquidity": "NONE",
-        "orderBlock": "BEARISH_OB",
-        "volatility": "HIGH",
-        "setupFamily": "Bare Resistance Rejection",
-        "htfStructure": "DOWNTREND",
-        "m15Structure": "RANGING",
-        "marketRegime": "NORMAL_RANGE"
-      },
-      "signalId": "sig_1790081590420_0nqis",
-      "createdAt": 1790081590421,
-      "direction": "SELL",
-      "setupFamily": "Bare Resistance Rejection",
-      "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=RANGING|macd=BULLISH|marketRegime=NORMAL_RANGE|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Bare Resistance Rejection|volatility=HIGH|zone=PREMIUM"
-    },
-    "strategyFamily": "UNKNOWN",
-    "lastUpdatedTime": 1790081770715,
-    "firstObservedTime": 1790081590484
   }
 }
