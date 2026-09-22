@@ -27,7 +27,13 @@ async function runTerminalLifecycleTests() {
 
   const baseTimestamp = Date.now() - 3600000;
 
-  function createMockSignal(id: string, price: number, setup: string = 'Bearish Volatility Expansion', direction: 'SELL NOW' | 'BUY NOW' = 'SELL NOW'): TradeSignal {
+  function createMockSignal(
+    id: string,
+    price: number,
+    setup: string = 'Bearish Volatility Expansion',
+    direction: 'SELL NOW' | 'BUY NOW' = 'SELL NOW',
+    anchorKey?: string
+  ): TradeSignal {
     const isSell = direction.includes('SELL');
     return {
       id,
@@ -55,11 +61,13 @@ async function runTerminalLifecycleTests() {
       strategyFamily: 'RANGE_BREAKOUT',
       mainReasons: ['Breakout expansion confirmed'],
       invalidation: 'Reversal above level',
-      patternMetadata: {
-        patternAnchorKey: `M5_${setup}_${Date.now()}_${direction}`,
-        extremeLevel: price,
-        neckline: isSell ? price - 2.0 : price + 2.0,
-      },
+      patternMetadata: anchorKey
+        ? {
+            patternAnchorKey: anchorKey,
+            extremeLevel: price,
+            neckline: isSell ? price - 2.0 : price + 2.0,
+          }
+        : undefined,
     };
   }
 
@@ -445,6 +453,162 @@ async function runTerminalLifecycleTests() {
   assert(archivedRecord7?.dispatchedAt === oldTimestamp7, '7i: Archived dispatchedAt is preserved');
   assert(archivedRecord7?.failedAt === oldFailedTimestamp7, '7j: Archived failedAt is preserved');
   assert(archivedRecord7?.confidence === 78, '7k: Archived confidence is preserved');
+
+  // --------------------------------------------------------------------------
+  // TEST 8: runtimeMode.compareWithProduction classification correctness
+  // --------------------------------------------------------------------------
+  const { shadowDiagnosticsStore } = await import('../server/runtimeMode.js');
+  
+  const testOpportunities: TradeOpportunity[] = [
+    {
+      id: 'opp_test_dispatched',
+      setupName: 'Test Dispatched Setup',
+      strategyFamily: 'RANGE_BREAKOUT',
+      direction: 'BUY',
+      timeframe: '15M / 5M',
+      status: 'DISPATCHED',
+      dispatchedAt: Date.now() - 60000,
+      firstObservedTime: Date.now() - 60000,
+      lastUpdatedTime: Date.now() - 60000,
+      entry: 2650.0,
+      stopLoss: 2645.0,
+      tp1: 2660.0,
+      tp2: 2670.0,
+      confidence: 85,
+      signalId: 'sig_test_dispatched',
+    },
+    {
+      id: 'opp_test_failed_with_ts',
+      setupName: 'Test Failed Setup',
+      strategyFamily: 'ORDER_BLOCK',
+      direction: 'SELL',
+      timeframe: '15M / 5M',
+      status: 'FAILED',
+      dispatchedAt: Date.now() - 3600000, // Historical dispatched timestamp
+      failedAt: Date.now() - 3000000,
+      firstObservedTime: Date.now() - 3600000,
+      lastUpdatedTime: Date.now() - 3000000,
+      entry: 2660.0,
+      stopLoss: 2665.0,
+      tp1: 2650.0,
+      tp2: 2640.0,
+      confidence: 80,
+      signalId: 'sig_test_failed',
+    },
+    {
+      id: 'opp_test_active_no_dispatch',
+      setupName: 'Test Active Setup',
+      strategyFamily: 'DOUBLE_TOP_BOTTOM',
+      direction: 'BUY',
+      timeframe: '15M / 5M',
+      status: 'ACTIVE',
+      firstObservedTime: Date.now() - 10000,
+      lastUpdatedTime: Date.now() - 10000,
+      entry: 2640.0,
+      stopLoss: 2635.0,
+      tp1: 2650.0,
+      tp2: 2660.0,
+      confidence: 82,
+      signalId: 'sig_test_active',
+    },
+    {
+      id: 'opp_test_completed_with_ts',
+      setupName: 'Test Completed Setup',
+      strategyFamily: 'BARE_SR',
+      direction: 'BUY',
+      timeframe: '15M / 5M',
+      status: 'COMPLETED',
+      dispatchedAt: Date.now() - 7200000, // Historical dispatched timestamp
+      completedAt: Date.now() - 6000000,
+      firstObservedTime: Date.now() - 7200000,
+      lastUpdatedTime: Date.now() - 6000000,
+      entry: 2630.0,
+      stopLoss: 2625.0,
+      tp1: 2640.0,
+      tp2: 2650.0,
+      confidence: 88,
+      signalId: 'sig_test_completed',
+    },
+  ];
+
+  const parityResult = shadowDiagnosticsStore.compareWithProduction([], testOpportunities);
+  assert(parityResult.totalProductionSignals === 1, '8a: runtimeMode only counts status===DISPATCHED opportunities as production items (1)');
+  assert(!parityResult.divergences.some(d => d.productionSignalId === 'opp_test_failed_with_ts'), '8b: FAILED opportunity with dispatchedAt is NOT classified as active production item');
+  assert(!parityResult.divergences.some(d => d.productionSignalId === 'opp_test_completed_with_ts'), '8c: COMPLETED opportunity with dispatchedAt is NOT classified as active production item');
+  assert(!parityResult.divergences.some(d => d.productionSignalId === 'opp_test_active_no_dispatch'), '8d: ACTIVE opportunity is NOT classified as dispatched production item');
+
+  // --------------------------------------------------------------------------
+  // TEST 9: Duplicate signal evolution does not corrupt archived historical records
+  // --------------------------------------------------------------------------
+  // Update active opportunity 7 confidence and levels attempt
+  const activeCycle7 = storage.getOpportunity(oppId7);
+  if (activeCycle7) {
+    activeCycle7.confidence = 95; // Evolved confidence
+    activeCycle7.lastUpdatedTime = Date.now();
+    storage.saveOpportunity(activeCycle7);
+  }
+
+  const archivedAfterMutation = storage.getOpportunity(archivedKey7);
+  assert(archivedAfterMutation?.confidence === 78, '9a: Archived historical confidence remains untouched at 78 after active cycle evolution to 95');
+  assert(archivedAfterMutation?.status === 'FAILED', '9b: Archived status remains FAILED');
+  assert(archivedAfterMutation?.entry === 4340.0, '9c: Archived entry remains 4340.0');
+
+  // --------------------------------------------------------------------------
+  // TEST 10: Structural terminal block remains strictly enforced for same anchor
+  // --------------------------------------------------------------------------
+  const failedAnchorSignal = createMockSignal('sig_failed_anchor', 4400.0, 'Double Top Reversal', 'SELL NOW');
+  failedAnchorSignal.strategyFamily = 'DOUBLE_TOP_BOTTOM';
+  failedAnchorSignal.patternMetadata = {
+    patternAnchorKey: 'M5_DT_ANCHOR_123_SELL',
+    extremeLevel: 4405.0,
+    neckline: 4395.0,
+    pivot1Time: 1700000000000,
+  };
+
+  const failedStructuralOpp: TradeOpportunity = {
+    id: generateOpportunityId(failedAnchorSignal),
+    setupName: failedAnchorSignal.setup,
+    strategyFamily: 'DOUBLE_TOP_BOTTOM',
+    direction: 'SELL',
+    timeframe: failedAnchorSignal.timeframe,
+    status: 'FAILED',
+    failedAt: Date.now() - 100000,
+    firstObservedTime: Date.now() - 200000,
+    lastUpdatedTime: Date.now() - 100000,
+    patternAnchorKey: 'M5_DT_ANCHOR_123_SELL',
+    pivot1Time: 1700000000000,
+    entry: 4400.0,
+    stopLoss: 4405.0,
+    tp1: 4390.0,
+    tp2: 4380.0,
+    confidence: 85,
+    signalId: failedAnchorSignal.id,
+  };
+  storage.saveOpportunity(failedStructuralOpp);
+
+  const reEntryCandidate = createMockSignal('sig_reentry_attempt', 4401.0, 'Double Top Reversal', 'SELL NOW');
+  reEntryCandidate.strategyFamily = 'DOUBLE_TOP_BOTTOM';
+  reEntryCandidate.patternMetadata = {
+    patternAnchorKey: 'M5_DT_ANCHOR_123_SELL', // Same structural anchor
+    extremeLevel: 4405.0,
+    neckline: 4395.0,
+    pivot1Time: 1700000000000,
+  };
+
+  const reEntryCheck = checkStructuralSameSetupIdentity(null, reEntryCandidate);
+  assert(reEntryCheck.status === 'DUPLICATE_ACTIVE_REENTRY', '10a: Same structural anchor after FAILED status is strictly blocked (DUPLICATE_ACTIVE_REENTRY)');
+  assert(reEntryCheck.isReentry === true, '10b: isReentry is true');
+
+  const independentCandidate = createMockSignal('sig_independent_dt', 4420.0, 'Double Top Reversal', 'SELL NOW');
+  independentCandidate.strategyFamily = 'DOUBLE_TOP_BOTTOM';
+  independentCandidate.patternMetadata = {
+    patternAnchorKey: 'M5_DT_ANCHOR_999_SELL', // Different structural anchor
+    extremeLevel: 4425.0,
+    neckline: 4415.0,
+    pivot1Time: 1700000500000,
+  };
+  const independentCheck = checkStructuralSameSetupIdentity(null, independentCandidate);
+  assert(independentCheck.status === 'QUALIFIED_SIGNAL', '10c: Independent setup with different structural anchor is ALLOWED (QUALIFIED_SIGNAL)');
 
   console.log('\n====================================================');
   console.log(`📊 TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);

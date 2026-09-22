@@ -177,7 +177,7 @@ class ShadowDiagnosticsManager {
     }
 
     for (const opp of (productionOpportunities || []).slice(0, 30)) {
-      if (opp && (opp.status === 'DISPATCHED' || opp.dispatchedAt)) {
+      if (opp && opp.status === 'DISPATCHED') {
         const dir = (opp.direction || 'BUY').toUpperCase().includes('BUY') ? 'BUY' : 'SELL';
         if (!prodItems.some((p) => p.id === opp.id || p.id === opp.signalId)) {
           prodItems.push({

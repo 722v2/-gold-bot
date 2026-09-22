@@ -6,7 +6,121 @@ import { generateMultiStrategyCandidates } from './strategyEngine.js';
 import { experienceMemoryEngine } from './experienceMemory.js';
 import { validateTradeSignalCandidate, inferStrategyFamily } from './tradeQualityEngine.js';
 
-let nvidiaClient: OpenAI | null = null;
+export const XAUUSD_TRADE_SIGNAL_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    signal: {
+      type: 'string',
+      enum: ['BUY NOW', 'SELL NOW', 'BUY LIMIT', 'SELL LIMIT', 'NO TRADE'],
+      description: 'القرار النهائي للصفقة'
+    },
+    entry: {
+      type: 'number',
+      description: 'سعر الدخول المقترح'
+    },
+    stopLoss: {
+      type: 'number',
+      description: 'مستوى وقف الخسارة الفني'
+    },
+    tp1: {
+      type: 'number',
+      description: 'الهدف الربحي الهيكلي الأول'
+    },
+    tp2: {
+      type: 'number',
+      description: 'الهدف الربحي الهيكلي الثاني إن وجد أو 0'
+    },
+    confidence: {
+      type: 'number',
+      description: 'نسبة الثقة الفنية من 0 إلى 100'
+    },
+    timeframe: {
+      type: 'string',
+      description: 'الفريم الزمني المعتمد للنموذج'
+    },
+    setup: {
+      type: 'string',
+      description: 'اسم النموذج أو الاستراتيجية المكتشفة'
+    },
+    mainReasons: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'قائمة الأسباب الفنية للقرار'
+    },
+    invalidation: {
+      type: 'string',
+      description: 'شروط إلغاء الصفقة فنياً'
+    },
+    noTradeReason: {
+      type: 'string',
+      description: 'سبب عدم التداول في حال اختيار NO TRADE'
+    }
+  },
+  required: ['signal', 'confidence', 'setup'],
+  additionalProperties: false
+} as const;
+
+export function parseAndValidateAiResponse(rawContent: any): {
+  signal: SignalDecision;
+  entry?: number;
+  stopLoss?: number;
+  tp1?: number;
+  tp2?: number;
+  confidence: number;
+  timeframe?: string;
+  setup: string;
+  mainReasons?: string[];
+  invalidation?: string;
+  noTradeReason?: string;
+} {
+  let parsed: any = null;
+  if (typeof rawContent === 'object' && rawContent !== null) {
+    parsed = rawContent;
+  } else if (typeof rawContent === 'string') {
+    const trimmed = rawContent.trim();
+    // Strip potential markdown code block wrappers if any model outputs them
+    const cleaned = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    parsed = JSON.parse(cleaned);
+  } else {
+    throw new Error('Non-parseable response content received from AI');
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('AI response is not a valid JSON object');
+  }
+
+  if (!parsed.signal || typeof parsed.signal !== 'string') {
+    throw new Error('Missing or invalid "signal" field in AI response');
+  }
+
+  const upperSignal = parsed.signal.toUpperCase().trim();
+  const validSignals: SignalDecision[] = ['BUY NOW', 'SELL NOW', 'BUY LIMIT', 'SELL LIMIT', 'NO TRADE'];
+  if (!validSignals.includes(upperSignal as SignalDecision)) {
+    throw new Error(`Invalid signal value "${parsed.signal}" in AI response`);
+  }
+
+  if (parsed.confidence !== undefined && (typeof parsed.confidence !== 'number' || isNaN(parsed.confidence))) {
+    throw new Error('Invalid "confidence" field in AI response (must be a number)');
+  }
+
+  if (parsed.setup !== undefined && typeof parsed.setup !== 'string') {
+    throw new Error('Invalid "setup" field in AI response (must be a string)');
+  }
+
+  return {
+    signal: upperSignal as SignalDecision,
+    entry: typeof parsed.entry === 'number' && !isNaN(parsed.entry) ? parsed.entry : undefined,
+    stopLoss: typeof parsed.stopLoss === 'number' && !isNaN(parsed.stopLoss) ? parsed.stopLoss : undefined,
+    tp1: typeof parsed.tp1 === 'number' && !isNaN(parsed.tp1) ? parsed.tp1 : undefined,
+    tp2: typeof parsed.tp2 === 'number' && !isNaN(parsed.tp2) ? parsed.tp2 : undefined,
+    confidence: typeof parsed.confidence === 'number' && !isNaN(parsed.confidence) ? parsed.confidence : 75,
+    timeframe: typeof parsed.timeframe === 'string' ? parsed.timeframe : '15M / 5M',
+    setup: typeof parsed.setup === 'string' && parsed.setup.trim().length > 0 ? parsed.setup : 'AI Market Structure Setup',
+    mainReasons: Array.isArray(parsed.mainReasons) ? parsed.mainReasons.map((r: any) => String(r)) : undefined,
+    invalidation: typeof parsed.invalidation === 'string' ? parsed.invalidation : undefined,
+    noTradeReason: typeof parsed.noTradeReason === 'string' ? parsed.noTradeReason : undefined,
+  };
+}
 let lastTestedApiKey: string | null = null;
 let isKeyUnauthenticated: boolean = false;
 let aiCooldownUntil: number = 0;
@@ -14,13 +128,14 @@ let isAiCallRunning: boolean = false;
 let lastAnalyzed5mTimestamp: number = 0;
 let lastAnalyzedPrice: number = 0;
 let lastAnalyzedSignal: TradeSignal | null = null;
+let openRouterClient: OpenAI | null = null;
 
-function getNvidiaClient(): OpenAI | null {
-  const rawKey = process.env.NVIDIA_API_KEY;
+function getOpenRouterClient(): OpenAI | null {
+  const rawKey = process.env.OPENROUTER_API_KEY || process.env.NVIDIA_API_KEY;
   const apiKey = rawKey ? rawKey.trim() : '';
 
   // If no valid key or placeholder or too short
-  if (!apiKey || apiKey === 'MY_NVIDIA_API_KEY' || apiKey.length < 10 || apiKey.includes('YOUR_API_KEY')) {
+  if (!apiKey || apiKey === 'MY_OPENROUTER_API_KEY' || apiKey === 'MY_NVIDIA_API_KEY' || apiKey.length < 10 || apiKey.includes('YOUR_API_KEY')) {
     return null;
   }
 
@@ -28,7 +143,7 @@ function getNvidiaClient(): OpenAI | null {
   if (apiKey !== lastTestedApiKey) {
     lastTestedApiKey = apiKey;
     isKeyUnauthenticated = false;
-    nvidiaClient = null;
+    openRouterClient = null;
   }
 
   // If previously determined as unauthenticated/invalid in this session, return null to use algorithmic screener
@@ -36,11 +151,12 @@ function getNvidiaClient(): OpenAI | null {
     return null;
   }
 
-  if (!nvidiaClient) {
+  if (!openRouterClient) {
     try {
-      nvidiaClient = new OpenAI({
+      const baseURL = process.env.OPENROUTER_BASE_URL || (process.env.OPENROUTER_API_KEY ? 'https://openrouter.ai/api/v1' : (process.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1'));
+      openRouterClient = new OpenAI({
         apiKey,
-        baseURL: process.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1',
+        baseURL,
         timeout: 10000,
         maxRetries: 0,
       });
@@ -49,7 +165,7 @@ function getNvidiaClient(): OpenAI | null {
       return null;
     }
   }
-  return nvidiaClient;
+  return openRouterClient;
 }
 
 export interface MarketAnalysisInput {
@@ -141,7 +257,7 @@ export function algorithmicScreening(input: MarketAnalysisInput): {
 }
 
 /**
- * Main AI Analysis Engine using NVIDIA NIM DeepSeek V4 Pro with Multi-Strategy candidates
+ * Main AI Analysis Engine using OpenRouter Gemini 2.5 Flash Lite with Multi-Strategy candidates
  */
 export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSignal> {
   const { asset, balance, currentPrice, indicators1h, indicators15m, indicators5m, losingStreak } = input;
@@ -168,14 +284,14 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
   const now = Date.now();
   if (now < aiCooldownUntil) {
     const remainingSec = Math.ceil((aiCooldownUntil - now) / 1000);
-    console.log(`[NVIDIA AI] In 429 rate-limit cooldown (${remainingSec}s remaining). Using multi-strategy candidate engine.`);
+    console.log(`[AI Engine] In 429 rate-limit cooldown (${remainingSec}s remaining). Using multi-strategy candidate engine.`);
     const fallback = algorithmicScreening(input);
     return buildFinalSignal(fallback, input);
   }
 
   // 2. Prevent concurrent AI analysis requests
   if (isAiCallRunning) {
-    console.log('[NVIDIA AI] Another AI analysis call is currently running. Using multi-strategy algorithmic engine.');
+    console.log('[AI Engine] Another AI analysis call is currently running. Using multi-strategy algorithmic engine.');
     const fallback = algorithmicScreening(input);
     return buildFinalSignal(fallback, input);
   }
@@ -189,13 +305,13 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
     latest5mTime === lastAnalyzed5mTimestamp &&
     Math.abs(currentPrice - lastAnalyzedPrice) < 0.05
   ) {
-    console.log('[NVIDIA AI] Market state and 5M candle unchanged. Re-using latest signal context.');
+    console.log('[AI Engine] Market state and 5M candle unchanged. Re-using latest signal context.');
     return lastAnalyzedSignal;
   }
 
-  const ai = getNvidiaClient();
+  const ai = getOpenRouterClient();
 
-  // If NVIDIA NIM client is unavailable, use the multi-strategy candidate engine directly
+  // If AI client is unavailable, use the multi-strategy candidate engine directly
   if (!ai) {
     const screened = algorithmicScreening(input);
     return buildFinalSignal(screened, input);
@@ -219,7 +335,7 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
         factors: prospectiveFactors,
       }, Date.now());
     } catch (expErr) {
-      console.warn('[NVIDIA AI] Non-blocking experience lookup error:', expErr);
+      console.warn('[AI Engine] Non-blocking experience lookup error:', expErr);
     }
   }
 
@@ -311,45 +427,77 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
 8. ملاحظة استشارية إضافية: بيانات الخبرة التاريخية (historicalTradingExperience) إن وُجدت هي سياق استشاري تكميلي فقط، ولا يجب أن تلغي أبداً التحليل الفني والهيكلي الحالي للسوق ولا تكون الأساس الوحيد للقرار. يتم تجاهلها تماماً إذا كانت غير متوافقة مع القواعد الفنية وإدارة المخاطر.`;
 
   isAiCallRunning = true;
-  const model = process.env.NVIDIA_MODEL || 'deepseek-ai/deepseek-v4-flash-0731';
+  const model = process.env.OPENROUTER_MODEL || process.env.NVIDIA_MODEL || 'google/gemini-2.5-flash-lite';
   const timeoutMs = 10000;
   const startTime = Date.now();
   try {
     const prompt = `حلل بيانات السوق والمرشحات الاستراتيجية المرفقة للذهب وقدم قرارك النهائي بصيغة JSON:\n${JSON.stringify(technicalContext, null, 2)}`;
 
-    console.log(`[NVIDIA AI] Sending API request with model: ${model}`);
-    const completion = await ai.chat.completions.create({
-      model,
-      messages: [
-        { role: 'system', content: systemInstruction },
-        { role: 'user', content: prompt }
-      ],
-      temperature: 0.2,
-      max_tokens: 1024,
-      response_format: { type: 'json_object' }
-    }, {
-      timeout: timeoutMs,
-    });
-
-    const durationMs = Date.now() - startTime;
-    console.log(`[NVIDIA AI] Request completed in ${durationMs}ms (model: ${model})`);
-
-    const responseContent = completion.choices[0]?.message?.content || '{}';
-    const parsed = JSON.parse(responseContent.trim());
-    if (!parsed.signal) {
-      throw new Error('Invalid response format from NVIDIA DeepSeek model');
+    console.log(`[AI Engine] Sending API request with model: ${model}`);
+    let completion: any;
+    try {
+      completion = await ai.chat.completions.create({
+        model,
+        messages: [
+          { role: 'system', content: systemInstruction },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.2,
+        max_tokens: 1024,
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'xauusd_trade_signal',
+            strict: true,
+            schema: XAUUSD_TRADE_SIGNAL_JSON_SCHEMA
+          }
+        }
+      }, {
+        timeout: timeoutMs,
+      });
+    } catch (schemaReqError: any) {
+      // If a model rejects json_schema mode, attempt clean fallback with standard json_object
+      const errorMsg = String(schemaReqError?.message || '');
+      if (
+        errorMsg.includes('json_schema') ||
+        errorMsg.includes('response_format') ||
+        errorMsg.includes('schema') ||
+        schemaReqError?.status === 400
+      ) {
+        console.warn(`[AI Engine] json_schema rejected (${errorMsg}). Retrying with json_object format...`);
+        completion = await ai.chat.completions.create({
+          model,
+          messages: [
+            { role: 'system', content: systemInstruction },
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.2,
+          max_tokens: 1024,
+          response_format: { type: 'json_object' }
+        }, {
+          timeout: timeoutMs,
+        });
+      } else {
+        throw schemaReqError;
+      }
     }
 
-    const decision = String(parsed.signal).toUpperCase() as SignalDecision;
+    const durationMs = Date.now() - startTime;
+    console.log(`[AI Engine] Request completed in ${durationMs}ms (model: ${model})`);
+
+    const responseContent = completion.choices[0]?.message?.content || '{}';
+    const parsed = parseAndValidateAiResponse(responseContent);
+
+    const decision = parsed.signal;
     const isAiTrade = ['BUY NOW', 'SELL NOW', 'BUY LIMIT', 'SELL LIMIT'].includes(decision);
     let finalSignal: TradeSignal;
 
     if (isAiTrade) {
       const aiDirection: 'BUY' | 'SELL' = decision.includes('BUY') ? 'BUY' : 'SELL';
-      const aiEntry = Number(parsed.entry || currentPrice);
-      const aiSl = Number(parsed.stopLoss || (aiDirection === 'BUY' ? aiEntry - 4.5 : aiEntry + 4.5));
-      const aiTp1 = Number(parsed.tp1 || (aiDirection === 'BUY' ? aiEntry + 7.0 : aiEntry - 7.0));
-      const aiTp2 = parsed.tp2 ? Number(parsed.tp2) : undefined;
+      const aiEntry = Number(parsed.entry !== undefined ? parsed.entry : currentPrice);
+      const aiSl = Number(parsed.stopLoss !== undefined ? parsed.stopLoss : (aiDirection === 'BUY' ? aiEntry - 4.5 : aiEntry + 4.5));
+      const aiTp1 = Number(parsed.tp1 !== undefined ? parsed.tp1 : (aiDirection === 'BUY' ? aiEntry + 7.0 : aiEntry - 7.0));
+      const aiTp2 = parsed.tp2 !== undefined ? Number(parsed.tp2) : undefined;
       const aiSetup = parsed.setup || 'AI Market Structure Setup';
       const aiFamily = inferStrategyFamily(aiSetup);
 
@@ -381,12 +529,12 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
       );
 
       if (!valResult.isValid) {
-        console.warn(`[NVIDIA AI] AI candidate rejected by deterministic technical validation: ${valResult.rejectionReason}`);
+        console.warn(`[AI Engine] AI candidate rejected by deterministic technical validation: ${valResult.rejectionReason}`);
         
         // Prefer highest-quality deterministic candidate that already passed validation
         const validFallback = candidatesContext.selectedCandidate || candidatesContext.allCandidates.find(c => c.direction === 'BUY' || c.direction === 'SELL');
         if (validFallback) {
-          console.log(`[NVIDIA AI] Substituting rejected AI candidate with top qualified deterministic candidate (${validFallback.setupName || 'Qualified Deterministic Setup'})`);
+          console.log(`[AI Engine] Substituting rejected AI candidate with top qualified deterministic candidate (${validFallback.setupName || 'Qualified Deterministic Setup'})`);
           finalSignal = buildFinalSignal({
             decision: validFallback.direction === 'BUY' ? 'BUY NOW' : 'SELL NOW',
             entry: validFallback.entry,
@@ -400,7 +548,7 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
             invalidation: validFallback.invalidation || (validFallback.direction === 'BUY' ? `Close candle below ${validFallback.stopLoss}` : `Close candle above ${validFallback.stopLoss}`),
           }, input);
         } else {
-          console.log(`[NVIDIA AI] No qualified deterministic candidate available. Returning NO TRADE.`);
+          console.log(`[AI Engine] No qualified deterministic candidate available. Returning NO TRADE.`);
           finalSignal = buildFinalSignal({
             decision: 'NO TRADE',
             entry: currentPrice,
@@ -479,14 +627,14 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
 
     if (is429RateLimit) {
       aiCooldownUntil = Date.now() + 3 * 60 * 1000; // 3 minutes cooldown
-      console.warn(`[NVIDIA AI] HTTP 429 Too Many Requests received after ${durationMs}ms (model: ${model}). Activating 3-minute cooldown until ${new Date(aiCooldownUntil).toLocaleTimeString()}. Using multi-strategy candidate engine.`);
+      console.warn(`[AI Engine] HTTP 429 Too Many Requests received after ${durationMs}ms (model: ${model}). Activating 3-minute cooldown until ${new Date(aiCooldownUntil).toLocaleTimeString()}. Using multi-strategy candidate engine.`);
     } else if (isAuthError) {
       isKeyUnauthenticated = true;
-      console.warn(`[NVIDIA AI] NVIDIA API key is unauthenticated after ${durationMs}ms (model: ${model}). Using multi-strategy candidate engine.`);
+      console.warn(`[AI Engine] API key is unauthenticated after ${durationMs}ms (model: ${model}). Using multi-strategy candidate engine.`);
     } else if (isTimeout) {
-      console.warn(`[NVIDIA AI] API request timed out after ${durationMs}ms (timeout limit: ${timeoutMs}ms, model: ${model}). Smoothly falling back to multi-strategy candidate engine.`);
+      console.warn(`[AI Engine] API request timed out after ${durationMs}ms (timeout limit: ${timeoutMs}ms, model: ${model}). Smoothly falling back to multi-strategy candidate engine.`);
     } else {
-      console.warn(`[NVIDIA AI] API note after ${durationMs}ms (model: ${model}), falling back to multi-strategy engine:`, error?.message || error);
+      console.warn(`[AI Engine] API note after ${durationMs}ms (model: ${model}), falling back to multi-strategy engine:`, error?.message || error);
     }
 
     const fallback = algorithmicScreening(input);

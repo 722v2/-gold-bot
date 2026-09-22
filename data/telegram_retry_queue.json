@@ -1,1 +1,38 @@
-[]
+[
+  {
+    "notificationId": "notif_test_1790063895676",
+    "event": "PRODUCTION_VERIFY_SIGNAL",
+    "chatId": "1189889156",
+    "message": "Duplicate attempt for test notification",
+    "status": "PENDING",
+    "attempts": 2,
+    "maxAttempts": 10,
+    "nextRetryAt": 1790063899682,
+    "createdAt": 1790063895676,
+    "lastError": "TELEGRAM_BOT_TOKEN is not configured."
+  },
+  {
+    "notificationId": "notif_test_1790064065668",
+    "event": "PRODUCTION_VERIFY_SIGNAL",
+    "chatId": "1189889156",
+    "message": "Duplicate attempt for test notification",
+    "status": "PENDING",
+    "attempts": 2,
+    "maxAttempts": 10,
+    "nextRetryAt": 1790064069671,
+    "createdAt": 1790064065668,
+    "lastError": "TELEGRAM_BOT_TOKEN is not configured."
+  },
+  {
+    "notificationId": "notif_test_1790064123166",
+    "event": "PRODUCTION_VERIFY_SIGNAL",
+    "chatId": "1189889156",
+    "message": "Duplicate attempt for test notification",
+    "status": "PENDING",
+    "attempts": 2,
+    "maxAttempts": 10,
+    "nextRetryAt": 1790064127167,
+    "createdAt": 1790064123166,
+    "lastError": "TELEGRAM_BOT_TOKEN is not configured."
+  }
+]
