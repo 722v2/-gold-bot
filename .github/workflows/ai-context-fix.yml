@@ -1,0 +1,153 @@
+name: Apply Gemini market-context fix
+
+on:
+  push:
+    paths:
+      - '.github/workflows/ai-context-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Patch geminiTrader.ts
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('server/geminiTrader.ts')
+          text = path.read_text(encoding='utf-8')
+          original = text
+
+          old_context = """    recent5mCandlesSummary: input.recent5mCandles.slice(-5).map(c => ({
+      o: c.open,
+      h: c.high,
+      l: c.low,
+      c: c.close,
+      v: c.volume
+    }))
+  };"""
+
+          new_context = """    // Rich raw multi-timeframe candle context for independent AI market discovery.
+    // The deterministic candidate list remains advisory only; Gemini must be able
+    // to discover setups even when generateMultiStrategyCandidates() returns zero.
+    h1Candles: (input.candles1h || []).slice(-10).map(c => ({
+      t: c.timestamp,
+      o: c.open,
+      h: c.high,
+      l: c.low,
+      c: c.close,
+      v: c.volume
+    })),
+    m15Candles: (input.candles15m || []).slice(-15).map(c => ({
+      t: c.timestamp,
+      o: c.open,
+      h: c.high,
+      l: c.low,
+      c: c.close,
+      v: c.volume
+    })),
+    m5Candles: (input.recent5mCandles || []).slice(-20).map(c => ({
+      t: c.timestamp,
+      o: c.open,
+      h: c.high,
+      l: c.low,
+      c: c.close,
+      v: c.volume
+    })),
+    m1Candles: (input.recent1mCandles || []).slice(-10).map(c => ({
+      t: c.timestamp,
+      o: c.open,
+      h: c.high,
+      l: c.low,
+      c: c.close,
+      v: c.volume
+    }))
+  };"""
+
+          if old_context not in text:
+              raise SystemExit('Expected technicalContext candle block was not found; refusing to modify file.')
+          text = text.replace(old_context, new_context, 1)
+
+          new_system = r'''const systemInstruction = `أنت AI Trading Agent فائق الذكاء ومحترف للغاية متخصص في تداول الذهب XAU/USD بنظام Scalping على حساب صغير (يبدأ من $10).
+القواعد الصارمة لمحرك التداول والأهداف الربحية:
+1. الهدف الأساسي: حماية رأس المال واختيار صفقات نوعية عالية الجودة بناءً على حالة السوق (Market Regime)، واستراتيجيات الهيكل (Structure)، والسيولة (Liquidity Sweeps)، وOrder Blocks، وFVG، وFibonacci OTE، واستمرار الترند (Trend Continuation)، واستراتيجيات النطاق (Range SFP Reversal & Breakout Expansion).
+2. تقييم بيئة السوق (Market Regime Awareness):
+   - STRONG_UPTREND / STRONG_DOWNTREND: ابحث عن فرص استمرار الترند مع التصحيح (Pullbacks).
+   - إذا كان السعر ممتداً بشكل مفرط (isOverextended=true)، لا تطارد السعر بالدخول المباشر؛ بل اختر انتظار التصحيح السطحي أو اعطِ قرار NO TRADE مؤقت لحين انتهاء التمدد.
+   - NORMAL_RANGE / VOLATILE_RANGE: النطاق العرضي لا يعني تلقائياً NO TRADE؛ ابحث عن سحب السيولة عند أطراف الرينج (Range High/Low sweeps & SFP) أو الكسر التوسعي الحقيقي (Breakout Expansion)، وتجنب الدخول العشوائي في منتصف النطاق (Equilibrium).
+   - TRANSITION: يتطلب تأكيد كسر الهيكل واستقراره قبل اتخاذ اتجاه جديد.
+   - UNCLEAR: لا توجد ميزة إحصائية واضحة؛ اختر NO TRADE لحماية رأس المال.
+3. القرارات المسموحة فقط: "BUY NOW" أو "SELL NOW" أو "BUY LIMIT" أو "SELL LIMIT" أو "NO TRADE". قرار واحد حصرياً.
+4. اكتشاف الفرص بشكل مستقل (Autonomous Market Discovery):
+   - حلل بيانات الشموع الخام H1 وM15 وM5 وM1 بنفسك، ولا تعتمد على topCandidates لاكتشاف الفرص.
+   - topCandidates هي اقتراحات استشارية فقط من المحرك الحتمي. إذا كانت فارغة أو ناقصة أو متعارضة مع حركة السعر الحالية، تجاهلها وابحث بنفسك عن أفضل Setup صالح.
+   - لا تعتبر detectedCandidatesCount=0 دليلاً على عدم وجود فرصة. هذا يعني فقط أن المرشح الحتمي لم يجد فرصة وفق فلاتره الخاصة.
+   - ابنِ Market Structure من تسلسل الشموع نفسه: swing highs/lows، BOS، CHOCH، displacement، liquidity pools، equal highs/lows، sweeps/SFP، Order Blocks، FVG، premium/discount، والدعم والمقاومة.
+   - قارن H1 مع M15 لتحديد السياق والاتجاه، ثم استخدم M5 وM1 لتحسين نقطة الدخول والإبطال. لا تعتمد على مؤشر منفرد أو على ملخصات المؤشرات فقط.
+   - لا تطارد breakout متأخراً. الكسر القوي يمكن أن يكون صالحاً فقط إذا كان له سياق هيكلي ومسار منطقي، وإلا فانتظر retest أو تعامل معه كسحب سيولة/مصيدة.
+5. حساب وقف الخسارة (SL):
+   - للذهب: 1 point = 0.10$ حركة سعر (abs(Entry - SL) / 0.10).
+   - نطاق الـStop Loss الفني المسموح به هو من 35 إلى 65 نقطة.
+   - اربط SL بإبطال محلي حقيقي قريب من نقطة الدخول: حدود Order Block، حافة FVG، swing محلي، أو مستوى هيكلي M5/M15.
+   - ممنوع استخدام swing H1 بعيد أو مستوى ماكرو فقط كـSL إذا جعله يتجاوز 65 نقطة.
+   - إذا لم يوجد إبطال فني محلي صالح داخل 35–65 نقطة، اختر NO TRADE بدلاً من اختراع SL واسع أو ضيق.
+6. سياسة الأهداف الهيكلية الصارمة (Market Structure Target Policy):
+   - الهدف الأول (TP1) هو أقرب هدف هيكلي حقيقي وملموس في السوق (Nearest genuine market-structure objective مثل Swings / S/R / Liquidity Pools / Order Blocks / FVG).
+   - نسبة العائد إلى المخاطرة (R:R) هي مقياس ناتج (Output metric) وليست معياراً تعسفياً لتوليد الأهداف.
+   - الهدف الهيكلي الحقيقي الذي يحقق نسبة عائد طبيعية حول 1.0R–1.4R يُعتبر صالحاً تماماً ومقبولاً إذا كانت جودة النموذج، والدخول، ووقف الخسارة، وهيكل السوق، وشروط التنفيذ قوية ومكتملة.
+   - يُحظر تماماً على الذكاء الاصطناعي مدّ أو إبعاد الهدف الأول (TP1) بعيداً عن الهيكل الحقيقي لمجرد تحسين نسبة R:R حسابياً بشكل مصطنع.
+   - الهدف الثاني (TP2): هو الهدف الهيكلي الحقيقي التالي بعد TP1 (Next genuine structural objective). إذا لم يوجد هدف هيكلي ثانٍ صالح وواضح في السوق، لا تخترع هدفاً رياضياً ضخماً ولا تضع TP2 مساوياً لـ TP1، بل اتركه 0.
+   - إذا تم توفير مرشحات استراتيجية في topCandidates، قم بتقييمها كاقتراحات فقط، لكن لا تجعل وجودها أو غيابها شرطاً لاكتشاف الصفقة.
+7. الثقة (Confidence): من 70 إلى 96 للصفقات الصالحة.
+8. في حال عدم وجود فرصة حقيقية أو تذبذب في منتصف الرينج، اختر "NO TRADE" واذكر السبب بالتفصيل.
+9. ملاحظة استشارية إضافية: بيانات الخبرة التاريخية (historicalTradingExperience) إن وُجدت هي سياق استشاري تكميلي فقط، ولا يجب أن تلغي أبداً التحليل الفني والهيكلي الحالي للسوق ولا تكون الأساس الوحيد للقرار. يتم تجاهلها تماماً إذا كانت غير متوافقة مع القواعد الفنية وإدارة المخاطر.
+10. لا تغيّر أي قاعدة من قواعد المخاطر الحتمية في النظام. قرارك AI proposal فقط وسيخضع بعد ذلك للتحقق البرمجي الصارم؛ لا تحاول التحايل على حدود SL أو R:R أو Anti-Chase أو POI.`;'''
+
+          pattern = re.compile(r"const systemInstruction = `.*?`;\n\n  isAiCallRunning = true;", re.S)
+          replacement = new_system + "\n\n  isAiCallRunning = true;"
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit('Expected systemInstruction block was not found exactly once; refusing to modify file.')
+
+          old_prompt = "const prompt = `حلل بيانات السوق والمرشحات الاستراتيجية المرفقة للذهب وقدم قرارك النهائي بصيغة JSON:\\n${JSON.stringify(technicalContext, null, 2)}`;"
+          new_prompt = "const prompt = `حلل سوق XAU/USD بشكل مستقل من بيانات الشموع الخام متعددة الأطر والمؤشرات المرفقة، ثم اكتشف أفضل فرصة Scalping حالية بنفسك. topCandidates مجرد اقتراحات استشارية وليست شرطاً لوجود الصفقة؛ إذا كانت فارغة فابحث مباشرة في H1/M15/M5/M1. لا تصدر صفقة إلا إذا كان لها Entry منطقي، إبطال محلي واضح، SL بين 35 و65 نقطة، وهدف هيكلي حقيقي. إذا لم توجد فرصة صالحة فاختر NO TRADE. أعد القرار النهائي بصيغة JSON فقط:\\n${JSON.stringify(technicalContext, null, 2)}`;"
+          if old_prompt not in text:
+              raise SystemExit('Expected AI prompt was not found; refusing to modify file.')
+          text = text.replace(old_prompt, new_prompt, 1)
+
+          path.write_text(text, encoding='utf-8')
+          print(f'Patched {path}: {len(original)} -> {len(text)} chars')
+          PY
+
+      - name: Verify TypeScript
+        run: npm run lint
+
+      - name: Verify production build
+        run: npm run build
+
+      - name: Remove temporary workflow and commit verified change
+        run: |
+          rm -f .github/workflows/ai-context-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server/geminiTrader.ts .github/workflows/ai-context-fix.yml
+          git commit -m "fix: let Gemini discover setups from full market context"
+          git push origin HEAD:main
