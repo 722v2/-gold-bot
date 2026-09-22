@@ -2249,6 +2249,156 @@ export function validateTradeSignalCandidate(
     }
   }
 
+  // 5.5 Trend Continuation Quality Gate (Rules 1-5)
+  const setupUpper = (setupName || '').toUpperCase();
+  const isTrendContinuation =
+    (family as string) === 'TREND_CONTINUATION' ||
+    setupUpper.includes('TREND CONTINUATION') ||
+    setupUpper.includes('PULLBACK') ||
+    setupUpper.includes('TREND S1');
+
+  if (isTrendContinuation) {
+    const htfFactors = (cand as any).factorSnapshot?.factors || (cand as any).factorSnapshot || {};
+
+    // RULE 3: Contradictory OB/FVG + Location Hard Rejection
+    if (direction === 'SELL') {
+      const isDiscount =
+        htfFactors.zone === 'DISCOUNT' ||
+        indicators15m.premiumDiscountZone === 'DISCOUNT' ||
+        (currentPrice < (indicators15m.swingLow + indicators15m.swingHigh) / 2);
+      const isBullishOB =
+        htfFactors.orderBlock === 'BULLISH_OB' ||
+        indicators15m.orderBlock?.type === 'BULLISH';
+      const isBullishFVG =
+        htfFactors.fvg === 'BULLISH_FVG' ||
+        indicators15m.fvg?.type === 'BULLISH';
+
+      if (isDiscount && isBullishOB && isBullishFVG) {
+        return {
+          isValid: false,
+          rejectionReason:
+            'CONTRADICTORY_BULLISH_CONTEXT_FOR_SELL_CONTINUATION: Cannot enter SELL continuation in DISCOUNT zone with opposing BULLISH_OB and BULLISH_FVG',
+        };
+      }
+    } else if (direction === 'BUY') {
+      const isPremium =
+        htfFactors.zone === 'PREMIUM' ||
+        indicators15m.premiumDiscountZone === 'PREMIUM' ||
+        (currentPrice > (indicators15m.swingLow + indicators15m.swingHigh) / 2);
+      const isBearishOB =
+        htfFactors.orderBlock === 'BEARISH_OB' ||
+        indicators15m.orderBlock?.type === 'BEARISH';
+      const isBearishFVG =
+        htfFactors.fvg === 'BEARISH_FVG' ||
+        indicators15m.fvg?.type === 'BEARISH';
+
+      if (isPremium && isBearishOB && isBearishFVG) {
+        return {
+          isValid: false,
+          rejectionReason:
+            'CONTRADICTORY_BEARISH_CONTEXT_FOR_BUY_CONTINUATION: Cannot enter BUY continuation in PREMIUM zone with opposing BEARISH_OB and BEARISH_FVG',
+        };
+      }
+    }
+
+    // RULE 2: Opposing H1 Structure Rejection
+    const htf1h = htfFactors.htfStructure || indicators1h.structure;
+    const isH1StrongBullish =
+      indicators1h.marketRegime === 'STRONG_UPTREND' ||
+      (indicators1h.structure === 'BULLISH' && indicators1h.trendStructure === 'HH_HL') ||
+      htf1h === 'UPTREND';
+    const isH1StrongBearish =
+      indicators1h.marketRegime === 'STRONG_DOWNTREND' ||
+      (indicators1h.structure === 'BEARISH' && indicators1h.trendStructure === 'LH_LL') ||
+      htf1h === 'DOWNTREND';
+
+    if (direction === 'SELL' && isH1StrongBullish) {
+      const isConfirmedReversal = hasConfirmedReversalStructure(
+        'SELL',
+        indicators15m,
+        indicators5m,
+        candles15m || [],
+        candles5m || [],
+        indicators15m.atr14
+      );
+      if (!isConfirmedReversal) {
+        return {
+          isValid: false,
+          rejectionReason: 'HTF_CONTRADICTION: 1H structure is strongly bullish and contradicts SELL trend continuation setup',
+        };
+      }
+    } else if (direction === 'BUY' && isH1StrongBearish) {
+      const isConfirmedReversal = hasConfirmedReversalStructure(
+        'BUY',
+        indicators15m,
+        indicators5m,
+        candles15m || [],
+        candles5m || [],
+        indicators15m.atr14
+      );
+      if (!isConfirmedReversal) {
+        return {
+          isValid: false,
+          rejectionReason: 'HTF_CONTRADICTION: 1H structure is strongly bearish and contradicts BUY trend continuation setup',
+        };
+      }
+    }
+
+    // RULE 1 & RULE 5: H1 Ranging Quality Requirements & Min R:R
+    const isH1Ranging =
+      htf1h === 'RANGING' ||
+      (indicators1h.marketRegime as string) === 'RANGING' ||
+      indicators1h.marketRegime === 'NORMAL_RANGE' ||
+      indicators1h.marketRegime === 'UNCLEAR' ||
+      indicators1h.structure === 'RANGING' ||
+      (!isH1StrongBullish && !isH1StrongBearish);
+
+    if (isH1Ranging) {
+      // Rule 5: Min R:R >= 1.25 when H1 is RANGING
+      if (rrToTp1 < 1.25 - 0.0001) {
+        return {
+          isValid: false,
+          rejectionReason: `TREND_CONTINUATION_HTF_QUALITY_INSUFFICIENT: H1 is RANGING requiring minimum R:R >= 1.25, but candidate R:R is ${rrToTp1.toFixed(2)}R`,
+        };
+      }
+
+      // Rule 4: Require explicit closed M5 rejection trigger
+      const partition5m = partition5mCandles(candles5m || []);
+      const lastClosed5m = partition5m.lastClosedCandle;
+      if (!partition5m.isValid || !lastClosed5m) {
+        return {
+          isValid: false,
+          rejectionReason: 'TREND_CONTINUATION_HTF_QUALITY_INSUFFICIENT: Cannot verify closed 5M candle for trend continuation trigger',
+        };
+      }
+
+      const body = Math.abs(lastClosed5m.close - lastClosed5m.open);
+      const totalRange = Math.max(0.01, lastClosed5m.high - lastClosed5m.low);
+      const upperWick = lastClosed5m.high - Math.max(lastClosed5m.open, lastClosed5m.close);
+      const lowerWick = Math.min(lastClosed5m.open, lastClosed5m.close) - lastClosed5m.low;
+      const isTopRejection = upperWick > body * 1.3 && upperWick > totalRange * 0.4;
+      const isBottomRejection = lowerWick > body * 1.3 && lowerWick > totalRange * 0.4;
+      const isBear = lastClosed5m.close < lastClosed5m.open;
+      const isBull = lastClosed5m.close > lastClosed5m.open;
+
+      if (direction === 'SELL') {
+        if (!isTopRejection && !isBear) {
+          return {
+            isValid: false,
+            rejectionReason: 'TREND_CONTINUATION_HTF_QUALITY_INSUFFICIENT: H1 is RANGING requiring explicit closed M5 bearish rejection trigger',
+          };
+        }
+      } else if (direction === 'BUY') {
+        if (!isBottomRejection && !isBull) {
+          return {
+            isValid: false,
+            rejectionReason: 'TREND_CONTINUATION_HTF_QUALITY_INSUFFICIENT: H1 is RANGING requiring explicit closed M5 bullish rejection trigger',
+          };
+        }
+      }
+    }
+  }
+
   // 6. TP Runway Assessment
   const runwayAssessment = assessTpPathRunway(
     direction,

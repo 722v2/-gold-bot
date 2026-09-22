@@ -295,5 +295,55 @@
     "nextRetryAt": 1790082521514,
     "createdAt": 1790082519472,
     "lastError": "Historical event suppressed: exceeded actionability window"
+  },
+  {
+    "notificationId": "mgmt_tp1_sig_1790087531239_4m556",
+    "tradeId": "sig_1790087531239_4m556",
+    "event": "PARTIAL_CLOSE_TP1",
+    "chatId": "1189889156",
+    "message": "🎯 <b>إدارة الصفقة — TP1 تحقق</b>\n\n🔴 <b>SELL XAU/USD</b>\n\nEntry: $4328.99\nCurrent: $4320.01\nFloating P&L: +$8.98\n\n✅ <b>ماذا حدث؟</b>\nالسعر وصل إلى TP1.\n\n📌 <b>القرار:</b>\n• أغلق <b>50%</b> من الصفقة لجني الربح.\n• اترك <b>50%</b> المتبقية باتجاه TP2.\n• حرّك SL إلى $4328.49 لحماية الصفقة.\n\n🎯 <b>TP2:</b>\n$4291.49\n\n⏱ <i>الوقت: ٢:٤١:٣١ م | نظام الإدارة المتقدمة Phase 4</i>",
+    "status": "SUPPRESSED",
+    "attempts": 1,
+    "maxAttempts": 10,
+    "nextRetryAt": 1790088093791,
+    "createdAt": 1790088091760,
+    "lastError": "Historical event suppressed: exceeded actionability window"
+  },
+  {
+    "notificationId": "signal_sig_1790088911700_6d285",
+    "tradeId": "sig_1790088911700_6d285",
+    "event": "SIGNAL_NEW",
+    "chatId": "1189889156",
+    "message": "<b>🔔 إشارة تداول جديدة من Gold AI Scanner!</b>\n\n🔴 <b>الصفقة المقترحة:</b> بيع الآن (SELL NOW)\n📊 <b>الأصل:</b> XAU/USD\n📈 <b>سعر الدخول:</b> $4325.19\n🛑 <b>وقف الخسارة (SL):</b> $4329.40 (42.1 نقطة)\n🎯 <b>الهدف الأول (TP1):</b> $4314.92\n🎯 <b>الهدف الثاني (TP2):</b> $4291.49\n⚖️ <b>المخاطرة:</b> 16.84% ($4.21)\n🧠 <b>نسبة الثقة:</b> 91%\n🛠️ <b>النموذج الفني:</b> Horizontal Support Breakout &amp; Retest\n\n⏱ <i>الوقت: ٢:٥٥:١١ م</i>",
+    "replyMarkup": {
+      "inline_keyboard": [
+        [
+          {
+            "text": "🟢 دخلت الصفقة (ENTERED)",
+            "callback_data": "entered:sig_1790088911700_6d285"
+          },
+          {
+            "text": "⚪ لم أدخل (NOT ENTERED)",
+            "callback_data": "not_entered:sig_1790088911700_6d285"
+          }
+        ],
+        [
+          {
+            "text": "✅ WIN",
+            "callback_data": "win:sig_1790088911700_6d285"
+          },
+          {
+            "text": "❌ LOSS",
+            "callback_data": "loss:sig_1790088911700_6d285"
+          }
+        ]
+      ]
+    },
+    "status": "SUPPRESSED",
+    "attempts": 1,
+    "maxAttempts": 10,
+    "nextRetryAt": 1790088913747,
+    "createdAt": 1790088911700,
+    "lastError": "Historical event suppressed: exceeded actionability window"
   }
 ]

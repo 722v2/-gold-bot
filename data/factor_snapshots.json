@@ -61,5 +61,26 @@
     },
     "combinationKey": "direction=BUY|fvg=BULLISH_FVG|htfStructure=DOWNTREND|liquidity=SWEEP_SELL_SIDE|m15Structure=RANGING|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Horizontal Resistance Breakout & Retest|volatility=HIGH|zone=PREMIUM",
     "createdAt": 1790082519472
+  },
+  "sig_1790088911700_6d285": {
+    "signalId": "sig_1790088911700_6d285",
+    "setupFamily": "Horizontal Support Breakout & Retest",
+    "direction": "SELL",
+    "factors": {
+      "setupFamily": "Horizontal Support Breakout & Retest",
+      "direction": "SELL",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND",
+      "liquidity": "NONE",
+      "orderBlock": "BULLISH_OB",
+      "fvg": "BULLISH_FVG",
+      "zone": "EQUILIBRIUM",
+      "rsi": "NEUTRAL",
+      "macd": "BEARISH",
+      "volatility": "HIGH"
+    },
+    "combinationKey": "direction=SELL|fvg=BULLISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Horizontal Support Breakout & Retest|volatility=HIGH|zone=EQUILIBRIUM",
+    "createdAt": 1790088911700
   }
 }

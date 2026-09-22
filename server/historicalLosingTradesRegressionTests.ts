@@ -123,9 +123,9 @@ console.log('\n[TEST 2] Trade #10022 Audit: Bare Resistance Rejection Counter-Tr
     stopLoss: 4336.21,
     tp1: 4309.02,
     setupName: 'Bare Resistance Rejection',
-    strategyFamily: 'S/R_REJECTION' as const,
+    strategyFamily: 'BARE_SR' as any,
     poiPrice: 4335.41,
-    poiMeta: { top: 4335.41, bottom: 4334.0, poiPrice: 4335.41, type: 'RESISTANCE' as const },
+    poiMeta: { top: 4335.41, bottom: 4334.0, poiPrice: 4335.41, type: 'SWING_LEVEL' as const },
   };
 
   const validationCT = validateTradeSignalCandidate(sellCandidateCounterTrend, {
@@ -194,7 +194,7 @@ console.log('\n[TEST 4] Trade #10020 Audit: Trend Continuation R:R Safety');
     macd: { macd: 0.1, signal: 0.1, histogram: 0.0 }, atr14: 4.5,
     bollingerBands: { upper: 4355, middle: 4340, lower: 4325 },
     swingHigh: 4355, swingLow: 4325, support: 4325, resistance: 4355,
-    structure: 'NEUTRAL', marketRegime: 'NORMAL_RANGE', trendStructure: 'RANGING', structureShift: 'None',
+    structure: 'RANGING', marketRegime: 'NORMAL_RANGE', trendStructure: 'RANGING', structureShift: 'None',
   };
   const ind15m = { ...ind1h, atr14: 3.5 };
   const ind5m = { ...ind15m, atr14: 2.0 };
@@ -206,9 +206,9 @@ console.log('\n[TEST 4] Trade #10020 Audit: Trend Continuation R:R Safety');
     stopLoss: 4349.19, // 4.51 pts SL
     tp1: 4342.00,      // 2.68 pts TP1 -> 0.59R
     setupName: 'Bearish Trend Continuation (EMA/VWAP Pullback)',
-    strategyFamily: 'TREND_CONTINUATION' as const,
+    strategyFamily: 'MARKET_STRUCTURE' as any,
     poiPrice: 4345.0,
-    poiMeta: { top: 4346.0, bottom: 4344.0, poiPrice: 4345.0, type: 'EMA_VWAP' as const },
+    poiMeta: { top: 4346.0, bottom: 4344.0, poiPrice: 4345.0, type: 'ORDER_BLOCK' as const },
   };
 
   const validationLowRr = validateTradeSignalCandidate(lowRrCandidate, {
@@ -251,10 +251,10 @@ console.log('\n[TEST 5] AI Confidence Bypass Immunity');
     stopLoss: 4334.5,
     tp1: 4315.0,
     setupName: 'AI Model Double Top S/R Rejection',
-    strategyFamily: 'AI_DEEP_SEEK' as const,
+    strategyFamily: 'MARKET_STRUCTURE' as any,
     confidence: 95, // 95% AI confidence!
     poiPrice: 4332.0,
-    poiMeta: { top: 4333.0, bottom: 4331.0, poiPrice: 4332.0, type: 'RESISTANCE' as const },
+    poiMeta: { top: 4333.0, bottom: 4331.0, poiPrice: 4332.0, type: 'SWING_LEVEL' as const },
   };
 
   const validation = validateTradeSignalCandidate(highConfidenceAiCandidate, {

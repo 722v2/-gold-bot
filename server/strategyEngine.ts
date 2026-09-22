@@ -995,7 +995,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       Math.abs(currentPrice - indicators5m.vwap) <= atr5m * 1.5 ||
       currentPrice <= indicators5m.ema20 + atr5m * 1.0;
 
-    if (isPullbackToEma && (c5mMetrics.isBottomRejection || c5mMetrics.isBull || currentPrice >= indicators5m.ema20)) {
+    if (isPullbackToEma && (c5mMetrics.isBottomRejection || c5mMetrics.isBull)) {
       const pullbackSl = Math.min(last5m.low, prev5m.low);
       const cand = evaluateCandidate(
         'MARKET_STRUCTURE',
@@ -1025,7 +1025,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       Math.abs(currentPrice - indicators5m.vwap) <= atr5m * 1.5 ||
       currentPrice >= indicators5m.ema20 - atr5m * 1.0;
 
-    if (isPullbackToEma && (c5mMetrics.isTopRejection || c5mMetrics.isBear || currentPrice <= indicators5m.ema20)) {
+    if (isPullbackToEma && (c5mMetrics.isTopRejection || c5mMetrics.isBear)) {
       const pullbackSl = Math.max(last5m.high, prev5m.high);
       const cand = evaluateCandidate(
         'MARKET_STRUCTURE',

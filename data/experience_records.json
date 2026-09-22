@@ -511,5 +511,57 @@
     "realizedPnl": -5,
     "setupFamily": "Bearish Trend Continuation (EMA/VWAP Pullback)",
     "combinationKey": "direction=SELL|fvg=BULLISH_FVG|htfStructure=RANGING|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Bearish Trend Continuation (EMA/VWAP Pullback)|volatility=HIGH|zone=DISCOUNT"
+  },
+  {
+    "id": "exp_sig_1790087531239_4m556_1790088125700",
+    "rr": 1.76,
+    "factors": {
+      "fvg": "BULLISH_FVG",
+      "rsi": "NEUTRAL",
+      "macd": "BEARISH",
+      "zone": "PREMIUM",
+      "direction": "SELL",
+      "liquidity": "NONE",
+      "orderBlock": "BULLISH_OB",
+      "volatility": "HIGH",
+      "setupFamily": "Bearish Engulfing Reversal at Key Structure",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND"
+    },
+    "outcome": "WIN",
+    "tradeId": "sig_1790087531239_4m556",
+    "signalId": "sig_1790087531239_4m556",
+    "direction": "SELL",
+    "completedAt": 1790088125700,
+    "realizedPnl": 8.67,
+    "setupFamily": "Bearish Engulfing Reversal at Key Structure",
+    "combinationKey": "direction=SELL|fvg=BULLISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Bearish Engulfing Reversal at Key Structure|volatility=HIGH|zone=PREMIUM"
+  },
+  {
+    "id": "exp_sig_1790089822280_m8m6b_1790090356688",
+    "rr": 1.72,
+    "factors": {
+      "fvg": "BULLISH_FVG",
+      "rsi": "NEUTRAL",
+      "macd": "BULLISH",
+      "zone": "PREMIUM",
+      "direction": "SELL",
+      "liquidity": "NONE",
+      "orderBlock": "BULLISH_OB",
+      "volatility": "HIGH",
+      "setupFamily": "Double Top Reversal (Confirmed M-Formation)",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND"
+    },
+    "outcome": "LOSS",
+    "tradeId": "sig_1790089822280_m8m6b",
+    "signalId": "sig_1790089822280_m8m6b",
+    "direction": "SELL",
+    "completedAt": 1790090356688,
+    "realizedPnl": -1,
+    "setupFamily": "Double Top Reversal (Confirmed M-Formation)",
+    "combinationKey": "direction=SELL|fvg=BULLISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Double Top Reversal (Confirmed M-Formation)|volatility=HIGH|zone=PREMIUM"
   }
 ]
