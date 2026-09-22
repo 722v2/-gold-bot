@@ -555,8 +555,12 @@ export function assessEntryTimingAndAntiChase(
   let reason = 'Optimal entry proximity to structural POI';
 
   // Strategy-aware tolerances
-  const isBreakout = strategyFamily === 'RANGE_BREAKOUT_EXPANSION';
-  const isSfp = strategyFamily === 'RANGE_SFP_REVERSAL' || strategyFamily === 'LIQUIDITY_SWEEP';
+  const isBreakout = strategyFamily === 'RANGE_BREAKOUT_EXPANSION' || strategyFamily === 'BREAK_AND_RETEST';
+  const isSfp =
+    strategyFamily === 'RANGE_SFP_REVERSAL' ||
+    strategyFamily === 'LIQUIDITY_SWEEP' ||
+    strategyFamily === 'DOUBLE_TOP_BOTTOM' ||
+    strategyFamily === 'BARE_SR';
 
   // Check for late displacement entry:
   // A strong displacement candle/move confirmed direction, but price has already expanded away from the POI without a pullback
@@ -2171,7 +2175,19 @@ export function validateTradeSignalCandidate(
     effSpread
   );
 
-  if (timingAssessment.timing === 'CHASED' || (timingAssessment.isChasing && timingAssessment.distanceFromPoiAtr > 1.2)) {
+  const isBreakoutOrReversal =
+    family === 'RANGE_BREAKOUT_EXPANSION' ||
+    family === 'BREAK_AND_RETEST' ||
+    family === 'RANGE_SFP_REVERSAL' ||
+    family === 'LIQUIDITY_SWEEP' ||
+    family === 'DOUBLE_TOP_BOTTOM' ||
+    family === 'BARE_SR';
+
+  const isDisqualifiedChase =
+    timingAssessment.timing === 'CHASED' ||
+    (!isBreakoutOrReversal && timingAssessment.isChasing && timingAssessment.distanceFromPoiAtr > 1.8);
+
+  if (isDisqualifiedChase) {
     return {
       isValid: false,
       rejectionReason: `CHASED_ENTRY: Entry is overextended beyond acceptable POI tolerance (${timingAssessment.reason})`,

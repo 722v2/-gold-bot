@@ -522,6 +522,7 @@ export type TradeManagementState =
   | 'PROTECT_PROFIT'
   | 'WEAKENING'
   | 'REVERSAL_WATCH'
+  | 'REVERSAL_DEFENSE'
   | 'INVALIDATED'
   | 'EXIT_RECOMMENDED'
   | 'EARLY_EXIT'

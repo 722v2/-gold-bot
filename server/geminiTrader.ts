@@ -122,42 +122,84 @@ export function parseAndValidateAiResponse(rawContent: any): {
     noTradeReason: typeof parsed.noTradeReason === 'string' ? parsed.noTradeReason : undefined,
   };
 }
-let lastTestedApiKey: string | null = null;
+export interface AiProviderConfig {
+  provider: 'openrouter' | 'nvidia' | 'none';
+  apiKey: string;
+  baseURL: string;
+  model: string;
+}
+
+export function resolveAiProviderConfig(): AiProviderConfig {
+  const isKeyValid = (key?: string | null): boolean => {
+    if (!key) return false;
+    const trimmed = key.trim();
+    return (
+      trimmed.length >= 10 &&
+      trimmed !== 'MY_OPENROUTER_API_KEY' &&
+      trimmed !== 'MY_NVIDIA_API_KEY' &&
+      !trimmed.includes('YOUR_API_KEY')
+    );
+  };
+
+  const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
+  if (isKeyValid(openRouterKey)) {
+    return {
+      provider: 'openrouter',
+      apiKey: openRouterKey,
+      baseURL: (process.env.OPENROUTER_BASE_URL || '').trim() || 'https://openrouter.ai/api/v1',
+      model: (process.env.OPENROUTER_MODEL || '').trim() || 'google/gemini-2.5-flash-lite',
+    };
+  }
+
+  const nvidiaKey = (process.env.NVIDIA_API_KEY || '').trim();
+  if (isKeyValid(nvidiaKey)) {
+    return {
+      provider: 'nvidia',
+      apiKey: nvidiaKey,
+      baseURL: (process.env.NVIDIA_BASE_URL || '').trim() || 'https://integrate.api.nvidia.com/v1',
+      model: (process.env.NVIDIA_MODEL || '').trim() || 'deepseek-ai/deepseek-v4-flash-0731',
+    };
+  }
+
+  return {
+    provider: 'none',
+    apiKey: '',
+    baseURL: '',
+    model: '',
+  };
+}
+
+let lastTestedProviderKey: string | null = null;
 let isKeyUnauthenticated: boolean = false;
 let aiCooldownUntil: number = 0;
 let isAiCallRunning: boolean = false;
 let lastAnalyzed5mTimestamp: number = 0;
 let lastAnalyzedPrice: number = 0;
 let lastAnalyzedSignal: TradeSignal | null = null;
-let openRouterClient: OpenAI | null = null;
+let activeAiClientInstance: OpenAI | null = null;
 
-export function getOpenRouterClient(): OpenAI | null {
-  const rawKey = process.env.OPENROUTER_API_KEY || process.env.NVIDIA_API_KEY;
-  const apiKey = rawKey ? rawKey.trim() : '';
-
-  // If no valid key or placeholder or too short
-  if (!apiKey || apiKey === 'MY_OPENROUTER_API_KEY' || apiKey === 'MY_NVIDIA_API_KEY' || apiKey.length < 10 || apiKey.includes('YOUR_API_KEY')) {
+export function getActiveAiClient(): { client: OpenAI; config: AiProviderConfig } | null {
+  const config = resolveAiProviderConfig();
+  if (config.provider === 'none' || !config.apiKey) {
     return null;
   }
 
-  // If key changed from previous, reset authentication status
-  if (apiKey !== lastTestedApiKey) {
-    lastTestedApiKey = apiKey;
+  const cacheKey = `${config.provider}:${config.apiKey}:${config.baseURL}`;
+  if (cacheKey !== lastTestedProviderKey) {
+    lastTestedProviderKey = cacheKey;
     isKeyUnauthenticated = false;
-    openRouterClient = null;
+    activeAiClientInstance = null;
   }
 
-  // If previously determined as unauthenticated/invalid in this session, return null to use algorithmic screener
   if (isKeyUnauthenticated) {
     return null;
   }
 
-  if (!openRouterClient) {
+  if (!activeAiClientInstance) {
     try {
-      const baseURL = process.env.OPENROUTER_BASE_URL || (process.env.OPENROUTER_API_KEY ? 'https://openrouter.ai/api/v1' : (process.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1'));
-      openRouterClient = new OpenAI({
-        apiKey,
-        baseURL,
+      activeAiClientInstance = new OpenAI({
+        apiKey: config.apiKey,
+        baseURL: config.baseURL,
         timeout: 10000,
         maxRetries: 0,
       });
@@ -166,7 +208,13 @@ export function getOpenRouterClient(): OpenAI | null {
       return null;
     }
   }
-  return openRouterClient;
+
+  return { client: activeAiClientInstance, config };
+}
+
+export function getOpenRouterClient(): OpenAI | null {
+  const active = getActiveAiClient();
+  return active ? active.client : null;
 }
 
 export interface MarketAnalysisInput {
@@ -310,13 +358,14 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
     return lastAnalyzedSignal;
   }
 
-  const ai = getOpenRouterClient();
+  const activeAi = getActiveAiClient();
 
   // If AI client is unavailable, use the multi-strategy candidate engine directly
-  if (!ai) {
+  if (!activeAi) {
     const screened = algorithmicScreening(input);
     return buildFinalSignal(screened, input);
   }
+  const { client: ai, config: activeConfig } = activeAi;
 
   // Look up relevant historical experience for top candidate if available
   let historicalExperienceContext: any = null;
@@ -524,13 +573,13 @@ export async function runAIAnalysis(input: MarketAnalysisInput): Promise<TradeSi
    - في حال عدم وجود فرصة حقيقية أو تذبذب في منتصف الرينج، اختر "NO TRADE" واذكر السبب بالتفصيل في noTradeReason.`;
 
   isAiCallRunning = true;
-  const model = process.env.OPENROUTER_MODEL || process.env.NVIDIA_MODEL || 'google/gemini-2.5-flash-lite';
+  const model = activeConfig.model;
   const timeoutMs = 10000;
   const startTime = Date.now();
   try {
     const prompt = `حلل بيانات السوق المتعددة الفريمات (H1, M15, M5, 1M) والشموع المغلقة والمستويات الهيكلية المرفقة للذهب واكتشف أفضل الفرص المتاحة بشكل مستقل، ثم قدم قرارك النهائي بصيغة JSON:\n${JSON.stringify(technicalContext, null, 2)}`;
 
-    console.log(`[AI Engine] Sending API request with model: ${model}`);
+    console.log(`[AI Engine] Provider: ${activeConfig.provider}, BaseURL: ${activeConfig.baseURL}, Model: ${model}`);
     let completion: any;
     try {
       completion = await ai.chat.completions.create({

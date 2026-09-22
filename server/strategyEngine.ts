@@ -439,10 +439,14 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       !isNaN(patternMetadata.neckline) &&
       isFinite(patternMetadata.neckline)
     ) {
-      structuralTargetHint = {
-        price: patternMetadata.neckline,
-        label: 'Pattern Neckline',
-      };
+      const rawDist = Math.abs(patternMetadata.neckline - entry);
+      const rawRr = rawDist / Math.max(0.1, slDistance);
+      if (rawRr >= minRr) {
+        structuralTargetHint = {
+          price: patternMetadata.neckline,
+          label: 'Pattern Neckline',
+        };
+      }
     }
 
     const tpResult = calculateDynamicTakeProfits({
@@ -1277,24 +1281,41 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   // =========================================================================
   const doubleTopBottomPatterns = detectDoubleTopBottom(partition5m.closedCandles, atr5m);
   for (const pat of doubleTopBottomPatterns) {
+    const isConfirmed = pat.confirmationState === 'CONFIRMED_REVERSAL';
     if (pat.type === 'DOUBLE_TOP') {
+      const setupTitle = isConfirmed
+        ? 'Double Top Reversal (Confirmed M-Formation)'
+        : 'Double Top Rejection (Unconfirmed M-Formation)';
+
+      const mainReasons = isConfirmed
+        ? [
+            `رصد نمط قمة مزدوجة مؤكد (Confirmed Double Top / M-Formation) عند مستوى $${pat.extremeLevel.toFixed(2)} مع كسر خط العنق عند $${pat.neckline.toFixed(2)} بإغلاق شمعة مؤكدة.`,
+            `تأكيد كسر هيكلي مؤكد أسفل خط العنق $${pat.neckline.toFixed(2)} يؤكد انتقال الزخم للبائعين.`,
+            `استهداف مستويات السيولة السفلى بنسبة عائد تتجاوز ${minRr}R.`,
+          ]
+        : [
+            `رصد ارتداد ورفض من القمة الثانية لنمط قمة مزدوجة (Double Top Rejection) عند مستوى $${pat.extremeLevel.toFixed(2)} ولكن خط العنق عند $${pat.neckline.toFixed(2)} لم يُكسر بعد.`,
+            `الدخول استباقي عند الرفض مع وقف خسارة محكم أعلى القمم عند $${(pat.extremeLevel + 0.3 * atr5m).toFixed(2)}.`,
+            `استهداف خط العنق $${pat.neckline.toFixed(2)} والسيولة المقابلة بنسبة عائد ${minRr}R.`,
+          ];
+
+      const triggers = isConfirmed
+        ? ['Confirmed Double Top M-Pattern', 'Structural Neckline Break', 'Momentum Reversal', 'Liquidity Target']
+        : ['Unconfirmed Double Top Rejection', 'Bearish Rejection Wick', 'Pre-Neckline Reaction'];
+
       const cand = evaluateCandidate(
         'DOUBLE_TOP_BOTTOM',
-        'Double Top Reversal (M-Formation)',
+        setupTitle,
         'SELL',
         'MARKET',
         currentPrice,
         pat.extremeLevel,
-        [
-          `رصد نمط قمة مزدوجة (Double Top / M-Formation) عند مستوى $${pat.extremeLevel.toFixed(2)} مع تباعد محوري واضح.`,
-          `رفض السعر من القمة الثانية مع تأكيد إغلاق شمعة زخم أسفل القمة وخط العنق عند $${pat.neckline.toFixed(2)}.`,
-          `استهداف مستويات السيولة السفلى بنسبة عائد تتجاوز ${minRr}R.`,
-        ],
-        ['Double Top M-Pattern', 'Bearish Rejection', 'Neckline Breakout', 'Liquidity Target'],
-        22,
-        20,
-        20,
-        18,
+        mainReasons,
+        triggers,
+        isConfirmed ? 22 : 14,
+        isConfirmed ? 20 : 12,
+        isConfirmed ? 20 : 12,
+        isConfirmed ? 18 : 10,
         {
           type: 'SFP_ZONE',
           top: pat.extremeLevel + 0.3 * atr5m,
@@ -1305,6 +1326,9 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
         {
           strategyId: 'S10',
           patternType: 'DOUBLE_TOP',
+          confirmationState: pat.confirmationState,
+          isConfirmed: pat.isConfirmed,
+          hasNecklineBreak: pat.hasNecklineBreak,
           pivot1: pat.pivot1,
           pivot2: pat.pivot2,
           pivot1Time: pat.pivot1Time,
@@ -1316,23 +1340,39 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       );
       if (cand) candidates.push(cand);
     } else if (pat.type === 'DOUBLE_BOTTOM') {
+      const setupTitle = isConfirmed
+        ? 'Double Bottom Reversal (Confirmed W-Formation)'
+        : 'Double Bottom Rejection (Unconfirmed W-Formation)';
+
+      const mainReasons = isConfirmed
+        ? [
+            `رصد نمط قاع مزدوج مؤكد (Confirmed Double Bottom / W-Formation) عند مستوى $${pat.extremeLevel.toFixed(2)} مع اختراق خط العنق عند $${pat.neckline.toFixed(2)} بإغلاق شمعة مؤكدة.`,
+            `تأكيد اختراق هيكلي مؤكد أعلى خط العنق $${pat.neckline.toFixed(2)} يؤكد انتقال الزخم للمشترين.`,
+            `استهداف مستويات السيولة العليا بنسبة عائد تتجاوز ${minRr}R.`,
+          ]
+        : [
+            `رصد ارتداد ورفض من القاع الثاني لنمط قاع مزدوج (Double Bottom Rejection) عند مستوى $${pat.extremeLevel.toFixed(2)} ولكن خط العنق عند $${pat.neckline.toFixed(2)} لم يُخترق بعد.`,
+            `الدخول استباقي عند الارتداد مع وقف خسارة محكم أسفل القيعان عند $${(pat.extremeLevel - 0.3 * atr5m).toFixed(2)}.`,
+            `استهداف خط العنق $${pat.neckline.toFixed(2)} والسيولة المقابلة بنسبة عائد ${minRr}R.`,
+          ];
+
+      const triggers = isConfirmed
+        ? ['Confirmed Double Bottom W-Pattern', 'Structural Neckline Break', 'Momentum Reversal', 'Liquidity Target']
+        : ['Unconfirmed Double Bottom Rejection', 'Bullish Rejection Wick', 'Pre-Neckline Reaction'];
+
       const cand = evaluateCandidate(
         'DOUBLE_TOP_BOTTOM',
-        'Double Bottom Reversal (W-Formation)',
+        setupTitle,
         'BUY',
         'MARKET',
         currentPrice,
         pat.extremeLevel,
-        [
-          `رصد نمط قاع مزدوج (Double Bottom / W-Formation) عند مستوى $${pat.extremeLevel.toFixed(2)} مع تباعد محوري واضح.`,
-          `ارتداد السعر من القاع الثاني مع تأكيد إغلاق شمعة زخم صاعدة أعلاه وخط العنق عند $${pat.neckline.toFixed(2)}.`,
-          `استهداف مستويات السيولة العليا بنسبة عائد تتجاوز ${minRr}R.`,
-        ],
-        ['Double Bottom W-Pattern', 'Bullish Rejection', 'Neckline Breakout', 'Liquidity Target'],
-        22,
-        20,
-        20,
-        18,
+        mainReasons,
+        triggers,
+        isConfirmed ? 22 : 14,
+        isConfirmed ? 20 : 12,
+        isConfirmed ? 20 : 12,
+        isConfirmed ? 18 : 10,
         {
           type: 'SFP_ZONE',
           top: pat.extremeLevel + 0.5 * atr5m,
@@ -1343,6 +1383,9 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
         {
           strategyId: 'S10',
           patternType: 'DOUBLE_BOTTOM',
+          confirmationState: pat.confirmationState,
+          isConfirmed: pat.isConfirmed,
+          hasNecklineBreak: pat.hasNecklineBreak,
           pivot1: pat.pivot1,
           pivot2: pat.pivot2,
           pivot1Time: pat.pivot1Time,

@@ -1,5 +1,5 @@
 import { generateMultiStrategyCandidates } from './strategyEngine.js';
-import { analyzeTechnicals } from './indicators.js';
+import { analyzeTechnicals, detectDoubleTopBottom } from './indicators.js';
 import { globalPoiTracker } from './tradeQualityEngine.js';
 import { Candle } from '../src/types.js';
 
@@ -16,8 +16,8 @@ function createRampCandles(
     const timestamp = now + i * 5 * 60 * 1000;
     const open = startPrice + i * step;
     const close = open + step * 0.8;
-    const high = Math.max(open, close) + 0.1;
-    const low = Math.min(open, close) - 0.1;
+    const high = Math.max(open, close) + 1.2;
+    const low = Math.min(open, close) - 1.2;
 
     candles.push({
       timestamp,
@@ -26,6 +26,7 @@ function createRampCandles(
       low: Number(low.toFixed(2)),
       close: Number(close.toFixed(2)),
       volume: 1500,
+      isClosed: true,
     });
   }
   return candles;
@@ -62,22 +63,22 @@ async function runS10S13TestSuite() {
     const candles15m = createRampCandles(50, 4275.00, 4295.00);
 
     // 5M candles with clean Double Top peaks
-    const candles5m = createRampCandles(40, 4280.00, 4290.00);
-    // Peak 1 at index 15 ($4296.50)
-    candles5m[15] = { timestamp: candles5m[15].timestamp, open: 4293.00, high: 4296.50, low: 4292.00, close: 4295.00, volume: 2000 };
-    // Dip to Neckline at index 22 ($4288.00)
-    candles5m[22] = { timestamp: candles5m[22].timestamp, open: 4291.00, high: 4291.50, low: 4288.00, close: 4288.50, volume: 1500 };
-    // Peak 2 at index 33 ($4296.30)
-    candles5m[33] = { timestamp: candles5m[33].timestamp, open: 4291.00, high: 4296.30, low: 4290.00, close: 4294.00, volume: 2500 };
+    const candles5m = createRampCandles(40, 4275.00, 4290.00);
+    // Peak 1 at index 15 ($4294.50)
+    candles5m[15] = { timestamp: candles5m[15].timestamp, open: 4291.00, high: 4294.50, low: 4290.00, close: 4293.00, volume: 2000, isClosed: true };
+    // Dip to Neckline at index 22 ($4280.00)
+    candles5m[22] = { timestamp: candles5m[22].timestamp, open: 4282.00, high: 4282.50, low: 4280.00, close: 4280.50, volume: 1500, isClosed: true };
+    // Peak 2 at index 33 ($4294.30)
+    candles5m[33] = { timestamp: candles5m[33].timestamp, open: 4289.00, high: 4294.30, low: 4288.00, close: 4292.00, volume: 2500, isClosed: true };
     // Last candle rejecting down from Peak 2
     const lastIdx = candles5m.length - 1;
-    candles5m[lastIdx] = { timestamp: candles5m[lastIdx].timestamp, open: 4293.00, high: 4294.50, low: 4289.00, close: 4290.00, volume: 2800 };
+    candles5m[lastIdx] = { timestamp: candles5m[lastIdx].timestamp, open: 4291.00, high: 4292.50, low: 4289.00, close: 4290.00, volume: 2800, isClosed: true };
 
     const ind5m = analyzeTechnicals(candles5m);
     const ind15m = analyzeTechnicals(candles15m);
     const ind1h = analyzeTechnicals(candles1h);
 
-    ind15m.swingHigh = 4296.50;
+    ind15m.swingHigh = 4294.50;
     ind15m.swingLow = 4250.00;
     ind15m.support = 4250.00;
     ind15m.ema200 = 4350.00;
@@ -117,13 +118,13 @@ async function runS10S13TestSuite() {
     candles15m[10] = { ...candles15m[10], low: 4250.00, close: 4260.00 };
 
     // Multi-touch resistance at $4295.00
-    candles15m[15] = { timestamp: candles15m[15].timestamp, open: 4290.00, high: 4295.10, low: 4288.00, close: 4292.00, volume: 1500 };
-    candles15m[28] = { timestamp: candles15m[28].timestamp, open: 4289.00, high: 4294.90, low: 4287.00, close: 4291.00, volume: 1600 };
-    candles15m[40] = { timestamp: candles15m[40].timestamp, open: 4291.00, high: 4295.20, low: 4289.00, close: 4290.00, volume: 1700 };
+    candles15m[15] = { timestamp: candles15m[15].timestamp, open: 4290.00, high: 4295.10, low: 4288.00, close: 4292.00, volume: 1500, isClosed: true };
+    candles15m[28] = { timestamp: candles15m[28].timestamp, open: 4289.00, high: 4294.90, low: 4287.00, close: 4291.00, volume: 1600, isClosed: true };
+    candles15m[40] = { timestamp: candles15m[40].timestamp, open: 4291.00, high: 4295.20, low: 4289.00, close: 4290.00, volume: 1700, isClosed: true };
 
-    const candles5m = createRampCandles(40, 4288.00, 4294.00);
+    const candles5m = createRampCandles(40, 4285.00, 4291.00);
     const lastIdx = candles5m.length - 1;
-    candles5m[lastIdx] = { timestamp: candles5m[lastIdx].timestamp, open: 4293.50, high: 4295.10, low: 4292.00, close: 4293.50, volume: 2500 };
+    candles5m[lastIdx] = { timestamp: candles5m[lastIdx].timestamp, open: 4292.00, high: 4295.10, low: 4289.00, close: 4291.00, volume: 2500, isClosed: true };
 
     const ind5m = analyzeTechnicals(candles5m);
     const ind15m = analyzeTechnicals(candles15m);
@@ -137,7 +138,7 @@ async function runS10S13TestSuite() {
     const result = generateMultiStrategyCandidates({
       asset: 'XAU/USD',
       balance: 10000,
-      currentPrice: 4293.50,
+      currentPrice: 4291.00,
       indicators1h: ind1h,
       indicators15m: ind15m,
       indicators5m: ind5m,
@@ -302,15 +303,15 @@ async function runS10S13TestSuite() {
 
     const candles15m = createRampCandles(50, 4275.00, 4295.00);
 
-    // Initial 5M series
-    const base5m = createRampCandles(40, 4280.00, 4290.00);
-    base5m[15] = { timestamp: base5m[15].timestamp, open: 4293.00, high: 4296.50, low: 4292.00, close: 4295.00, volume: 2000 };
-    base5m[22] = { timestamp: base5m[22].timestamp, open: 4291.00, high: 4291.50, low: 4288.00, close: 4288.50, volume: 1500 };
-    base5m[33] = { timestamp: base5m[33].timestamp, open: 4291.00, high: 4296.30, low: 4290.00, close: 4294.00, volume: 2500 };
+    // Initial 5M series (34 candles up to Peak 2)
+    const base5m = createRampCandles(34, 4280.00, 4290.00);
+    base5m[15] = { timestamp: base5m[15].timestamp, open: 4291.00, high: 4294.50, low: 4290.00, close: 4293.00, volume: 2000, isClosed: true };
+    base5m[22] = { timestamp: base5m[22].timestamp, open: 4289.00, high: 4289.50, low: 4288.00, close: 4288.50, volume: 1500, isClosed: true };
+    base5m[33] = { timestamp: base5m[33].timestamp, open: 4289.00, high: 4294.30, low: 4288.00, close: 4292.00, volume: 2500, isClosed: true };
 
     const ind15m = analyzeTechnicals(candles15m);
     const ind1h = analyzeTechnicals(candles1h);
-    ind15m.swingHigh = 4296.50;
+    ind15m.swingHigh = 4294.50;
     ind15m.swingLow = 4250.00;
     ind15m.support = 4250.00;
     ind15m.ema200 = 4350.00;
@@ -321,15 +322,18 @@ async function runS10S13TestSuite() {
     // Step through 10 consecutive candles after Peak 2
     for (let step = 0; step < 10; step++) {
       const current5m = [...base5m];
-      const nextTime = base5m[33].timestamp + (step + 1) * 5 * 60 * 1000;
-      current5m.push({
-        timestamp: nextTime,
-        open: 4293.00 - step * 0.5,
-        high: 4294.50 - step * 0.5,
-        low: 4289.00 - step * 0.5,
-        close: 4290.00 - step * 0.5,
-        volume: 2000,
-      });
+      for (let s = 0; s <= step; s++) {
+        const nextTime = base5m[33].timestamp + (s + 1) * 5 * 60 * 1000;
+        current5m.push({
+          timestamp: nextTime,
+          open: 4292.00 - s * 0.3,
+          high: 4292.50 - s * 0.3,
+          low: 4289.00 - s * 0.3,
+          close: 4290.00 - s * 0.3,
+          volume: 2000,
+          isClosed: true,
+        });
+      }
 
       const ind5m = analyzeTechnicals(current5m);
       const res = generateMultiStrategyCandidates({

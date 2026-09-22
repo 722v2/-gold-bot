@@ -555,9 +555,9 @@ export class TradeManagementEngine {
       regimeAlignment = 'MODERATE_ALIGNMENT';
     }
 
-    // Check 15M & 5M Swings & Structure
-    const recent5m = (candles5m || []).slice(-15);
-    const recent15m = (candles15m || []).slice(-15);
+    // Check 15M & 5M Swings & Structure (strictly closed candles only)
+    const recent5m = (candles5m || []).filter((c) => c.isClosed !== false).slice(-15);
+    const recent15m = (candles15m || []).filter((c) => c.isClosed !== false).slice(-15);
 
     let structureHealth: TradeHealthMetrics['structureHealth'] = 'RANGING';
     let oppositePressure = 0;
@@ -597,7 +597,6 @@ export class TradeManagementEngine {
     // Check 15M opposite BOS / CHOCH
     if (recent15m.length >= 6) {
       const last15 = recent15m[recent15m.length - 1];
-      const prev15 = recent15m[recent15m.length - 2];
       const lowest15 = Math.min(...recent15m.slice(-6, -2).map((c) => c.low));
       const highest15 = Math.max(...recent15m.slice(-6, -2).map((c) => c.high));
 
@@ -616,10 +615,13 @@ export class TradeManagementEngine {
       }
     }
 
-    // Multi-factor Reversal Level classification (3-Level Reversal Model)
+    // Multi-factor Reversal Level classification (3-Level Reversal Model + Reversal Defense)
     if (oppositePressure >= 75 && regimeAlignment === 'OPPOSING') {
       reversalLevel = 3; // High-conviction reversal
       notes.push('LEVEL 3: High-conviction multi-timeframe structural reversal confirmed');
+    } else if (oppositePressure >= 50 || (oppositePressure >= 40 && structureHealth === 'REVERSED')) {
+      reversalLevel = 2; // Level 2+: Reversal Defense
+      notes.push('LEVEL 2+: REVERSAL_DEFENSE - Elevated counter-pressure detected, activating protective SL defense');
     } else if (oppositePressure >= 35 || (floatingPnl < 0 && structureHealth === 'WEAKENING')) {
       reversalLevel = 2; // Reversal watch
       notes.push('LEVEL 2: Reversal Watch - Trade structure weakening, close monitoring');
@@ -725,8 +727,98 @@ export class TradeManagementEngine {
     }
 
     // -------------------------------------------------------------------------
-    // 2. Check Level 2: Reversal Watch -> REVERSAL_WATCH (Informational, DO NOT close)
+    // 2. Check Level 2+ / Level 2 Reversals
     // -------------------------------------------------------------------------
+    const isReversalDefense =
+      health.notes.some((n) => n.includes('REVERSAL_DEFENSE')) ||
+      (health.oppositePressureScore >= 50 && health.reversalLevel >= 2);
+
+    if (isReversalDefense) {
+      // Attempt protective SL tightening (defend capital, NEVER loosen existing SL)
+      const closed5m = (candles5m || []).filter((c) => c.isClosed !== false);
+      const recentSwings = closed5m.slice(-8);
+
+      if (isBuy) {
+        const lowestRecent5m = recentSwings.length >= 3 ? Math.min(...recentSwings.slice(-5).map((c) => c.low)) : sl;
+        let candidateSl = lowestRecent5m;
+        if (currentPrice > entry + 1.0 && entry + 0.20 > candidateSl) {
+          candidateSl = entry + 0.20;
+        }
+
+        // Tighter SL must be strictly above old SL and strictly below current market price with buffer
+        if (candidateSl > sl && candidateSl < currentPrice - 0.40) {
+          return {
+            actionType: 'UPDATE_SL',
+            tradeId: trade.id,
+            direction: health.direction,
+            currentPrice,
+            entryPrice: entry,
+            oldSL: sl,
+            newSL: Number(candidateSl.toFixed(2)),
+            oldTP1: tp1,
+            oldTP2: tp2,
+            floatingPnl: health.floatingPnl,
+            currentR: health.currentR,
+            managementState: 'REVERSAL_DEFENSE',
+            reason: `Elevated counter-pressure detected (${health.oppositePressureScore}%). Tightening stop loss to protected level at $${candidateSl.toFixed(2)} to defend capital against potential reversal.`,
+            confidence: 80,
+            timestamp: Date.now(),
+            source: 'DETERMINISTIC',
+            requiresConfirmation: false,
+          };
+        }
+      } else {
+        const highestRecent5m = recentSwings.length >= 3 ? Math.max(...recentSwings.slice(-5).map((c) => c.high)) : sl;
+        let candidateSl = highestRecent5m;
+        if (currentPrice < entry - 1.0 && entry - 0.20 < candidateSl) {
+          candidateSl = entry - 0.20;
+        }
+
+        // Tighter SL must be strictly below old SL and strictly above current market price with buffer
+        if (candidateSl < sl && candidateSl > currentPrice + 0.40) {
+          return {
+            actionType: 'UPDATE_SL',
+            tradeId: trade.id,
+            direction: health.direction,
+            currentPrice,
+            entryPrice: entry,
+            oldSL: sl,
+            newSL: Number(candidateSl.toFixed(2)),
+            oldTP1: tp1,
+            oldTP2: tp2,
+            floatingPnl: health.floatingPnl,
+            currentR: health.currentR,
+            managementState: 'REVERSAL_DEFENSE',
+            reason: `Elevated counter-pressure detected (${health.oppositePressureScore}%). Tightening stop loss to protected level at $${candidateSl.toFixed(2)} to defend capital against potential reversal.`,
+            confidence: 80,
+            timestamp: Date.now(),
+            source: 'DETERMINISTIC',
+            requiresConfirmation: false,
+          };
+        }
+      }
+
+      // If no valid tightening can be done without crossing price or widening, return REVERSAL_DEFENSE state retaining existing SL
+      return {
+        actionType: 'REVERSAL_WATCH',
+        tradeId: trade.id,
+        direction: health.direction,
+        currentPrice,
+        entryPrice: entry,
+        oldSL: sl,
+        oldTP1: tp1,
+        oldTP2: tp2,
+        floatingPnl: health.floatingPnl,
+        currentR: health.currentR,
+        managementState: 'REVERSAL_DEFENSE',
+        reason: `Elevated counter-pressure detected (${health.oppositePressureScore}%). Defensive observation active with protected stop loss maintained at $${sl.toFixed(2)}.`,
+        confidence: 75,
+        timestamp: Date.now(),
+        source: 'DETERMINISTIC',
+        requiresConfirmation: false,
+      };
+    }
+
     if (health.reversalLevel === 2) {
       return {
         actionType: 'REVERSAL_WATCH',

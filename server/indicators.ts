@@ -484,6 +484,10 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
 export interface DoubleTopBottomPattern {
   found: boolean;
   type?: 'DOUBLE_TOP' | 'DOUBLE_BOTTOM';
+  confirmationState: 'CONFIRMED_REVERSAL' | 'PRE_CONFIRMATION';
+  isConfirmed: boolean;
+  hasNecklineBreak: boolean;
+  isInvalidated: boolean;
   pivot1: number;
   pivot2: number;
   pivot1Index: number;
@@ -496,14 +500,17 @@ export interface DoubleTopBottomPattern {
 }
 
 /**
- * Detects Double Top (M-formation) or Double Bottom (W-formation) from candle series
+ * Detects Double Top (M-formation) or Double Bottom (W-formation) from closed candle series.
+ * Distinguishes PRE_CONFIRMATION (second peak/trough rejection) from CONFIRMED_REVERSAL (neckline break).
  */
 export function detectDoubleTopBottom(candles: Candle[], atr14: number): DoubleTopBottomPattern[] {
   const results: DoubleTopBottomPattern[] = [];
-  if (candles.length < 15) return results;
+  // Strictly filter to closed candles only to prevent forming spikes from false triggers
+  const closedCandles = candles.filter((c) => c.isClosed !== false);
+  if (closedCandles.length < 15) return results;
 
-  const window = Math.min(50, candles.length);
-  const slice = candles.slice(-window);
+  const window = Math.min(50, closedCandles.length);
+  const slice = closedCandles.slice(-window);
 
   // Identify swing highs and swing lows (3-candle pivot)
   const swingHighs: { index: number; high: number; timestamp: number }[] = [];
@@ -534,20 +541,38 @@ export function detectDoubleTopBottom(candles: Candle[], atr14: number): DoubleT
           const depth = Math.max(p1.high, p2.high) - neckline;
 
           if (depth >= Math.max(0.6 * atr14, 1.00)) {
-            // Confirm recent candles near/after second peak show reaction (within 8 candles of peak 2)
             const candlesSinceP2 = slice.length - 1 - p2.index;
-            if (candlesSinceP2 <= 8) {
+            if (candlesSinceP2 <= 12) {
+              const candlesAfterP2 = slice.slice(p2.index + 1);
+              const extremeLevel = Math.max(p1.high, p2.high);
+
+              // Invalidation: closed candle above extreme level + buffer
+              const isInvalidated = candlesAfterP2.some((c) => c.close > extremeLevel + 0.3 * atr14);
+              if (isInvalidated) continue;
+
+              // Confirmed neckline break by a closed candle
+              const hasNecklineBreak = candlesAfterP2.some((c) => c.close < neckline);
+
+              // Rejection at/after peak 2
               const recentCandle = slice[slice.length - 1];
               const upperWick = recentCandle.high - Math.max(recentCandle.open, recentCandle.close);
               const totalRange = Math.max(0.01, recentCandle.high - recentCandle.low);
               const isRejection = (upperWick >= totalRange * 0.25 || recentCandle.close < recentCandle.open) &&
-                recentCandle.close <= Math.max(p1.high, p2.high) + 0.5;
+                recentCandle.close <= extremeLevel + 0.5;
 
-              if (isRejection) {
+              if (hasNecklineBreak || isRejection) {
+                const confirmationState: 'CONFIRMED_REVERSAL' | 'PRE_CONFIRMATION' = hasNecklineBreak
+                  ? 'CONFIRMED_REVERSAL'
+                  : 'PRE_CONFIRMATION';
+
                 const anchorKey = `DOUBLE_TOP_${p1.timestamp}_${p2.timestamp}`;
                 results.push({
                   found: true,
                   type: 'DOUBLE_TOP',
+                  confirmationState,
+                  isConfirmed: hasNecklineBreak,
+                  hasNecklineBreak,
+                  isInvalidated: false,
                   pivot1: p1.high,
                   pivot2: p2.high,
                   pivot1Index: p1.index,
@@ -555,7 +580,7 @@ export function detectDoubleTopBottom(candles: Candle[], atr14: number): DoubleT
                   pivot1Time: p1.timestamp,
                   pivot2Time: p2.timestamp,
                   neckline,
-                  extremeLevel: Math.max(p1.high, p2.high),
+                  extremeLevel,
                   patternAnchorKey: anchorKey,
                 });
               }
@@ -582,20 +607,38 @@ export function detectDoubleTopBottom(candles: Candle[], atr14: number): DoubleT
           const depth = neckline - Math.min(p1.low, p2.low);
 
           if (depth >= Math.max(0.6 * atr14, 1.00)) {
-            // Confirm recent candles near/after second trough show reaction (within 8 candles of trough 2)
             const candlesSinceP2 = slice.length - 1 - p2.index;
-            if (candlesSinceP2 <= 8) {
+            if (candlesSinceP2 <= 12) {
+              const candlesAfterP2 = slice.slice(p2.index + 1);
+              const extremeLevel = Math.min(p1.low, p2.low);
+
+              // Invalidation: closed candle below extreme level - buffer
+              const isInvalidated = candlesAfterP2.some((c) => c.close < extremeLevel - 0.3 * atr14);
+              if (isInvalidated) continue;
+
+              // Confirmed neckline break by a closed candle
+              const hasNecklineBreak = candlesAfterP2.some((c) => c.close > neckline);
+
+              // Rejection at/after trough 2
               const recentCandle = slice[slice.length - 1];
               const lowerWick = Math.min(recentCandle.open, recentCandle.close) - recentCandle.low;
               const totalRange = Math.max(0.01, recentCandle.high - recentCandle.low);
               const isRejection = (lowerWick >= totalRange * 0.25 || recentCandle.close > recentCandle.open) &&
-                recentCandle.close >= Math.min(p1.low, p2.low) - 0.5;
+                recentCandle.close >= extremeLevel - 0.5;
 
-              if (isRejection) {
+              if (hasNecklineBreak || isRejection) {
+                const confirmationState: 'CONFIRMED_REVERSAL' | 'PRE_CONFIRMATION' = hasNecklineBreak
+                  ? 'CONFIRMED_REVERSAL'
+                  : 'PRE_CONFIRMATION';
+
                 const anchorKey = `DOUBLE_BOTTOM_${p1.timestamp}_${p2.timestamp}`;
                 results.push({
                   found: true,
                   type: 'DOUBLE_BOTTOM',
+                  confirmationState,
+                  isConfirmed: hasNecklineBreak,
+                  hasNecklineBreak,
+                  isInvalidated: false,
                   pivot1: p1.low,
                   pivot2: p2.low,
                   pivot1Index: p1.index,
@@ -603,7 +646,7 @@ export function detectDoubleTopBottom(candles: Candle[], atr14: number): DoubleT
                   pivot1Time: p1.timestamp,
                   pivot2Time: p2.timestamp,
                   neckline,
-                  extremeLevel: Math.min(p1.low, p2.low),
+                  extremeLevel,
                   patternAnchorKey: anchorKey,
                 });
               }
