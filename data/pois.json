@@ -463,5 +463,45 @@
     "tapCount": 0,
     "state": "FRESH",
     "invalidationPrice": 4280.05
+  },
+  {
+    "id": "poi_order_block_15m_bearish_4285.7_4284.5",
+    "type": "ORDER_BLOCK",
+    "timeframe": "15M",
+    "direction": "BEARISH",
+    "top": 4285.68,
+    "bottom": 4284.48,
+    "createdTimestamp": 1790195735445,
+    "createdCandleTime": 1790195100000,
+    "tapCount": 1,
+    "state": "TESTED_ONCE",
+    "invalidationPrice": 4287.72,
+    "lastTestedCandleTime": 1790195400000
+  },
+  {
+    "id": "poi_dynamic_ma_5m_bearish_4286.2_4284.1",
+    "type": "DYNAMIC_MA",
+    "timeframe": "5M",
+    "direction": "BEARISH",
+    "top": 4286.17,
+    "bottom": 4284.129999999999,
+    "createdTimestamp": 1790195735466,
+    "createdCandleTime": 1790195400000,
+    "tapCount": 0,
+    "state": "FRESH",
+    "invalidationPrice": 4287.72
+  },
+  {
+    "id": "poi_sfp_zone_15m_bullish_4275.6_4274",
+    "type": "SFP_ZONE",
+    "timeframe": "15M",
+    "direction": "BULLISH",
+    "top": 4275.557500000001,
+    "bottom": 4273.9825,
+    "createdTimestamp": 1790196335647,
+    "createdCandleTime": 1790195700000,
+    "tapCount": 0,
+    "state": "FRESH",
+    "invalidationPrice": 4281.73
   }
 ]

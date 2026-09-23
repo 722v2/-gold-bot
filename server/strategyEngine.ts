@@ -212,17 +212,42 @@ export function extractSessionExtremes(candles: Candle[]): SessionExtremes {
   const sessionHigh = Math.max(...recent24h.map((c) => c.high));
   const sessionLow = Math.min(...recent24h.map((c) => c.low));
 
-  const filterByUtcHours = (startHour: number, endHour: number) => {
-    return recent24h.filter((c) => {
-      if (!c.timestamp) return false;
-      const h = new Date(c.timestamp).getUTCHours();
-      return h >= startHour && h < endHour;
-    });
+  const getContiguousSessionCandles = (startHour: number, endHour: number): Candle[] => {
+    const validCandles = recent24h.filter((c) => typeof c.timestamp === 'number');
+    if (validCandles.length === 0) return [];
+
+    const lastCandle = validCandles[validCandles.length - 1];
+    const lastDate = new Date(lastCandle.timestamp);
+    const todayStartUtc = Date.UTC(
+      lastDate.getUTCFullYear(),
+      lastDate.getUTCMonth(),
+      lastDate.getUTCDate(),
+      0, 0, 0, 0
+    );
+    const prevDayStartUtc = todayStartUtc - 24 * 3600 * 1000;
+
+    const todaySessionStart = todayStartUtc + startHour * 3600 * 1000;
+    const todaySessionEnd = todayStartUtc + endHour * 3600 * 1000;
+
+    const todaySessionCandles = validCandles.filter(
+      (c) => c.timestamp >= todaySessionStart && c.timestamp < todaySessionEnd
+    );
+
+    if (todaySessionCandles.length > 0) {
+      return todaySessionCandles;
+    }
+
+    const prevSessionStart = prevDayStartUtc + startHour * 3600 * 1000;
+    const prevSessionEnd = prevDayStartUtc + endHour * 3600 * 1000;
+
+    return validCandles.filter(
+      (c) => c.timestamp >= prevSessionStart && c.timestamp < prevSessionEnd
+    );
   };
 
-  const asianCandles = filterByUtcHours(0, 8);
-  const londonCandles = filterByUtcHours(7, 15);
-  const nyCandles = filterByUtcHours(13, 21);
+  const asianCandles = getContiguousSessionCandles(0, 8);
+  const londonCandles = getContiguousSessionCandles(7, 15);
+  const nyCandles = getContiguousSessionCandles(13, 21);
 
   return {
     sessionHigh,

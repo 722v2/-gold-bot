@@ -719,5 +719,31 @@
     "realizedPnl": 5.6,
     "setupFamily": "Range Breakout & Expansion (Bearish Volatility Expansion)",
     "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Range Breakout & Expansion (Bearish Volatility Expansion)|volatility=HIGH|zone=DISCOUNT"
+  },
+  {
+    "id": "exp_sig_1790190831276_90kvt_1790191531383",
+    "rr": 1.99,
+    "factors": {
+      "fvg": "NONE",
+      "rsi": "NEUTRAL",
+      "macd": "BULLISH",
+      "zone": "DISCOUNT",
+      "direction": "BUY",
+      "liquidity": "NONE",
+      "orderBlock": "BULLISH_OB",
+      "volatility": "HIGH",
+      "setupFamily": "Double Bottom Reversal (Confirmed W-Formation)",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND"
+    },
+    "outcome": "LOSS",
+    "tradeId": "sig_1790190831276_90kvt",
+    "signalId": "sig_1790190831276_90kvt",
+    "direction": "BUY",
+    "completedAt": 1790191531383,
+    "realizedPnl": -2,
+    "setupFamily": "Double Bottom Reversal (Confirmed W-Formation)",
+    "combinationKey": "direction=BUY|fvg=NONE|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Double Bottom Reversal (Confirmed W-Formation)|volatility=HIGH|zone=DISCOUNT"
   }
 ]

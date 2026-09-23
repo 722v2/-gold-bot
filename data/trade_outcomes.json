@@ -1,5 +1,24 @@
 [
   {
+    "pl": -2,
+    "tp1": 4295.09,
+    "tp2": 4319.27,
+    "entry": 4286.52,
+    "source": "MANUAL",
+    "isoTime": "2026-09-23T19:25:31.383Z",
+    "outcome": "LOSS",
+    "tradeId": "sig_1790190831276_90kvt",
+    "closedAt": 1790191531383,
+    "signalId": "sig_1790190831276_90kvt",
+    "stopLoss": 4282.21,
+    "direction": "BUY NOW",
+    "exitPrice": 4282.21,
+    "orderType": "MARKET",
+    "timestamp": 1790191531383,
+    "closeReason": "MANUAL_TELEGRAM_BUTTON",
+    "realizedPnl": -2
+  },
+  {
     "pl": 0,
     "tp1": 4295.09,
     "tp2": 4319.27,
