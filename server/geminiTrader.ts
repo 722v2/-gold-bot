@@ -100,8 +100,10 @@ export function parseAndValidateAiResponse(rawContent: any): {
     throw new Error(`Invalid signal value "${parsed.signal}" in AI response`);
   }
 
-  if (parsed.confidence !== undefined && (typeof parsed.confidence !== 'number' || !Number.isFinite(parsed.confidence) || parsed.confidence < 0 || parsed.confidence > 100)) {
-    throw new Error('Invalid "confidence" field in AI response (must be a finite number between 0 and 100)');
+  if (parsed.confidence !== undefined) {
+    if (typeof parsed.confidence !== 'number' || !Number.isFinite(parsed.confidence) || parsed.confidence < 0 || parsed.confidence > 100) {
+      throw new Error('Invalid "confidence" field in AI response (must be a finite number between 0 and 100)');
+    }
   }
 
   if (parsed.setup !== undefined && typeof parsed.setup !== 'string') {
@@ -149,13 +151,45 @@ export function resolveAiProviderConfig(): AiProviderConfig {
   const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
   const nvidiaKey = (process.env.NVIDIA_API_KEY || '').trim();
 
+  const sanitizeOpenRouterBaseUrl = (rawUrl?: string): string => {
+    const trimmed = (rawUrl || '').trim();
+    if (!trimmed || trimmed.includes('nvidia.com')) {
+      return 'https://openrouter.ai/api/v1';
+    }
+    return trimmed;
+  };
+
+  const sanitizeOpenRouterModel = (rawModel?: string): string => {
+    const trimmed = (rawModel || '').trim();
+    if (!trimmed || trimmed.includes('deepseek-ai/')) {
+      return 'google/gemini-2.5-flash-lite';
+    }
+    return trimmed;
+  };
+
+  const sanitizeNvidiaBaseUrl = (rawUrl?: string): string => {
+    const trimmed = (rawUrl || '').trim();
+    if (!trimmed || trimmed.includes('openrouter.ai')) {
+      return 'https://integrate.api.nvidia.com/v1';
+    }
+    return trimmed;
+  };
+
+  const sanitizeNvidiaModel = (rawModel?: string): string => {
+    const trimmed = (rawModel || '').trim();
+    if (!trimmed || trimmed.includes('google/') || trimmed.includes('gemini')) {
+      return 'deepseek-ai/deepseek-v4-flash-0731';
+    }
+    return trimmed;
+  };
+
   if (requestedProvider === 'openrouter') {
     if (isKeyValid(openRouterKey)) {
       return {
         provider: 'openrouter',
         apiKey: openRouterKey,
-        baseURL: (process.env.OPENROUTER_BASE_URL || '').trim() || 'https://openrouter.ai/api/v1',
-        model: (process.env.OPENROUTER_MODEL || '').trim() || 'google/gemini-2.5-flash-lite',
+        baseURL: sanitizeOpenRouterBaseUrl(process.env.OPENROUTER_BASE_URL),
+        model: sanitizeOpenRouterModel(process.env.OPENROUTER_MODEL),
       };
     }
     return { provider: 'none', apiKey: '', baseURL: '', model: '' };
@@ -166,8 +200,8 @@ export function resolveAiProviderConfig(): AiProviderConfig {
       return {
         provider: 'nvidia',
         apiKey: nvidiaKey,
-        baseURL: (process.env.NVIDIA_BASE_URL || '').trim() || 'https://integrate.api.nvidia.com/v1',
-        model: (process.env.NVIDIA_MODEL || '').trim() || 'deepseek-ai/deepseek-v4-flash-0731',
+        baseURL: sanitizeNvidiaBaseUrl(process.env.NVIDIA_BASE_URL),
+        model: sanitizeNvidiaModel(process.env.NVIDIA_MODEL),
       };
     }
     return { provider: 'none', apiKey: '', baseURL: '', model: '' };
@@ -178,8 +212,8 @@ export function resolveAiProviderConfig(): AiProviderConfig {
     return {
       provider: 'openrouter',
       apiKey: openRouterKey,
-      baseURL: (process.env.OPENROUTER_BASE_URL || '').trim() || 'https://openrouter.ai/api/v1',
-      model: (process.env.OPENROUTER_MODEL || '').trim() || 'google/gemini-2.5-flash-lite',
+      baseURL: sanitizeOpenRouterBaseUrl(process.env.OPENROUTER_BASE_URL),
+      model: sanitizeOpenRouterModel(process.env.OPENROUTER_MODEL),
     };
   }
 
@@ -187,8 +221,8 @@ export function resolveAiProviderConfig(): AiProviderConfig {
     return {
       provider: 'nvidia',
       apiKey: nvidiaKey,
-      baseURL: (process.env.NVIDIA_BASE_URL || '').trim() || 'https://integrate.api.nvidia.com/v1',
-      model: (process.env.NVIDIA_MODEL || '').trim() || 'deepseek-ai/deepseek-v4-flash-0731',
+      baseURL: sanitizeNvidiaBaseUrl(process.env.NVIDIA_BASE_URL),
+      model: sanitizeNvidiaModel(process.env.NVIDIA_MODEL),
     };
   }
 

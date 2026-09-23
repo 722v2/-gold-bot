@@ -8,6 +8,10 @@ const testFiles = [
   'server/entryLocationQualityRegressionTests.ts',
   'server/priceActionHardeningTests.ts',
   'server/trendContinuationQualityGateTests.ts',
+  'tests/providerApiRouting.test.ts',
+  'tests/aiConfidenceValidation.test.ts',
+  'tests/s9SqueezeGateRegression.test.ts',
+  'tests/poiPersistence.test.ts',
 ];
 
 console.log('====================================================');

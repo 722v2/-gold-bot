@@ -166,5 +166,47 @@
     },
     "combinationKey": "direction=BUY|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=SWEEP_SELL_SIDE|m15Structure=BEARISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Range SFP Reversal (Range Low Liquidity Sweep & Rejection)|volatility=HIGH|zone=DISCOUNT",
     "createdAt": 1790184734192
+  },
+  "sig_1790185391146_rn0j6": {
+    "signalId": "sig_1790185391146_rn0j6",
+    "setupFamily": "Bearish Trend Continuation (EMA/VWAP Pullback)",
+    "direction": "SELL",
+    "factors": {
+      "setupFamily": "Bearish Trend Continuation (EMA/VWAP Pullback)",
+      "direction": "SELL",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND",
+      "liquidity": "SWEEP_BUY_SIDE",
+      "orderBlock": "BEARISH_OB",
+      "fvg": "NONE",
+      "zone": "DISCOUNT",
+      "rsi": "NEUTRAL",
+      "macd": "BEARISH",
+      "volatility": "HIGH"
+    },
+    "combinationKey": "direction=SELL|fvg=NONE|htfStructure=DOWNTREND|liquidity=SWEEP_BUY_SIDE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Bearish Trend Continuation (EMA/VWAP Pullback)|volatility=HIGH|zone=DISCOUNT",
+    "createdAt": 1790185391147
+  },
+  "sig_1790187002494_qymvx": {
+    "signalId": "sig_1790187002494_qymvx",
+    "setupFamily": "Horizontal Resistance Breakout & Retest",
+    "direction": "BUY",
+    "factors": {
+      "setupFamily": "Horizontal Resistance Breakout & Retest",
+      "direction": "BUY",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND",
+      "liquidity": "SWEEP_SELL_SIDE",
+      "orderBlock": "BEARISH_OB",
+      "fvg": "NONE",
+      "zone": "EQUILIBRIUM",
+      "rsi": "NEUTRAL",
+      "macd": "BULLISH",
+      "volatility": "HIGH"
+    },
+    "combinationKey": "direction=BUY|fvg=NONE|htfStructure=DOWNTREND|liquidity=SWEEP_SELL_SIDE|m15Structure=BEARISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Horizontal Resistance Breakout & Retest|volatility=HIGH|zone=EQUILIBRIUM",
+    "createdAt": 1790187002494
   }
 }

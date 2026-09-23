@@ -144,6 +144,7 @@ const BACKTEST_FILE = path.join(DATA_DIR, 'backtest_history.json');
 const SNAPSHOTS_FILE = path.join(DATA_DIR, 'factor_snapshots.json');
 const EXPERIENCES_FILE = path.join(DATA_DIR, 'experience_records.json');
 const TELEGRAM_DISPATCHES_FILE = path.join(DATA_DIR, 'telegram_dispatches.json');
+const POIS_FILE = path.join(DATA_DIR, 'pois.json');
 
 const MAX_SCANS_TO_KEEP = 100;
 const MAX_SIGNALS_TO_KEEP = 50;
@@ -374,6 +375,15 @@ export class PersistentStorage {
         if (Array.isArray(list)) {
           this.inMemoryTelegramDispatches = new Set(list);
           console.log(`[Storage] Loaded ${this.inMemoryTelegramDispatches.size} persisted Telegram dispatch IDs.`);
+        }
+      }
+
+      if (fs.existsSync(POIS_FILE)) {
+        const raw = fs.readFileSync(POIS_FILE, 'utf-8');
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          this.inMemoryPois = list;
+          console.log(`[Storage] Loaded ${this.inMemoryPois.length} persisted POI records.`);
         }
       }
     } catch (e: any) {
@@ -902,6 +912,7 @@ export class PersistentStorage {
       fs.writeFileSync(OPPS_FILE, JSON.stringify(Object.fromEntries(this.inMemoryOpportunities), null, 2), 'utf-8');
       fs.writeFileSync(SNAPSHOTS_FILE, JSON.stringify(Object.fromEntries(this.inMemoryFactorSnapshots), null, 2), 'utf-8');
       fs.writeFileSync(EXPERIENCES_FILE, JSON.stringify(this.inMemoryExperienceRecords, null, 2), 'utf-8');
+      fs.writeFileSync(POIS_FILE, JSON.stringify(this.inMemoryPois, null, 2), 'utf-8');
       if (this.inMemoryTelegramChatId) {
         fs.writeFileSync(
           TELEGRAM_CHAT_FILE,
@@ -2067,6 +2078,7 @@ export class PersistentStorage {
         this.inMemoryPois.shift();
       }
     }
+    this.syncJsonBackups();
     this.safeSupabase((c) => c.from('poi_records').upsert({ id: poi.id, raw_data: poi }), `savePoi:${poi.id}`);
   }
 

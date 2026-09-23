@@ -1429,12 +1429,12 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   const effectiveLowFloor = isCompressionActive ? Math.max(rangeLowBoundary, localConsolidationLow) : rangeLowBoundary;
 
   const bb5mWidth = indicators5m.bollingerBands ? (indicators5m.bollingerBands.upper - indicators5m.bollingerBands.lower) : 10.0;
-  const isVolatilityCompressed = (indicators15m.regimeContext?.volatilityRatio !== undefined && indicators15m.regimeContext.volatilityRatio <= 0.90);
-  const isConsolidationTight = Math.abs(localConsolidationHigh - localConsolidationLow) <= Math.max(3.5, atr5m * 2.5);
+  const isVolatilityCompressed = (indicators15m.regimeContext?.volatilityRatio !== undefined && indicators15m.regimeContext.volatilityRatio <= 0.80);
+  const isConsolidationTight = Math.abs(localConsolidationHigh - localConsolidationLow) <= Math.min(3.5, atr5m * 1.5);
 
   const isSqueezePreceding =
     isCompressionActive ||
-    bb5mWidth <= Math.max(8.0, atr5m * 2.8) ||
+    bb5mWidth <= Math.min(5.0, atr5m * 1.8) ||
     isVolatilityCompressed ||
     isConsolidationTight;
 
