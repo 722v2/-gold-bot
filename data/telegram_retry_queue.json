@@ -648,24 +648,111 @@
         ]
       ]
     },
-    "status": "PENDING",
+    "status": "SUPPRESSED",
     "attempts": 1,
     "maxAttempts": 10,
     "nextRetryAt": 1790190833344,
     "createdAt": 1790190831276,
-    "lastError": "TELEGRAM_BOT_TOKEN is not configured."
+    "lastError": "Historical event suppressed: exceeded actionability window"
   },
   {
     "notificationId": "mgmt_reversal_sig_1790189627911_uf90g",
     "tradeId": "sig_1790189627911_uf90g",
     "event": "REVERSAL_WATCH",
     "chatId": "1189889156",
-    "message": "⚠️ <b>إدارة الصفقة — مراقبة انعكاس</b>\n\n🟢 <b>BUY XAU/USD</b>\nالدخول: $4287.16\nالسعر الحالي: $4283.81\nالربح/الخسارة العائمة: $3.35\n\n📌 <b>ماذا حدث؟</b>\nظهرت إشارات ضغط هابط ضد صفقة الشراء.\n\n🔎 <b>الأدلة:</b>\n• <b>فريم 5 دقائق (5M):</b> كسر تحت مستوى الدعم والقاع الهيكلي المحلي الأخير عند $4283.06\n• <b>فريم 15 دقيقة (15M):</b> تراجع مؤشر القوة النسبية (RSI) تحت 45 مما يعكس تباطؤاً في الزخم الشرائي.\n• <b>مستوى خطر:</b> مستوى $4284.17 يمثل مستوى دعم حرج قد يهدد سلامة الصفقة.\n\n🧠 <b>التقييم:</b>\nالضغط المعاكس موجود، لكنه لم يصل بعد إلى درجة تؤكد انعكاس الاتجاه.\n\n✅ <b>القرار الآن:</b>\nاستمرار الصفقة — لا تغلقها حالياً.\n\n🚨 <b>متى يتغير القرار؟</b>\nإذا حدث <b>[كسر واضح ومؤكد لهيكل فريم 15 دقيقة (15M Bearish BOS) أسفل السعر الحالي أو تفعيل وقف الخسارة]</b>, تنتقل الحالة إلى CONFIRMED REVERSAL ويتم إرسال توصية خروج.\n\n⏱ <i>الوقت: ٧:١٥:٥١ م | نظام الإدارة المتقدمة Phase 4</i>",
-    "status": "PENDING",
+    "message": "⚠️ <b>إدارة الصفقة — مراقبة انعكاس</b>\n\n🟢 <b>BUY XAU/USD</b>\nالدخول: $4287.16\nالسعر الحالي: $4282.17\nالربح/الخسارة العائمة: $4.99\n\n📌 <b>ماذا حدث؟</b>\nظهرت إشارات ضغط هابط ضد صفقة الشراء.\n\n🔎 <b>الأدلة:</b>\n• <b>فريم 5 دقائق (5M):</b> كسر تحت مستوى الدعم والقاع الهيكلي المحلي الأخير عند $4281.42\n• <b>فريم 15 دقيقة (15M):</b> تراجع مؤشر القوة النسبية (RSI) تحت 45 مما يعكس تباطؤاً في الزخم الشرائي.\n• <b>مستوى خطر:</b> مستوى $4284.17 يمثل مستوى دعم حرج قد يهدد سلامة الصفقة.\n\n🧠 <b>التقييم:</b>\nالضغط المعاكس موجود، لكنه لم يصل بعد إلى درجة تؤكد انعكاس الاتجاه.\n\n✅ <b>القرار الآن:</b>\nاستمرار الصفقة — لا تغلقها حالياً.\n\n🚨 <b>متى يتغير القرار؟</b>\nإذا حدث <b>[كسر واضح ومؤكد لهيكل فريم 15 دقيقة (15M Bearish BOS) أسفل السعر الحالي أو تفعيل وقف الخسارة]</b>, تنتقل الحالة إلى CONFIRMED REVERSAL ويتم إرسال توصية خروج.\n\n⏱ <i>الوقت: ٧:٣٨:٠١ م | نظام الإدارة المتقدمة Phase 4</i>",
+    "status": "SUPPRESSED",
+    "attempts": 3,
+    "maxAttempts": 10,
+    "nextRetryAt": 1790192289959,
+    "createdAt": 1790190951418,
+    "lastError": "Historical event suppressed: exceeded actionability window"
+  },
+  {
+    "notificationId": "signal_sig_1790191553371_q2gv8",
+    "tradeId": "sig_1790191553371_q2gv8",
+    "event": "SIGNAL_NEW",
+    "chatId": "1189889156",
+    "message": "<b>🔔 إشارة تداول جديدة من Gold AI Scanner!</b>\n\n🟢 <b>الصفقة المقترحة:</b> شراء الآن (BUY NOW)\n📊 <b>الأصل:</b> XAU/USD\n📈 <b>سعر الدخول:</b> $4285.01\n🛑 <b>وقف الخسارة (SL):</b> $4281.01 (40 نقطة)\n🎯 <b>الهدف الأول (TP1):</b> $4295.09\n🎯 <b>الهدف الثاني (TP2):</b> $4319.27\n⚖️ <b>المخاطرة:</b> 16% ($4.00)\n🧠 <b>نسبة الثقة:</b> 80%\n🛠️ <b>النموذج الفني:</b> Bare Support Rejection\n\n⏱ <i>الوقت: ٧:٢٥:٥٣ م</i>",
+    "replyMarkup": {
+      "inline_keyboard": [
+        [
+          {
+            "text": "🟢 دخلت الصفقة (ENTERED)",
+            "callback_data": "entered:sig_1790191553371_q2gv8"
+          },
+          {
+            "text": "⚪ لم أدخل (NOT ENTERED)",
+            "callback_data": "not_entered:sig_1790191553371_q2gv8"
+          }
+        ],
+        [
+          {
+            "text": "✅ WIN",
+            "callback_data": "win:sig_1790191553371_q2gv8"
+          },
+          {
+            "text": "❌ LOSS",
+            "callback_data": "loss:sig_1790191553371_q2gv8"
+          }
+        ]
+      ]
+    },
+    "status": "SUPPRESSED",
     "attempts": 1,
     "maxAttempts": 10,
-    "nextRetryAt": 1790190953454,
-    "createdAt": 1790190951418,
-    "lastError": "TELEGRAM_BOT_TOKEN is not configured."
+    "nextRetryAt": 1790191555417,
+    "createdAt": 1790191553371,
+    "lastError": "Historical event suppressed: exceeded actionability window"
+  },
+  {
+    "notificationId": "close_sig_1790189627911_uf90g",
+    "tradeId": "sig_1790189627911_uf90g",
+    "event": "OUTCOME_CLOSE",
+    "chatId": "1189889156",
+    "message": "<b>🔴 توثيق نتيجة صفقة من Gold AI!</b>\n\n📊 <b>الأصل:</b> XAU/USD\n🎯 <b>النتيجة:</b> صفقة خاسرة (LOSS)\n💰 <b>الربح/الخسارة المحققة:</b> $-4.99\n📈 <b>سعر الدخول:</b> $4287.16\n📉 <b>سعر الخروج:</b> $4282.17\nℹ️ <b>سبب الإغلاق:</b> Closed via Unified TradeManagementEngine [Trigger: SL @ $4282.17]\n\n⏱ <i>الوقت: ٧:٣٨:١٢ م</i>",
+    "status": "SUPPRESSED",
+    "attempts": 1,
+    "maxAttempts": 10,
+    "nextRetryAt": 1790192294671,
+    "createdAt": 1790192292650,
+    "lastError": "Historical event suppressed: exceeded actionability window"
+  },
+  {
+    "notificationId": "signal_sig_1790193294870_5mj6b",
+    "tradeId": "sig_1790193294870_5mj6b",
+    "event": "SIGNAL_NEW",
+    "chatId": "1189889156",
+    "message": "<b>🔔 إشارة تداول جديدة من Gold AI Scanner!</b>\n\n🟢 <b>الصفقة المقترحة:</b> شراء الآن (BUY NOW)\n📊 <b>الأصل:</b> XAU/USD\n📈 <b>سعر الدخول:</b> $4284.05\n🛑 <b>وقف الخسارة (SL):</b> $4280.05 (40 نقطة)\n🎯 <b>الهدف الأول (TP1):</b> $4288.66\n🎯 <b>الهدف الثاني (TP2):</b> $4295.09\n⚖️ <b>المخاطرة:</b> 16% ($4.00)\n🧠 <b>نسبة الثقة:</b> 87%\n🛠️ <b>النموذج الفني:</b> Range SFP Reversal (Range Low Liquidity Sweep &amp; Rejection)\n\n⏱ <i>الوقت: ٧:٥٤:٥٤ م</i>",
+    "replyMarkup": {
+      "inline_keyboard": [
+        [
+          {
+            "text": "🟢 دخلت الصفقة (ENTERED)",
+            "callback_data": "entered:sig_1790193294870_5mj6b"
+          },
+          {
+            "text": "⚪ لم أدخل (NOT ENTERED)",
+            "callback_data": "not_entered:sig_1790193294870_5mj6b"
+          }
+        ],
+        [
+          {
+            "text": "✅ WIN",
+            "callback_data": "win:sig_1790193294870_5mj6b"
+          },
+          {
+            "text": "❌ LOSS",
+            "callback_data": "loss:sig_1790193294870_5mj6b"
+          }
+        ]
+      ]
+    },
+    "status": "SUPPRESSED",
+    "attempts": 1,
+    "maxAttempts": 10,
+    "nextRetryAt": 1790193296930,
+    "createdAt": 1790193294870,
+    "lastError": "Historical event suppressed: exceeded actionability window"
   }
 ]

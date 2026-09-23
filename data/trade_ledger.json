@@ -1,7 +1,7 @@
 [
   {
     "id": "sig_1790189627911_uf90g",
-    "pl": 0,
+    "pl": -4.99,
     "rr": "TP1: 1:1.59 (79.3 pts) | TP2: 1:3.06 (152.7 pts)",
     "sl": 4282.17,
     "tp1": 4295.09,
@@ -9,13 +9,13 @@
     "date": "٢٣ سبتمبر، ٠٦:٥٣ م",
     "asset": "XAU/USD",
     "entry": 4287.16,
-    "notes": "تم الدخول وتوثيقه عبر زر التليجرام",
+    "notes": "تم الدخول وتوثيقه عبر زر التليجرام | Closed via Unified TradeManagementEngine [Trigger: SL @ $4282.17]",
     "setup": "Bullish Engulfing Reversal at Key Structure",
-    "result": "OPEN",
+    "result": "LOSS",
     "source": "MANUAL",
     "isoTime": "2026-09-23T18:53:47.911Z",
     "lotSize": 0.01,
-    "isActive": true,
+    "isActive": false,
     "signalId": "sig_1790189627911_uf90g",
     "slPoints": 49.9,
     "direction": "BUY NOW",
@@ -27,11 +27,15 @@
     "riskPercent": 19.96,
     "tradeNumber": 10037,
     "notifiedStates": [
-      "REVERSAL_WATCH"
+      "REVERSAL_WATCH",
+      "REVERSAL_DEFENSE"
     ],
-    "managementState": "HOLD",
-    "lastManagementAction": "HOLD",
-    "lastManagementTimestamp": 1790191199804
+    "managementState": "CLOSED",
+    "lastManagementAction": "REVERSAL_WATCH",
+    "lastManagementTimestamp": 1790192281948,
+    "balanceAfterTrade": 308.13,
+    "exitPrice": 4282.17,
+    "exitTime": "2026-09-23T19:38:12.650Z"
   },
   {
     "id": "sig_1790187340514_ws7vk",

@@ -250,5 +250,47 @@
     },
     "combinationKey": "direction=BUY|fvg=NONE|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Double Bottom Reversal (Confirmed W-Formation)|volatility=HIGH|zone=DISCOUNT",
     "createdAt": 1790190831276
+  },
+  "sig_1790191553371_q2gv8": {
+    "signalId": "sig_1790191553371_q2gv8",
+    "setupFamily": "Bare Support Rejection",
+    "direction": "BUY",
+    "factors": {
+      "setupFamily": "Bare Support Rejection",
+      "direction": "BUY",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND",
+      "liquidity": "SWEEP_SELL_SIDE",
+      "orderBlock": "BULLISH_OB",
+      "fvg": "NONE",
+      "zone": "DISCOUNT",
+      "rsi": "NEUTRAL",
+      "macd": "BEARISH",
+      "volatility": "HIGH"
+    },
+    "combinationKey": "direction=BUY|fvg=NONE|htfStructure=DOWNTREND|liquidity=SWEEP_SELL_SIDE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Bare Support Rejection|volatility=HIGH|zone=DISCOUNT",
+    "createdAt": 1790191553371
+  },
+  "sig_1790193294870_5mj6b": {
+    "signalId": "sig_1790193294870_5mj6b",
+    "setupFamily": "Range SFP Reversal (Range Low Liquidity Sweep & Rejection)",
+    "direction": "BUY",
+    "factors": {
+      "setupFamily": "Range SFP Reversal (Range Low Liquidity Sweep & Rejection)",
+      "direction": "BUY",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND",
+      "liquidity": "NONE",
+      "orderBlock": "BEARISH_OB",
+      "fvg": "NONE",
+      "zone": "DISCOUNT",
+      "rsi": "NEUTRAL",
+      "macd": "BEARISH",
+      "volatility": "HIGH"
+    },
+    "combinationKey": "direction=BUY|fvg=NONE|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Range SFP Reversal (Range Low Liquidity Sweep & Rejection)|volatility=HIGH|zone=DISCOUNT",
+    "createdAt": 1790193294870
   }
 }

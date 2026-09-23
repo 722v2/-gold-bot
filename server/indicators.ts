@@ -1,22 +1,44 @@
 import { Candle, TechnicalIndicators } from '../src/types.js';
 
-// Calculate Exponential Moving Average (EMA)
+// Calculate Exponential Moving Average (EMA) with standard SMA seeding
 export function calculateEMA(prices: number[], period: number): number[] {
-  if (prices.length === 0) return [];
-  const k = 2 / (period + 1);
-  const emaArray: number[] = new Array(prices.length);
+  if (!prices || prices.length < period || period <= 0) return [];
   
-  // Start with Simple Moving Average for the first `period` elements
+  // Find index of first valid finite price
+  let validStart = -1;
+  for (let i = 0; i < prices.length; i++) {
+    if (prices[i] !== undefined && Number.isFinite(prices[i])) {
+      validStart = i;
+      break;
+    }
+  }
+
+  if (validStart === -1 || (prices.length - validStart) < period) {
+    return [];
+  }
+
+  // Check that initial seeding window of N prices are all finite
   let sum = 0;
-  const initialPeriod = Math.min(period, prices.length);
-  for (let i = 0; i < initialPeriod; i++) {
+  for (let i = validStart; i < validStart + period; i++) {
+    if (prices[i] === undefined || !Number.isFinite(prices[i])) {
+      return [];
+    }
     sum += prices[i];
-    emaArray[i] = sum / (i + 1);
   }
-  
-  for (let i = initialPeriod; i < prices.length; i++) {
-    emaArray[i] = prices[i] * k + emaArray[i - 1] * (1 - k);
+
+  const emaArray: number[] = new Array(prices.length);
+  const sma = sum / period;
+  emaArray[validStart + period - 1] = sma;
+
+  const k = 2 / (period + 1);
+  for (let i = validStart + period; i < prices.length; i++) {
+    const val = prices[i];
+    const prevEma = emaArray[i - 1];
+    if (val !== undefined && Number.isFinite(val) && prevEma !== undefined && Number.isFinite(prevEma)) {
+      emaArray[i] = val * k + prevEma * (1 - k);
+    }
   }
+
   return emaArray;
 }
 
@@ -52,20 +74,40 @@ export function calculateRSI(closes: number[], period: number = 14): number {
 
 // Calculate MACD (12, 26, 9)
 export function calculateMACD(closes: number[]): { macd: number; signal: number; histogram: number } {
-  if (closes.length < 26) {
+  if (!closes || closes.length < 26) {
     return { macd: 0, signal: 0, histogram: 0 };
   }
   const ema12 = calculateEMA(closes, 12);
   const ema26 = calculateEMA(closes, 26);
   
-  const macdLine: number[] = [];
+  if (ema12.length === 0 || ema26.length === 0) {
+    return { macd: 0, signal: 0, histogram: 0 };
+  }
+
+  const macdLine: number[] = new Array(closes.length);
   for (let i = 0; i < closes.length; i++) {
-    macdLine.push(ema12[i] - ema26[i]);
+    if (ema12[i] !== undefined && ema26[i] !== undefined) {
+      macdLine[i] = ema12[i] - ema26[i];
+    }
   }
   
   const signalLine = calculateEMA(macdLine, 9);
-  const latestMacd = macdLine[macdLine.length - 1];
-  const latestSignal = signalLine[signalLine.length - 1];
+  const lastIdx = closes.length - 1;
+  const latestMacd = macdLine[lastIdx];
+
+  if (latestMacd === undefined || !Number.isFinite(latestMacd)) {
+    return { macd: 0, signal: 0, histogram: 0 };
+  }
+
+  const latestSignal = signalLine[lastIdx];
+  if (latestSignal === undefined || !Number.isFinite(latestSignal)) {
+    return {
+      macd: Number(latestMacd.toFixed(3)),
+      signal: 0,
+      histogram: Number(latestMacd.toFixed(3)),
+    };
+  }
+
   const histogram = latestMacd - latestSignal;
   
   return {
@@ -154,6 +196,17 @@ export function calculateVWAP(candles: Candle[]): number {
   return Number((cumulativeTypicalPriceVolume / cumulativeVolume).toFixed(2));
 }
 
+/**
+ * Calibrated Equal High / Equal Low (EQH/EQL) Tolerance Model for Gold (XAUUSD)
+ * - Floor: 0.20 pts ($0.20) to handle tick micro-fluctuations
+ * - Scaling: 0.10 * ATR14
+ * - Cap: 0.80 pts ($0.80) maximum tolerance to prevent overly wide pools during volatile periods
+ */
+export function calculateEqualTolerance(atr: number): number {
+  if (!Number.isFinite(atr) || atr <= 0) return 0.20;
+  return Math.min(0.80, Math.max(0.20, Number((atr * 0.10).toFixed(2))));
+}
+
 // Detect Price Action, SMC/ICT structure, Swing Points, OB, and FVG
 export function analyzeTechnicals(candles: Candle[], referenceTime?: number): TechnicalIndicators {
   if (!candles || !Array.isArray(candles) || candles.length === 0) {
@@ -168,6 +221,10 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
       bollingerBands: { upper: 0, middle: 0, lower: 0 },
       swingHigh: 0,
       swingLow: 0,
+      rollingHigh: 0,
+      rollingLow: 0,
+      structuralSwingHigh: 0,
+      structuralSwingLow: 0,
       support: 0,
       resistance: 0,
       structure: 'RANGING',
@@ -211,15 +268,18 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
   const bollingerBands = calculateBollingerBands(closes, 20);
   const vwap = calculateVWAP(effectiveCandles); // Session-anchored intraday VWAP
   
-  // Find Genuine Swing Highs and Lows in historical window excluding current candle
+  // Find Rolling Extremes and Structural Swing Highs/Lows in historical window excluding current candle
   const window = Math.min(30, effectiveCandles.length);
   const recent = effectiveCandles.slice(-window);
   
-  // To avoid circular lookahead/tautology:
-  // Calculate established swing levels using prior candles (excluding the current formation candle)
+  // Rolling 30-candle extreme calculated using prior candles (excluding current formation candle)
   const priorCandles = recent.length > 2 ? recent.slice(0, -1) : recent;
-  let swingHigh = Math.max(...priorCandles.map((c) => c.high));
-  let swingLow = Math.min(...priorCandles.map((c) => c.low));
+  const rollingHigh = Math.max(...priorCandles.map((c) => c.high));
+  const rollingLow = Math.min(...priorCandles.map((c) => c.low));
+
+  // Preserve existing swingHigh / swingLow semantics as rolling extremes for backwards compatibility
+  const swingHigh = rollingHigh;
+  const swingLow = rollingLow;
   
   // Identify Support & Resistance from established swing levels
   const resistance = swingHigh;
@@ -238,18 +298,66 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
   const fractalLows: number[] = [];
   for (let i = 2; i < recent.length - 2; i++) {
     const c = recent[i];
-    if (c.high >= recent[i - 1].high && c.high >= recent[i - 2].high && c.high >= recent[i + 1].high && c.high >= recent[i + 2].high) {
+    const isHighPivot =
+      c.high >= recent[i - 1].high &&
+      c.high >= recent[i - 2].high &&
+      c.high >= recent[i + 1].high &&
+      c.high >= recent[i + 2].high &&
+      (c.high > recent[i - 1].high || c.high > recent[i + 1].high);
+
+    const isLowPivot =
+      c.low <= recent[i - 1].low &&
+      c.low <= recent[i - 2].low &&
+      c.low <= recent[i + 1].low &&
+      c.low <= recent[i + 2].low &&
+      (c.low < recent[i - 1].low || c.low < recent[i + 1].low);
+
+    if (isHighPivot) {
       fractalHighs.push(Number(c.high.toFixed(2)));
     }
-    if (c.low <= recent[i - 1].low && c.low <= recent[i - 2].low && c.low <= recent[i + 1].low && c.low <= recent[i + 2].low) {
+    if (isLowPivot) {
       fractalLows.push(Number(c.low.toFixed(2)));
     }
   }
 
-  // Equal Highs / Lows pools
+  // Confirmed Structural Swing High / Low (derived from confirmed 5-bar/3-bar pivot points)
+  let structuralSwingHigh = fractalHighs.length > 0 ? fractalHighs[fractalHighs.length - 1] : undefined;
+  let structuralSwingLow = fractalLows.length > 0 ? fractalLows[fractalLows.length - 1] : undefined;
+
+  // 3-bar pivot fallback if no 5-bar pivot was formed in the recent window
+  if (structuralSwingHigh === undefined) {
+    for (let i = recent.length - 2; i >= 1; i--) {
+      if (
+        recent[i].high >= recent[i - 1].high &&
+        recent[i].high >= recent[i + 1].high &&
+        (recent[i].high > recent[i - 1].high || recent[i].high > recent[i + 1].high)
+      ) {
+        structuralSwingHigh = Number(recent[i].high.toFixed(2));
+        break;
+      }
+    }
+  }
+  if (structuralSwingLow === undefined) {
+    for (let i = recent.length - 2; i >= 1; i--) {
+      if (
+        recent[i].low <= recent[i - 1].low &&
+        recent[i].low <= recent[i + 1].low &&
+        (recent[i].low < recent[i - 1].low || recent[i].low < recent[i + 1].low)
+      ) {
+        structuralSwingLow = Number(recent[i].low.toFixed(2));
+        break;
+      }
+    }
+  }
+
+  // Fallback to rolling extremes if no confirmed pivots exist
+  if (structuralSwingHigh === undefined) structuralSwingHigh = rollingHigh;
+  if (structuralSwingLow === undefined) structuralSwingLow = rollingLow;
+
+  // Equal Highs / Lows pools using calibrated tolerance
   const equalHighs: number[] = [];
   const equalLows: number[] = [];
-  const eqTolerance = Math.max(0.4, atr14 * 0.3);
+  const eqTolerance = calculateEqualTolerance(atr14);
   for (let i = 0; i < fractalHighs.length; i++) {
     for (let j = i + 1; j < fractalHighs.length; j++) {
       if (Math.abs(fractalHighs[i] - fractalHighs[j]) <= eqTolerance) {
@@ -660,6 +768,10 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
     bollingerBands,
     swingHigh: Number(swingHigh.toFixed(2)),
     swingLow: Number(swingLow.toFixed(2)),
+    rollingHigh: Number(rollingHigh.toFixed(2)),
+    rollingLow: Number(rollingLow.toFixed(2)),
+    structuralSwingHigh: Number(structuralSwingHigh.toFixed(2)),
+    structuralSwingLow: Number(structuralSwingLow.toFixed(2)),
     support: Number(support.toFixed(2)),
     resistance: Number(resistance.toFixed(2)),
     structure,

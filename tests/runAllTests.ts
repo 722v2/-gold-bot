@@ -14,6 +14,7 @@ const testFiles = [
   'tests/poiPersistence.test.ts',
   'tests/strategyQualityPhase2To14Regression.test.ts',
   'tests/analyticalBugFixesRegression.test.ts',
+  'tests/indicatorMathQualityRegression.test.ts',
 ];
 
 console.log('====================================================');

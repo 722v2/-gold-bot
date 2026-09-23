@@ -200,6 +200,10 @@ export interface TechnicalIndicators {
   };
   swingHigh: number;
   swingLow: number;
+  rollingHigh?: number;
+  rollingLow?: number;
+  structuralSwingHigh?: number;
+  structuralSwingLow?: number;
   support: number;
   resistance: number;
   structure: 'BULLISH' | 'BEARISH' | 'RANGING';

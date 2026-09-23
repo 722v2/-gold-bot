@@ -111,7 +111,7 @@
     "tp1": 4295.09,
     "tp2": 4302.43,
     "entry": 4287.16,
-    "status": "ACTIVE",
+    "status": "FAILED",
     "signalId": "sig_1790189627911_uf90g",
     "stopLoss": 4282.17,
     "direction": "BUY",
@@ -140,8 +140,9 @@
       "combinationKey": "direction=BUY|fvg=NONE|htfStructure=DOWNTREND|liquidity=SWEEP_SELL_SIDE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Bullish Engulfing Reversal at Key Structure|volatility=HIGH|zone=DISCOUNT"
     },
     "strategyFamily": "UNKNOWN",
-    "lastUpdatedTime": 1790189627920,
-    "firstObservedTime": 1790189627920
+    "lastUpdatedTime": 1790192335256,
+    "firstObservedTime": 1790189627920,
+    "failedAt": 1790192335256
   },
   "sig_1790187340514_ws7vk": {
     "id": "sig_1790187340514_ws7vk",
@@ -5859,5 +5860,79 @@
     "firstObservedTime": 1789636829630,
     "telegramRetryCount": 0,
     "telegramDeliveryInFlight": false
+  },
+  "opp_bare_support_rejection_BUY_4285": {
+    "id": "opp_bare_support_rejection_BUY_4285",
+    "setupName": "Bare Support Rejection",
+    "strategyFamily": "UNKNOWN",
+    "direction": "BUY",
+    "timeframe": "15M / 5M",
+    "status": "ACTIVE",
+    "firstObservedTime": 1790191553381,
+    "lastUpdatedTime": 1790195395327,
+    "entry": 4285.01,
+    "stopLoss": 4281.01,
+    "tp1": 4295.09,
+    "tp2": 4319.27,
+    "confidence": 84,
+    "signalId": "sig_1790191553371_q2gv8",
+    "factorSnapshot": {
+      "signalId": "sig_1790191553371_q2gv8",
+      "setupFamily": "Bare Support Rejection",
+      "direction": "BUY",
+      "factors": {
+        "setupFamily": "Bare Support Rejection",
+        "direction": "BUY",
+        "htfStructure": "DOWNTREND",
+        "m15Structure": "BEARISH",
+        "marketRegime": "STRONG_TREND",
+        "liquidity": "SWEEP_SELL_SIDE",
+        "orderBlock": "BULLISH_OB",
+        "fvg": "NONE",
+        "zone": "DISCOUNT",
+        "rsi": "NEUTRAL",
+        "macd": "BEARISH",
+        "volatility": "HIGH"
+      },
+      "combinationKey": "direction=BUY|fvg=NONE|htfStructure=DOWNTREND|liquidity=SWEEP_SELL_SIDE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Bare Support Rejection|volatility=HIGH|zone=DISCOUNT",
+      "createdAt": 1790191553371
+    }
+  },
+  "opp_range_sfp_reversal__range_low_liquidity_sweep___rejection__BUY_4285": {
+    "id": "opp_range_sfp_reversal__range_low_liquidity_sweep___rejection__BUY_4285",
+    "setupName": "Range SFP Reversal (Range Low Liquidity Sweep & Rejection)",
+    "strategyFamily": "UNKNOWN",
+    "direction": "BUY",
+    "timeframe": "15M / 5M",
+    "status": "ACTIVE",
+    "firstObservedTime": 1790193294880,
+    "lastUpdatedTime": 1790193294880,
+    "entry": 4284.05,
+    "stopLoss": 4280.05,
+    "tp1": 4288.66,
+    "tp2": 4295.09,
+    "confidence": 87,
+    "signalId": "sig_1790193294870_5mj6b",
+    "factorSnapshot": {
+      "signalId": "sig_1790193294870_5mj6b",
+      "setupFamily": "Range SFP Reversal (Range Low Liquidity Sweep & Rejection)",
+      "direction": "BUY",
+      "factors": {
+        "setupFamily": "Range SFP Reversal (Range Low Liquidity Sweep & Rejection)",
+        "direction": "BUY",
+        "htfStructure": "DOWNTREND",
+        "m15Structure": "BEARISH",
+        "marketRegime": "STRONG_TREND",
+        "liquidity": "NONE",
+        "orderBlock": "BEARISH_OB",
+        "fvg": "NONE",
+        "zone": "DISCOUNT",
+        "rsi": "NEUTRAL",
+        "macd": "BEARISH",
+        "volatility": "HIGH"
+      },
+      "combinationKey": "direction=BUY|fvg=NONE|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Range SFP Reversal (Range Low Liquidity Sweep & Rejection)|volatility=HIGH|zone=DISCOUNT",
+      "createdAt": 1790193294870
+    }
   }
 }
