@@ -13,6 +13,7 @@ const testFiles = [
   'tests/s9SqueezeGateRegression.test.ts',
   'tests/poiPersistence.test.ts',
   'tests/strategyQualityPhase2To14Regression.test.ts',
+  'tests/analyticalBugFixesRegression.test.ts',
 ];
 
 console.log('====================================================');

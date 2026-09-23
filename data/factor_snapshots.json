@@ -229,5 +229,26 @@
     },
     "combinationKey": "direction=SELL|fvg=NONE|htfStructure=DOWNTREND|liquidity=SWEEP_BUY_SIDE|m15Structure=BEARISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Bare Resistance Rejection|volatility=HIGH|zone=DISCOUNT",
     "createdAt": 1790188761701
+  },
+  "sig_1790190831276_90kvt": {
+    "signalId": "sig_1790190831276_90kvt",
+    "setupFamily": "Double Bottom Reversal (Confirmed W-Formation)",
+    "direction": "BUY",
+    "factors": {
+      "setupFamily": "Double Bottom Reversal (Confirmed W-Formation)",
+      "direction": "BUY",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND",
+      "liquidity": "NONE",
+      "orderBlock": "BULLISH_OB",
+      "fvg": "NONE",
+      "zone": "DISCOUNT",
+      "rsi": "NEUTRAL",
+      "macd": "BULLISH",
+      "volatility": "HIGH"
+    },
+    "combinationKey": "direction=BUY|fvg=NONE|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Double Bottom Reversal (Confirmed W-Formation)|volatility=HIGH|zone=DISCOUNT",
+    "createdAt": 1790190831276
   }
 }

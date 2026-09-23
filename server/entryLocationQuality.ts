@@ -109,9 +109,9 @@ export function assessEntryLocationQuality(params: {
   }
   const hasTwoBarPullback = correctiveBars >= 2;
 
-  // Terminal boundary = the nearest meaningful opposing structure beyond entry.
-  const barriers: number[] = [];
-  const addBarrier = (price: number | undefined) => {
+  // Major opposing barriers beyond entry (opposing unmitigated OBs, FVGs, major HTF levels)
+  const majorBarriers: number[] = [];
+  const addMajorBarrier = (price: number | undefined) => {
     if (!price || !Number.isFinite(price)) return;
     if (
       explicitRetestLevel !== undefined &&
@@ -120,55 +120,49 @@ export function assessEntryLocationQuality(params: {
     ) {
       return;
     }
-    // Ignore current entry/candle level noise (within 0.3 ATR of entry)
+    // Ignore current entry level noise (within 0.3 ATR of entry)
     if (Math.abs(price - entry) < 0.3 * atr) {
       return;
     }
-    if (direction === 'SELL' && price < entry - 0.05) barriers.push(price);
-    if (direction === 'BUY' && price > entry + 0.05) barriers.push(price);
+    if (direction === 'SELL' && price < entry - 0.05) majorBarriers.push(price);
+    if (direction === 'BUY' && price > entry + 0.05) majorBarriers.push(price);
   };
 
-  // Check if entry is already inside opposing POI structure
+  // Check if entry is already inside an unmitigated opposing POI structure
   let insideOpposingStructure = false;
   if (direction === 'SELL') {
-    addBarrier(indicators15m.support);
-    addBarrier(indicators15m.swingLow);
-    addBarrier(indicators1h.support);
-    addBarrier(indicators1h.swingLow);
     if (indicators15m.orderBlock?.type === 'BULLISH') {
-      addBarrier(indicators15m.orderBlock.high);
+      addMajorBarrier(indicators15m.orderBlock.high);
       if (entry <= indicators15m.orderBlock.high + 0.05 && entry >= indicators15m.orderBlock.low - 0.05) {
         insideOpposingStructure = true;
       }
     }
     if (indicators15m.fvg?.type === 'BULLISH') {
-      addBarrier(indicators15m.fvg.top);
+      addMajorBarrier(indicators15m.fvg.top);
       if (entry <= indicators15m.fvg.top + 0.05 && entry >= indicators15m.fvg.bottom - 0.05) {
         insideOpposingStructure = true;
       }
     }
+    addMajorBarrier(indicators1h.support);
   } else {
-    addBarrier(indicators15m.resistance);
-    addBarrier(indicators15m.swingHigh);
-    addBarrier(indicators1h.resistance);
-    addBarrier(indicators1h.swingHigh);
     if (indicators15m.orderBlock?.type === 'BEARISH') {
-      addBarrier(indicators15m.orderBlock.low);
+      addMajorBarrier(indicators15m.orderBlock.low);
       if (entry >= indicators15m.orderBlock.low - 0.05 && entry <= indicators15m.orderBlock.high + 0.05) {
         insideOpposingStructure = true;
       }
     }
     if (indicators15m.fvg?.type === 'BEARISH') {
-      addBarrier(indicators15m.fvg.bottom);
+      addMajorBarrier(indicators15m.fvg.bottom);
       if (entry >= indicators15m.fvg.bottom - 0.05 && entry <= indicators15m.fvg.top + 0.05) {
         insideOpposingStructure = true;
       }
     }
+    addMajorBarrier(indicators1h.resistance);
   }
 
   const terminalPrice = direction === 'SELL'
-    ? Math.max(...barriers.filter(p => p < entry), -Infinity)
-    : Math.min(...barriers.filter(p => p > entry), Infinity);
+    ? Math.max(...majorBarriers.filter(p => p < entry), -Infinity)
+    : Math.min(...majorBarriers.filter(p => p > entry), Infinity);
   let terminalDistance = Number.isFinite(terminalPrice)
     ? Math.abs(entry - terminalPrice)
     : Infinity;
@@ -185,13 +179,15 @@ export function assessEntryLocationQuality(params: {
     ? Number((Math.abs(entry - explicitRetestLevel) / atr).toFixed(2))
     : 0;
 
-  // HARD BLOCK 1: TERMINAL BOUNDARY TOO CLOSE (< 1.20 ATR)
-  if (terminalBoundaryDistanceAtr < 1.2) {
-    reasons.push(`Terminal boundary only ${terminalBoundaryDistanceAtr} ATR from entry`);
+  // HARD BLOCK 1: INSIDE OPPOSING STRUCTURE OR MAJOR TERMINAL BARRIER TOO CLOSE (< 0.40 ATR)
+  if (insideOpposingStructure || terminalBoundaryDistanceAtr < 0.4) {
+    reasons.push(insideOpposingStructure ? 'Entry inside opposing major structural POI' : `Major terminal boundary only ${terminalBoundaryDistanceAtr} ATR from entry`);
     return {
       classification: 'EXHAUSTED',
       hardBlocked: true,
-      rejectionReason: `TERMINAL_BOUNDARY_TOO_CLOSE: opposing structural boundary is ${terminalBoundaryDistanceAtr} ATR from entry (< 1.20 ATR)`,
+      rejectionReason: insideOpposingStructure
+        ? 'INSIDE_OPPOSING_STRUCTURE: entry is inside an unmitigated opposing structural POI'
+        : `TERMINAL_BOUNDARY_TOO_CLOSE: opposing major boundary is ${terminalBoundaryDistanceAtr} ATR from entry (< 0.40 ATR)`,
       impulseExtensionAtr,
       consecutiveDirectionalBars,
       correctiveBars,

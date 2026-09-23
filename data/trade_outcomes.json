@@ -1,6 +1,23 @@
 [
   {
     "pl": 0,
+    "tp1": 4295.09,
+    "tp2": 4319.27,
+    "entry": 4286.32,
+    "notes": "لم تُنفذ / لم يتم الدخول (NOT ENTERED)",
+    "source": "MANUAL",
+    "isoTime": "2026-09-23T19:14:06.471Z",
+    "outcome": "NOT_ENTERED",
+    "tradeId": "sig_1790190816274_qempo",
+    "signalId": "sig_1790190816274_qempo",
+    "stopLoss": 4282.21,
+    "direction": "BUY NOW",
+    "orderType": "NOT_ENTERED",
+    "timestamp": 1790190846471,
+    "realizedPnl": 0
+  },
+  {
+    "pl": 0,
     "tp1": 4290.04,
     "tp2": 4313.75,
     "entry": 4279.63,

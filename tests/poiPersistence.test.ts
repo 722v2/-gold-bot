@@ -13,10 +13,10 @@ function runTests() {
     direction: 'BULLISH',
     top: 2715.0,
     bottom: 2710.0,
-    createdCandleIndex: 25,
-    isExhausted: false,
+    createdTimestamp: Date.now(),
+    createdCandleTime: Date.now() - 3600000,
+    state: 'TESTED_ONCE',
     tapCount: 1,
-    lastTappedTimestamp: Date.now(),
   };
 
   // 1. Save POI

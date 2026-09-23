@@ -66,14 +66,14 @@ function createBaseIndicators(overrides: Partial<TechnicalIndicators> = {}): Tec
 }
 
 // ============================================================================
-// TEST 1: Terminal Boundary Hard Block (Distance < 1.20 ATR)
-// Context: BUY entry at 4348.0, 15M resistance at 4350.0 (distance 2.0 pts = 0.67 ATR < 1.2 ATR)
+// TEST 1: Major Terminal Boundary Hard Block (Distance < 0.40 ATR)
+// Context: BUY entry at 4348.0, 1H major resistance at 4349.0 (distance 1.0 pt = 0.33 ATR < 0.40 ATR)
 // Expected: BLOCKED with TERMINAL_BOUNDARY_TOO_CLOSE
 // ============================================================================
 {
   const c5m = createCandles(20, 4345.0);
-  const ind1h = createBaseIndicators({ resistance: 4370.0 });
-  const ind15m = createBaseIndicators({ resistance: 4350.0 }); // 2 pts above entry
+  const ind1h = createBaseIndicators({ resistance: 4349.0 }); // 1 pt above entry (0.33 ATR)
+  const ind15m = createBaseIndicators({ resistance: 4350.0 });
   const ind5m = createBaseIndicators({ atr14: 3.0 });
 
   const elq = assessEntryLocationQuality({
@@ -90,7 +90,7 @@ function createBaseIndicators(overrides: Partial<TechnicalIndicators> = {}): Tec
 
   assert(
     elq.hardBlocked && elq.classification === 'EXHAUSTED' && elq.rejectionReason?.includes('TERMINAL_BOUNDARY_TOO_CLOSE'),
-    'TEST 1: Terminal Boundary Hard Block (< 1.20 ATR) - MUST BE BLOCKED',
+    'TEST 1: Major Terminal Boundary Hard Block (< 0.40 ATR) - MUST BE BLOCKED',
     `hardBlocked=${elq.hardBlocked}, reason=${elq.rejectionReason}, distAtr=${elq.terminalBoundaryDistanceAtr}`
   );
 }
@@ -298,7 +298,7 @@ function createBaseIndicators(overrides: Partial<TechnicalIndicators> = {}): Tec
 
 // ============================================================================
 // TEST 8: Full Pipeline validateTradeSignalCandidate Integration & AI Immunity
-// Context: 99% AI confidence candidate entering < 1.2 ATR from opposing resistance
+// Context: 99% AI confidence candidate entering < 0.4 ATR from major 1H opposing resistance
 // Expected: Deterministic rejection through validateTradeSignalCandidate
 // ============================================================================
 {
@@ -306,11 +306,11 @@ function createBaseIndicators(overrides: Partial<TechnicalIndicators> = {}): Tec
   c5m[18] = createClosedCandle(18, 4345.0, 4345.5, 4341.0, 4342.0);
   c5m[19] = createClosedCandle(19, 4342.0, 4346.0, 4341.0, 4345.0); // closed bottom rejection
 
-  const ind1h = createBaseIndicators({ structure: 'BULLISH', marketRegime: 'STRONG_UPTREND', resistance: 4380.0 });
+  const ind1h = createBaseIndicators({ structure: 'BULLISH', marketRegime: 'STRONG_UPTREND', resistance: 4346.0 }); // 1 pt (0.33 ATR) from entry
   const ind15m = createBaseIndicators({
     structure: 'BULLISH',
     marketRegime: 'STRONG_UPTREND',
-    resistance: 4347.0, // Terminal resistance only 2 pts (0.67 ATR) from entry 4345
+    resistance: 4347.0,
   });
   const ind5m = createBaseIndicators({ atr14: 3.0 });
 

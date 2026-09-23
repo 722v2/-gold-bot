@@ -118,19 +118,39 @@ export function calculateBollingerBands(closes: number[], period: number = 20): 
   };
 }
 
-// Calculate Volume Weighted Average Price (VWAP)
+// Calculate Volume Weighted Average Price (VWAP) anchored to UTC session start
+export function getSessionAnchoredCandles(candles: Candle[]): Candle[] {
+  if (!candles || candles.length === 0) return [];
+  const lastCandle = candles[candles.length - 1];
+  if (!lastCandle || !lastCandle.timestamp) return candles;
+
+  const lastTime = new Date(lastCandle.timestamp);
+  const startOfDayUtc = Date.UTC(
+    lastTime.getUTCFullYear(),
+    lastTime.getUTCMonth(),
+    lastTime.getUTCDate(),
+    0, 0, 0, 0
+  );
+
+  const sessionCandles = candles.filter((c) => c.timestamp && c.timestamp >= startOfDayUtc);
+  return sessionCandles.length > 0 ? sessionCandles : candles.slice(-50);
+}
+
 export function calculateVWAP(candles: Candle[]): number {
-  if (candles.length === 0) return 0;
+  if (!candles || candles.length === 0) return 0;
+  
+  const sessionCandles = getSessionAnchoredCandles(candles);
   let cumulativeTypicalPriceVolume = 0;
   let cumulativeVolume = 0;
   
-  for (const c of candles) {
+  for (const c of sessionCandles) {
     const typicalPrice = (c.high + c.low + c.close) / 3;
-    cumulativeTypicalPriceVolume += typicalPrice * c.volume;
-    cumulativeVolume += c.volume;
+    const vol = c.volume && c.volume > 0 ? c.volume : 1;
+    cumulativeTypicalPriceVolume += typicalPrice * vol;
+    cumulativeVolume += vol;
   }
   
-  if (cumulativeVolume === 0) return candles[candles.length - 1].close;
+  if (cumulativeVolume === 0) return sessionCandles[sessionCandles.length - 1].close;
   return Number((cumulativeTypicalPriceVolume / cumulativeVolume).toFixed(2));
 }
 
@@ -189,7 +209,7 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
   const macd = calculateMACD(closes);
   const atr14 = calculateATR(effectiveCandles, 14);
   const bollingerBands = calculateBollingerBands(closes, 20);
-  const vwap = calculateVWAP(effectiveCandles.slice(-50)); // Last 50 candles for intraday VWAP
+  const vwap = calculateVWAP(effectiveCandles); // Session-anchored intraday VWAP
   
   // Find Genuine Swing Highs and Lows in historical window excluding current candle
   const window = Math.min(30, effectiveCandles.length);
@@ -271,8 +291,9 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
     if (c.close < c.open && next.close > c.open && (next.high - next.low) > atr14 * 0.8) {
       const high = Number(Math.max(c.open, c.close).toFixed(2));
       const low = Number(c.low.toFixed(2));
-      const candlesAfter = recent.slice(i + 2);
-      const isMitigated = candlesAfter.some((after) => after.low <= high);
+      // Historical candles between OB formation and current retest candle
+      const historicalCandles = recent.slice(i + 2, -1);
+      const isMitigated = historicalCandles.some((after) => after.low <= high);
       if (!isMitigated && orderBlocks.length < 5) {
         orderBlocks.push({
           type: 'BULLISH',
@@ -288,8 +309,9 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
     if (c.close > c.open && next.close < c.low && (next.high - next.low) > atr14 * 0.8) {
       const high = Number(c.high.toFixed(2));
       const low = Number(Math.min(c.open, c.close).toFixed(2));
-      const candlesAfter = recent.slice(i + 2);
-      const isMitigated = candlesAfter.some((after) => after.high >= low);
+      // Historical candles between OB formation and current retest candle
+      const historicalCandles = recent.slice(i + 2, -1);
+      const isMitigated = historicalCandles.some((after) => after.high >= low);
       if (!isMitigated && orderBlocks.length < 5) {
         orderBlocks.push({
           type: 'BEARISH',
@@ -314,8 +336,9 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
     if (c3.low > c1.high && c3.low - c1.high > atr14 * 0.2) {
       const top = Number(c3.low.toFixed(2));
       const bottom = Number(c1.high.toFixed(2));
-      const candlesAfter = recent.slice(i + 1);
-      const isMitigated = candlesAfter.some((after) => after.low <= top);
+      // Historical candles between FVG formation and current retest candle
+      const historicalCandles = recent.slice(i + 1, -1);
+      const isMitigated = historicalCandles.some((after) => after.low <= top);
       if (!isMitigated && fvgZones.length < 5) {
         fvgZones.push({
           type: 'BULLISH',
@@ -330,8 +353,9 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
     if (c1.low > c3.high && c1.low - c3.high > atr14 * 0.2) {
       const top = Number(c1.low.toFixed(2));
       const bottom = Number(c3.high.toFixed(2));
-      const candlesAfter = recent.slice(i + 1);
-      const isMitigated = candlesAfter.some((after) => after.high >= bottom);
+      // Historical candles between FVG formation and current retest candle
+      const historicalCandles = recent.slice(i + 1, -1);
+      const isMitigated = historicalCandles.some((after) => after.high >= bottom);
       if (!isMitigated && fvgZones.length < 5) {
         fvgZones.push({
           type: 'BEARISH',
@@ -573,10 +597,13 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
   const isTransition = chochDetected || (structureShift && structureShift.includes('CHOCH'));
   const bbWidth = bollingerBands.upper - bollingerBands.lower;
 
-  if (isTransition) {
+  const isContradictoryUptrend = trendStructure === 'HH_HL' && isEmaBearishStack && latestClose < ema50;
+  const isContradictoryDowntrend = trendStructure === 'LH_LL' && isEmaBullishStack && latestClose > ema50;
+
+  if (isTransition || isContradictoryUptrend || isContradictoryDowntrend) {
     marketRegime = 'TRANSITION';
     recommendedAction = 'TRANSITION_CONFIRM';
-    summaryDescription = `تحول في هيكل السوق (${structureShift})؛ يتطلب تأكيد الاستقرار قبل أخذ اتجاه جديد.`;
+    summaryDescription = `تحول وإعادة ترتيب في هيكل السوق (${isContradictoryUptrend ? 'HH_HL + EMA Bearish' : isContradictoryDowntrend ? 'LH_LL + EMA Bullish' : structureShift})؛ يتطلب تأكيد الاتجاه المستقبلي.`;
   } else if (isEmaBullishStack && trendStructure === 'HH_HL' && trendStrength >= 70) {
     marketRegime = 'STRONG_UPTREND';
     recommendedAction = isOverextended ? 'PULLBACK_WAIT' : 'TREND_CONTINUATION';
@@ -585,11 +612,11 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
     marketRegime = 'STRONG_DOWNTREND';
     recommendedAction = isOverextended ? 'PULLBACK_WAIT' : 'TREND_CONTINUATION';
     summaryDescription = `اتجاه هابط قوي متسارع مع تدفق سيولة بيعية مستمرة${isOverextended ? ' (السعر ممتد حالياً - انتظار تراجع تصحيحي)' : ' (فرص استمرار مع التصحيح)'}.`;
-  } else if (trendStructure === 'HH_HL') {
+  } else if (trendStructure === 'HH_HL' && (isEmaBullishStack || latestClose >= ema50)) {
     marketRegime = 'WEAK_UPTREND';
     recommendedAction = 'TREND_CONTINUATION';
     summaryDescription = 'اتجاه صاعد معتدل أو متذبذب مع تصحيحات أعمق تناسب استراتيجيات مناطق الـ Discount و OTE.';
-  } else if (trendStructure === 'LH_LL') {
+  } else if (trendStructure === 'LH_LL' && (isEmaBearishStack || latestClose <= ema50)) {
     marketRegime = 'WEAK_DOWNTREND';
     recommendedAction = 'TREND_CONTINUATION';
     summaryDescription = 'اتجاه هابط معتدل أو متذبذب مع تصحيحات أعمق تناسب استراتيجيات مناطق الـ Premium و FVG.';

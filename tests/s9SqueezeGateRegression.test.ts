@@ -1,4 +1,5 @@
 import { generateMultiStrategyCandidates } from '../server/strategyEngine.js';
+import { analyzeTechnicals } from '../server/indicators.js';
 
 function createDummyCandles(count: number, basePrice: number, range: number) {
   const candles: any[] = [];
@@ -9,7 +10,7 @@ function createDummyCandles(count: number, basePrice: number, range: number) {
     const high = basePrice + range;
     const low = basePrice - range;
     const close = basePrice + (i % 2 === 0 ? range / 2 : -range / 2);
-    candles.push({ timestamp: time, open, high, low, close, volume: 100 });
+    candles.push({ timestamp: time, open, high, low, close, volume: 100, isClosed: true });
   }
   return candles;
 }
@@ -20,6 +21,8 @@ function runTests() {
   console.log('====================================================\n');
 
   // Test 1: Tight consolidation / squeeze preceding -> S9 candidate allowed when breakout occurs
+  const candles1h = createDummyCandles(30, 2700, 2.0);
+  const candles15m = createDummyCandles(30, 2700, 1.0);
   const candles5mSqueeze = createDummyCandles(30, 2700, 0.5); // Very narrow 1-dollar range
   // Add breakout candle
   candles5mSqueeze.push({
@@ -29,15 +32,21 @@ function runTests() {
     low: 2700.0,
     close: 2707.5,
     volume: 500,
+    isClosed: true,
   });
 
   const resSqueeze = generateMultiStrategyCandidates({
-    candles1h: createDummyCandles(30, 2700, 2.0),
-    candles15m: createDummyCandles(30, 2700, 1.0),
+    asset: 'XAU/USD',
+    balance: 10000,
+    currentPrice: 2707.5,
+    candles1h,
+    candles15m,
     candles5m: candles5mSqueeze,
-    latestPrice: 2707.5,
+    indicators1h: analyzeTechnicals(candles1h),
+    indicators15m: analyzeTechnicals(candles15m),
+    indicators5m: analyzeTechnicals(candles5mSqueeze),
   });
-  const candsSqueeze = resSqueeze?.candidates || [];
+  const candsSqueeze = resSqueeze?.allCandidates || [];
 
   const s9CandsSqueeze = candsSqueeze.filter((c: any) => c.strategyFamily === 'RANGE_BREAKOUT_EXPANSION');
   console.log(`✔ PASS: Test 1: S9 evaluated under genuine squeeze conditions (found ${s9CandsSqueeze.length} candidates)`);
@@ -51,15 +60,21 @@ function runTests() {
     low: 2695.0,
     close: 2732.0,
     volume: 500,
+    isClosed: true,
   });
 
   const resWide = generateMultiStrategyCandidates({
-    candles1h: createDummyCandles(30, 2700, 20.0),
-    candles15m: createDummyCandles(30, 2700, 15.0),
+    asset: 'XAU/USD',
+    balance: 10000,
+    currentPrice: 2732.0,
+    candles1h,
+    candles15m,
     candles5m: candles5mWide,
-    latestPrice: 2732.0,
+    indicators1h: analyzeTechnicals(candles1h),
+    indicators15m: analyzeTechnicals(candles15m),
+    indicators5m: analyzeTechnicals(candles5mWide),
   });
-  const candsWide = resWide?.candidates || [];
+  const candsWide = resWide?.allCandidates || [];
 
   const s9CandsWide = candsWide.filter((c) => c.strategyFamily === 'RANGE_BREAKOUT_EXPANSION');
   if (s9CandsWide.length !== 0) {

@@ -35,7 +35,7 @@ function runTests() {
 
   // Test 1: Structured structureEvent field population
   const candles = generateBaseCandles(40, 2000, 0.2);
-  const indicators = analyzeTechnicals(candles, '5M');
+  const indicators = analyzeTechnicals(candles);
   if (!indicators.structureEvent) {
     throw new Error('structureEvent should be populated on TechnicalIndicators');
   }
