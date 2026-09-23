@@ -494,6 +494,15 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
     }
   }
 
+  let structureEvent: TechnicalIndicators['structureEvent'] = 'NONE';
+  if (mssDetected) {
+    structureEvent = mssDirection === 'BULLISH' ? 'BULLISH_MSS_SWEEP' : 'BEARISH_MSS_SWEEP';
+  } else if (chochDetected) {
+    structureEvent = trendStructure === 'HH_HL' ? 'BEARISH_CHOCH' : 'BULLISH_CHOCH';
+  } else if (bosDetected) {
+    structureEvent = latestClose > swingHigh ? 'BULLISH_BOS' : 'BEARISH_BOS';
+  }
+
   // Liquidity levels: Buy-side liquidity (BSL) above swing highs, Sell-side liquidity (SSL) below swing lows
   const liquidityLevels = {
     buySideLiquidity: Number(swingHigh.toFixed(2)),
@@ -628,6 +637,7 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
     resistance: Number(resistance.toFixed(2)),
     structure,
     structureShift,
+    structureEvent,
     trendStructure,
     chochDetected,
     bosDetected,
@@ -1037,14 +1047,14 @@ export function hasConfirmedReversalStructure(
   if (direction === 'BUY') {
     // Bullish reversal confirmation
     // 1. Confirmed M15 / M5 structural shift / BOS / MSS in bullish direction
-    const shift15m = String(indicators15m?.structureShift || '');
-    const shift5m = String(indicators5m?.structureShift || '');
-    if (
+    const ev15m = indicators15m?.structureEvent;
+    const ev5m = indicators5m?.structureEvent;
+    const isBullEvent =
+      ev15m === 'BULLISH_MSS_SWEEP' || ev15m === 'BULLISH_CHOCH' || ev15m === 'BULLISH_BOS' ||
+      ev5m === 'BULLISH_MSS_SWEEP' || ev5m === 'BULLISH_CHOCH' || ev5m === 'BULLISH_BOS' ||
       (indicators15m?.mssDetected && indicators15m?.mssDirection === 'BULLISH') ||
-      (indicators5m?.mssDetected && indicators5m?.mssDirection === 'BULLISH') ||
-      shift15m.includes('BULLISH') || shift15m.includes('Bullish') ||
-      shift5m.includes('BULLISH') || shift5m.includes('Bullish')
-    ) {
+      (indicators5m?.mssDetected && indicators5m?.mssDirection === 'BULLISH');
+    if (isBullEvent) {
       return true;
     }
 
@@ -1071,14 +1081,14 @@ export function hasConfirmedReversalStructure(
   } else {
     // Bearish reversal confirmation
     // 1. Confirmed M15 / M5 structural shift / BOS / MSS in bearish direction
-    const shift15m = String(indicators15m?.structureShift || '');
-    const shift5m = String(indicators5m?.structureShift || '');
-    if (
+    const ev15m = indicators15m?.structureEvent;
+    const ev5m = indicators5m?.structureEvent;
+    const isBearEvent =
+      ev15m === 'BEARISH_MSS_SWEEP' || ev15m === 'BEARISH_CHOCH' || ev15m === 'BEARISH_BOS' ||
+      ev5m === 'BEARISH_MSS_SWEEP' || ev5m === 'BEARISH_CHOCH' || ev5m === 'BEARISH_BOS' ||
       (indicators15m?.mssDetected && indicators15m?.mssDirection === 'BEARISH') ||
-      (indicators5m?.mssDetected && indicators5m?.mssDirection === 'BEARISH') ||
-      shift15m.includes('BEARISH') || shift15m.includes('Bearish') ||
-      shift5m.includes('BEARISH') || shift5m.includes('Bearish')
-    ) {
+      (indicators5m?.mssDetected && indicators5m?.mssDirection === 'BEARISH');
+    if (isBearEvent) {
       return true;
     }
 

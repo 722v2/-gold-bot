@@ -172,6 +172,15 @@ export interface Candle {
   isClosed?: boolean;
 }
 
+export type StructureEvent =
+  | 'NONE'
+  | 'BULLISH_BOS'
+  | 'BEARISH_BOS'
+  | 'BULLISH_CHOCH'
+  | 'BEARISH_CHOCH'
+  | 'BULLISH_MSS_SWEEP'
+  | 'BEARISH_MSS_SWEEP';
+
 export interface TechnicalIndicators {
   ema20: number;
   ema50: number;
@@ -195,6 +204,7 @@ export interface TechnicalIndicators {
   resistance: number;
   structure: 'BULLISH' | 'BEARISH' | 'RANGING';
   structureShift?: string;
+  structureEvent?: StructureEvent;
   trendStructure?: 'HH_HL' | 'LH_LL' | 'RANGING';
   chochDetected?: boolean;
   bosDetected?: boolean;

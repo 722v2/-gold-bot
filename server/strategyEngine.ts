@@ -180,18 +180,60 @@ function calculateFibLevels(high: number, low: number) {
   };
 }
 
+export interface SessionExtremes {
+  sessionHigh: number;
+  sessionLow: number;
+  asianHigh: number | null;
+  asianLow: number | null;
+  londonHigh: number | null;
+  londonLow: number | null;
+  nyHigh: number | null;
+  nyLow: number | null;
+}
+
 /**
- * Detects session extremes (Asian, London, NY approximations) from candles
- * TODO: Future Session Context Enhancement:
- * - Implement exact UTC session time windows (Asian Range 00:00-08:00 UTC, London Open 07:00-10:00 UTC, NY Open 12:00-15:00 UTC, London Close 15:00-17:00 UTC)
- * - Provide session-specific high/low liquidity levels and Killzone expansion metrics without changing core strategy execution logic.
+ * Calculates exact UTC-based session extremes (Asian 00:00-08:00 UTC, London 07:00-15:00 UTC, NY 13:00-21:00 UTC)
  */
-function extractSessionExtremes(candles: Candle[]) {
-  if (candles.length === 0) return { sessionHigh: 0, sessionLow: 0 };
+export function extractSessionExtremes(candles: Candle[]): SessionExtremes {
+  if (candles.length === 0) {
+    return {
+      sessionHigh: 0,
+      sessionLow: 0,
+      asianHigh: null,
+      asianLow: null,
+      londonHigh: null,
+      londonLow: null,
+      nyHigh: null,
+      nyLow: null,
+    };
+  }
+
   const recent24h = candles.slice(-288); // 24h on 5M
-  const high = Math.max(...recent24h.map((c) => c.high));
-  const low = Math.min(...recent24h.map((c) => c.low));
-  return { sessionHigh: high, sessionLow: low };
+  const sessionHigh = Math.max(...recent24h.map((c) => c.high));
+  const sessionLow = Math.min(...recent24h.map((c) => c.low));
+
+  const filterByUtcHours = (startHour: number, endHour: number) => {
+    return recent24h.filter((c) => {
+      if (!c.timestamp) return false;
+      const h = new Date(c.timestamp).getUTCHours();
+      return h >= startHour && h < endHour;
+    });
+  };
+
+  const asianCandles = filterByUtcHours(0, 8);
+  const londonCandles = filterByUtcHours(7, 15);
+  const nyCandles = filterByUtcHours(13, 21);
+
+  return {
+    sessionHigh,
+    sessionLow,
+    asianHigh: asianCandles.length > 0 ? Math.max(...asianCandles.map((c) => c.high)) : null,
+    asianLow: asianCandles.length > 0 ? Math.min(...asianCandles.map((c) => c.low)) : null,
+    londonHigh: londonCandles.length > 0 ? Math.max(...londonCandles.map((c) => c.high)) : null,
+    londonLow: londonCandles.length > 0 ? Math.min(...londonCandles.map((c) => c.low)) : null,
+    nyHigh: nyCandles.length > 0 ? Math.max(...nyCandles.map((c) => c.high)) : null,
+    nyLow: nyCandles.length > 0 ? Math.min(...nyCandles.map((c) => c.low)) : null,
+  };
 }
 
 /**
@@ -1041,17 +1083,20 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     indicators5m.mssDetected;
 
   if (hasStructuralShift) {
+    const ev15 = indicators15m.structureEvent;
+    const ev5 = indicators5m.structureEvent;
+
     const isBullShift =
+      ev15 === 'BULLISH_MSS_SWEEP' || ev15 === 'BULLISH_CHOCH' || ev15 === 'BULLISH_BOS' ||
+      ev5 === 'BULLISH_MSS_SWEEP' || ev5 === 'BULLISH_CHOCH' || ev5 === 'BULLISH_BOS' ||
       indicators15m.mssDirection === 'BULLISH' ||
-      indicators5m.mssDirection === 'BULLISH' ||
-      indicators15m.structureShift?.includes('Bullish') ||
-      indicators5m.structureShift?.includes('Bullish');
+      indicators5m.mssDirection === 'BULLISH';
 
     const isBearShift =
+      ev15 === 'BEARISH_MSS_SWEEP' || ev15 === 'BEARISH_CHOCH' || ev15 === 'BEARISH_BOS' ||
+      ev5 === 'BEARISH_MSS_SWEEP' || ev5 === 'BEARISH_CHOCH' || ev5 === 'BEARISH_BOS' ||
       indicators15m.mssDirection === 'BEARISH' ||
-      indicators5m.mssDirection === 'BEARISH' ||
-      indicators15m.structureShift?.includes('Bearish') ||
-      indicators5m.structureShift?.includes('Bearish');
+      indicators5m.mssDirection === 'BEARISH';
 
     if (isBullShift && currentPrice > indicators5m.ema20) {
       const recentLow = indicators5m.swingLow;

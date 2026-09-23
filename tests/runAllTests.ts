@@ -12,6 +12,7 @@ const testFiles = [
   'tests/aiConfidenceValidation.test.ts',
   'tests/s9SqueezeGateRegression.test.ts',
   'tests/poiPersistence.test.ts',
+  'tests/strategyQualityPhase2To14Regression.test.ts',
 ];
 
 console.log('====================================================');
