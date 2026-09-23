@@ -711,6 +711,8 @@ export function assessPriceActionTrigger(
   if (!partition.isValid || !partition.lastClosedCandle) {
     return {
       hasTrigger: false,
+      hasHardPriceActionTrigger: false,
+      priceActionScore: 0,
       primaryTrigger: null,
       allTriggers: [],
       triggerTimeframe: '5M',
@@ -730,33 +732,61 @@ export function assessPriceActionTrigger(
   const lowerWick = Math.min(last5m.open, last5m.close) - last5m.low;
 
   // 1. Rejection Wick (Dominant wick relative to body, range, and opposing wick)
+  const minWickSize = Math.max(0.6, (indicators5m?.atr14 || 2.0) * 0.25);
   let rejectionRatio = 0;
   let wickScore = 0;
+  let isDirectionalRejection = false;
   if (direction === 'BUY') {
     rejectionRatio = lowerWick / totalRange;
-    if (lowerWick > body * 1.3 && lowerWick > totalRange * 0.40 && lowerWick > upperWick * 1.4) {
+    if (lowerWick >= minWickSize && lowerWick > body * 1.3 && lowerWick > totalRange * 0.40 && lowerWick > upperWick * 1.4) {
       allTriggers.push('REJECTION_WICK');
       wickScore = 12;
+      isDirectionalRejection = true;
     }
   } else {
     rejectionRatio = upperWick / totalRange;
-    if (upperWick > body * 1.3 && upperWick > totalRange * 0.40 && upperWick > lowerWick * 1.4) {
+    if (upperWick >= minWickSize && upperWick > body * 1.3 && upperWick > totalRange * 0.40 && upperWick > lowerWick * 1.4) {
       allTriggers.push('REJECTION_WICK');
       wickScore = 12;
+      isDirectionalRejection = true;
     }
   }
 
   // 2. Body Expansion & Displacement (Unified category to prevent double/triple counting the same 5M candle)
   let bodyScore = 0;
-  const isAtrDisplacement = body > (indicators5m?.atr14 || 2.0) * 0.8;
+  let isDirectionalEngulfing = false;
+  let isDirectionalDisplacement = false;
+  let isDirectionalExpansionClose = false;
+
+  const minBodySize = Math.max(0.8, (indicators5m?.atr14 || 2.0) * 0.4);
+  const isAtrDisplacement = body >= (indicators5m?.atr14 || 2.0) * 0.8 && body > totalRange * 0.55;
+
   if (direction === 'BUY') {
-    const isEngulfing = isBull && body > totalRange * 0.60;
-    const isExpansionClose = prev5m && last5m.close > prev5m.high;
+    const isEngulfing =
+      isBull &&
+      body >= minBodySize &&
+      body > totalRange * 0.55 &&
+      prev5m !== null &&
+      prev5m !== undefined &&
+      last5m.close > prev5m.open &&
+      last5m.open <= prev5m.close + 0.2 &&
+      prev5m.close <= prev5m.open;
+
+    const isExpansionClose = prev5m !== null && prev5m !== undefined && last5m.close > prev5m.high && isBull && body >= minBodySize;
     const isDisplacement = isAtrDisplacement && isBull;
 
-    if (isEngulfing) allTriggers.push('ENGULFING');
-    if (isExpansionClose) allTriggers.push('STRONG_EXPANSION_CLOSE');
-    if (isDisplacement) allTriggers.push('DISPLACEMENT_CANDLE');
+    if (isEngulfing) {
+      allTriggers.push('ENGULFING');
+      isDirectionalEngulfing = true;
+    }
+    if (isExpansionClose) {
+      allTriggers.push('STRONG_EXPANSION_CLOSE');
+      isDirectionalExpansionClose = true;
+    }
+    if (isDisplacement) {
+      allTriggers.push('DISPLACEMENT_CANDLE');
+      isDirectionalDisplacement = true;
+    }
 
     // Prevent duplicate counting: single candle body expansion contributes once
     if (isDisplacement && isEngulfing) {
@@ -767,13 +797,31 @@ export function assessPriceActionTrigger(
       bodyScore = 8;
     }
   } else {
-    const isEngulfing = isBear && body > totalRange * 0.60;
-    const isExpansionClose = prev5m && last5m.close < prev5m.low;
+    const isEngulfing =
+      isBear &&
+      body >= minBodySize &&
+      body > totalRange * 0.55 &&
+      prev5m !== null &&
+      prev5m !== undefined &&
+      last5m.close < prev5m.open &&
+      last5m.open >= prev5m.close - 0.2 &&
+      prev5m.close >= prev5m.open;
+
+    const isExpansionClose = prev5m !== null && prev5m !== undefined && last5m.close < prev5m.low && isBear && body >= minBodySize;
     const isDisplacement = isAtrDisplacement && isBear;
 
-    if (isEngulfing) allTriggers.push('ENGULFING');
-    if (isExpansionClose) allTriggers.push('STRONG_EXPANSION_CLOSE');
-    if (isDisplacement) allTriggers.push('DISPLACEMENT_CANDLE');
+    if (isEngulfing) {
+      allTriggers.push('ENGULFING');
+      isDirectionalEngulfing = true;
+    }
+    if (isExpansionClose) {
+      allTriggers.push('STRONG_EXPANSION_CLOSE');
+      isDirectionalExpansionClose = true;
+    }
+    if (isDisplacement) {
+      allTriggers.push('DISPLACEMENT_CANDLE');
+      isDirectionalDisplacement = true;
+    }
 
     // Prevent duplicate counting: single candle body expansion contributes once
     if (isDisplacement && isEngulfing) {
@@ -785,7 +833,7 @@ export function assessPriceActionTrigger(
     }
   }
 
-  // 3. Micro-BOS / Micro-CHOCH (distinct multi-candle structure shift)
+  // 3. Micro-BOS / Micro-CHOCH (distinct multi-candle structure shift) - SCORING ONLY
   let microBosScore = 0;
   if (candles1m && candles1m.length >= 5) {
     const recent1m = candles1m.slice(-5);
@@ -803,16 +851,34 @@ export function assessPriceActionTrigger(
   }
 
   // Confluence score combines independent factors (Wick + Body + Micro-structure)
-  confirmationScore = Math.min(30, wickScore + bodyScore + microBosScore);
-  const hasTrigger = allTriggers.length > 0;
-  const primaryTrigger = allTriggers[0] ?? null;
+  const priceActionScore = wickScore + bodyScore + microBosScore;
+  confirmationScore = Math.min(30, priceActionScore);
 
-  const description = hasTrigger
+  // HARD BLOCK POLICY:
+  // Must have at least one strong directional trigger on closed 5M candle:
+  // Rejection, Engulfing, Displacement, or Expansion Close.
+  // Micro-BOS/CHOCH, candle color alone, or indicator state alone CANNOT satisfy hard trigger.
+  const hasHardPriceActionTrigger =
+    isDirectionalRejection ||
+    isDirectionalEngulfing ||
+    isDirectionalDisplacement ||
+    isDirectionalExpansionClose;
+
+  const hasTrigger = hasHardPriceActionTrigger;
+  const primaryTrigger = hasHardPriceActionTrigger
+    ? (allTriggers.find((t) => t !== 'MICRO_BOS' && t !== 'MICRO_CHOCH') ?? allTriggers[0] ?? null)
+    : null;
+
+  const description = hasHardPriceActionTrigger
     ? `Confirmed on closed 5M candle: ${allTriggers.join(' + ')} (Score: ${confirmationScore}/30)`
-    : 'No active execution trigger confirmed on closed 5M candle';
+    : (allTriggers.includes('MICRO_BOS')
+      ? `Micro-BOS detected but lacks mandatory closed 5M directional price-action trigger (Score: ${confirmationScore}/30)`
+      : 'No active execution trigger confirmed on closed 5M candle');
 
   return {
     hasTrigger,
+    hasHardPriceActionTrigger,
+    priceActionScore,
     primaryTrigger,
     allTriggers,
     triggerTimeframe: '5M',
@@ -2013,6 +2079,7 @@ export function validateTradeSignalCandidate(
     brokerSpecs?: Partial<any>;
     activeTradeDirection?: 'BUY' | 'SELL' | null;
     currentSpread?: number;
+    referenceTime?: number;
   }
 ): {
   isValid: boolean;
@@ -2381,15 +2448,23 @@ export function validateTradeSignalCandidate(
       const isBear = lastClosed5m.close < lastClosed5m.open;
       const isBull = lastClosed5m.close > lastClosed5m.open;
 
+      const isBearishDisplacement = isBear && (body > (indicators5m?.atr14 || 2.0) * 0.8 || (partition5m.prevClosedCandle && lastClosed5m.close < partition5m.prevClosedCandle.low));
+      const isBearishEngulfing = isBear && body > totalRange * 0.6;
+      const hasBearishHardTrigger = isTopRejection || isBearishEngulfing || isBearishDisplacement;
+
+      const isBullishDisplacement = isBull && (body > (indicators5m?.atr14 || 2.0) * 0.8 || (partition5m.prevClosedCandle && lastClosed5m.close > partition5m.prevClosedCandle.high));
+      const isBullishEngulfing = isBull && body > totalRange * 0.6;
+      const hasBullishHardTrigger = isBottomRejection || isBullishEngulfing || isBullishDisplacement;
+
       if (direction === 'SELL') {
-        if (!isTopRejection && !isBear) {
+        if (!hasBearishHardTrigger) {
           return {
             isValid: false,
             rejectionReason: 'TREND_CONTINUATION_HTF_QUALITY_INSUFFICIENT: H1 is RANGING requiring explicit closed M5 bearish rejection trigger',
           };
         }
       } else if (direction === 'BUY') {
-        if (!isBottomRejection && !isBull) {
+        if (!hasBullishHardTrigger) {
           return {
             isValid: false,
             rejectionReason: 'TREND_CONTINUATION_HTF_QUALITY_INSUFFICIENT: H1 is RANGING requiring explicit closed M5 bullish rejection trigger',
@@ -2449,10 +2524,11 @@ export function validateTradeSignalCandidate(
     direction,
     candles5m || [],
     candles1m || [],
-    indicators5m
+    indicators5m,
+    context.referenceTime
   );
 
-  if (!triggerAssessment.hasTrigger || triggerAssessment.confirmationScore < 8) {
+  if (!triggerAssessment.hasHardPriceActionTrigger || !triggerAssessment.hasTrigger || triggerAssessment.confirmationScore < 8) {
     return {
       isValid: false,
       rejectionReason: `MISSING_PRICE_ACTION_TRIGGER: Insufficient price action confirmation trigger on closed 5M candle`,

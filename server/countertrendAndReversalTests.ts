@@ -651,7 +651,7 @@ console.log('\n[TEST M] Confirmed Counter-Trend Setup Remains Eligible');
 {
   const bearishTriggerCandles5m: Candle[] = [
     ...dummyCandles5m.slice(0, -1),
-    createCandle(34, 4340, 4343.5, 4336.0, 4337.0), // Rejection candle from resistance 4340.0
+    createCandle(34, 4339.0, 4343.5, 4336.0, 4337.0), // Rejection candle from resistance 4340.0
   ];
 
   // M15 indicator has confirmed bearish CHOCH shift

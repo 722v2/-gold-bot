@@ -440,7 +440,7 @@ console.log('\n[TEST 12] Legitimate Trend-Following Setup Safety');
   const c5m = createCandleArray(20, 4330);
 
   // Closed 5M candle with lower wick rejection & bullish close at 4330.0
-  c5m[19] = createCandle(19, 4328.0, 4331.0, 4326.5, 4330.0, true);
+  c5m[19] = createCandle(19, 4329.0, 4330.5, 4325.0, 4330.0, true);
 
   const validBuyCandidate: TradeCandidate = {
     id: 'VALID_BUY_01',

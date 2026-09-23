@@ -563,5 +563,57 @@
     "realizedPnl": -1,
     "setupFamily": "Double Top Reversal (Confirmed M-Formation)",
     "combinationKey": "direction=SELL|fvg=BULLISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Double Top Reversal (Confirmed M-Formation)|volatility=HIGH|zone=PREMIUM"
+  },
+  {
+    "id": "exp_sig_1790104051251_rrt7k_1790105173724",
+    "rr": 1.34,
+    "factors": {
+      "fvg": "BULLISH_FVG",
+      "rsi": "NEUTRAL",
+      "macd": "BEARISH",
+      "zone": "PREMIUM",
+      "direction": "BUY",
+      "liquidity": "NONE",
+      "orderBlock": "BULLISH_OB",
+      "volatility": "HIGH",
+      "setupFamily": "Horizontal Resistance Breakout & Retest",
+      "htfStructure": "RANGING",
+      "m15Structure": "BULLISH",
+      "marketRegime": "STRONG_TREND"
+    },
+    "outcome": "WIN",
+    "tradeId": "sig_1790104051251_rrt7k",
+    "signalId": "sig_1790104051251_rrt7k",
+    "direction": "BUY",
+    "completedAt": 1790105173724,
+    "realizedPnl": 5,
+    "setupFamily": "Horizontal Resistance Breakout & Retest",
+    "combinationKey": "direction=BUY|fvg=BULLISH_FVG|htfStructure=RANGING|liquidity=NONE|m15Structure=BULLISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Horizontal Resistance Breakout & Retest|volatility=HIGH|zone=PREMIUM"
+  },
+  {
+    "id": "exp_sig_1790107352895_q8krj_1790108292293",
+    "rr": 1.71,
+    "factors": {
+      "fvg": "BULLISH_FVG",
+      "rsi": "NEUTRAL",
+      "macd": "BULLISH",
+      "zone": "PREMIUM",
+      "direction": "BUY",
+      "liquidity": "NONE",
+      "orderBlock": "BULLISH_OB",
+      "volatility": "HIGH",
+      "setupFamily": "Horizontal Resistance Breakout & Retest",
+      "htfStructure": "RANGING",
+      "m15Structure": "BULLISH",
+      "marketRegime": "STRONG_TREND"
+    },
+    "outcome": "LOSS",
+    "tradeId": "sig_1790107352895_q8krj",
+    "signalId": "sig_1790107352895_q8krj",
+    "direction": "BUY",
+    "completedAt": 1790108292293,
+    "realizedPnl": -4.4,
+    "setupFamily": "Horizontal Resistance Breakout & Retest",
+    "combinationKey": "direction=BUY|fvg=BULLISH_FVG|htfStructure=RANGING|liquidity=NONE|m15Structure=BULLISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Horizontal Resistance Breakout & Retest|volatility=HIGH|zone=PREMIUM"
   }
 ]

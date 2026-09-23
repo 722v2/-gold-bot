@@ -75,6 +75,8 @@ export type PriceActionTriggerType =
 
 export interface TriggerAssessment {
   hasTrigger: boolean;
+  hasHardPriceActionTrigger: boolean;
+  priceActionScore: number;
   primaryTrigger: PriceActionTriggerType | null;
   allTriggers: PriceActionTriggerType[];
   triggerTimeframe: string;

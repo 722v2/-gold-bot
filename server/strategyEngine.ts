@@ -709,7 +709,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       (prev5m.low < indicators15m.swingLow && last5m.close > indicators15m.swingLow);
 
     // Bullish Sweep of Sell-Side Liquidity (SSL)
-    if (sweptLow || (last5m.low < indicators5m.swingLow && c5mMetrics.isBottomRejection)) {
+    const hasBullishConfirmation = c5mMetrics.isBottomRejection || c5mMetrics.isEngulfingBull || (c5mMetrics.isBull && c5mMetrics.body > atr5m * 0.8);
+    if ((sweptLow && hasBullishConfirmation) || (last5m.low < indicators5m.swingLow && c5mMetrics.isBottomRejection)) {
       const swingLowRef = Math.min(last5m.low, prev5m.low, indicators5m.swingLow);
       const cand = evaluateCandidate(
         'LIQUIDITY_SWEEP',
@@ -733,7 +734,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     }
 
     // Bearish Sweep of Buy-Side Liquidity (BSL)
-    if (sweptHigh || (last5m.high > indicators5m.swingHigh && c5mMetrics.isTopRejection)) {
+    const hasBearishConfirmation = c5mMetrics.isTopRejection || c5mMetrics.isEngulfingBear || (c5mMetrics.isBear && c5mMetrics.body > atr5m * 0.8);
+    if ((sweptHigh && hasBearishConfirmation) || (last5m.high > indicators5m.swingHigh && c5mMetrics.isTopRejection)) {
       const swingHighRef = Math.max(last5m.high, prev5m.high, indicators5m.swingHigh);
       const cand = evaluateCandidate(
         'LIQUIDITY_SWEEP',
@@ -767,7 +769,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     // Bullish OB Retest (Demand Zone) - Gated: Blocked in STRONG_DOWNTREND / WEAK_DOWNTREND
     const bullishOb = ob15m?.type === 'BULLISH' ? ob15m : ob5m?.type === 'BULLISH' ? ob5m : null;
     if (!isDowntrendRegime && bullishOb && currentPrice >= bullishOb.low - 0.5 && currentPrice <= bullishOb.high + 1.2) {
-      if (c5mMetrics.isBottomRejection || c5mMetrics.isBull || prev5mMetrics.isBottomRejection) {
+      const hasBullishObTrigger = c5mMetrics.isBottomRejection || c5mMetrics.isEngulfingBull || (c5mMetrics.isBull && c5mMetrics.body > atr5m * 0.8) || (prev5mMetrics.isBottomRejection && c5mMetrics.isBull);
+      if (hasBullishObTrigger) {
         const cand = evaluateCandidate(
           'ORDER_BLOCK',
           'Bullish Order Block Retest & Reaction',
@@ -793,7 +796,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     // Bearish OB Retest (Supply Zone) - Gated: Blocked in STRONG_UPTREND / WEAK_UPTREND
     const bearishOb = ob15m?.type === 'BEARISH' ? ob15m : ob5m?.type === 'BEARISH' ? ob5m : null;
     if (!isUptrendRegime && bearishOb && currentPrice <= bearishOb.high + 0.5 && currentPrice >= bearishOb.low - 1.2) {
-      if (c5mMetrics.isTopRejection || c5mMetrics.isBear || prev5mMetrics.isTopRejection) {
+      const hasBearishObTrigger = c5mMetrics.isTopRejection || c5mMetrics.isEngulfingBear || (c5mMetrics.isBear && c5mMetrics.body > atr5m * 0.8) || (prev5mMetrics.isTopRejection && c5mMetrics.isBear);
+      if (hasBearishObTrigger) {
         const cand = evaluateCandidate(
           'ORDER_BLOCK',
           'Bearish Order Block Retest & Reaction',
@@ -824,7 +828,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     const fvg = indicators15m.fvg || indicators5m.fvg;
     // Bullish FVG - Gated: Blocked in STRONG_DOWNTREND / WEAK_DOWNTREND
     if (!isDowntrendRegime && fvg && fvg.type === 'BULLISH' && currentPrice >= fvg.bottom - 0.5 && currentPrice <= fvg.top + 0.8) {
-      if (c5mMetrics.isBottomRejection || c5mMetrics.isBull) {
+      const hasBullishFvgTrigger = c5mMetrics.isBottomRejection || c5mMetrics.isEngulfingBull || (c5mMetrics.isBull && c5mMetrics.body > atr5m * 0.8);
+      if (hasBullishFvgTrigger) {
         const cand = evaluateCandidate(
           'FVG_IMBALANCE',
           'Bullish Fair Value Gap (FVG) Mitigation',
@@ -847,7 +852,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       }
     // Bearish FVG - Gated: Blocked in STRONG_UPTREND / WEAK_UPTREND
     } else if (!isUptrendRegime && fvg && fvg.type === 'BEARISH' && currentPrice <= fvg.top + 0.5 && currentPrice >= fvg.bottom - 0.8) {
-      if (c5mMetrics.isTopRejection || c5mMetrics.isBear) {
+      const hasBearishFvgTrigger = c5mMetrics.isTopRejection || c5mMetrics.isEngulfingBear || (c5mMetrics.isBear && c5mMetrics.body > atr5m * 0.8);
+      if (hasBearishFvgTrigger) {
         const cand = evaluateCandidate(
           'FVG_IMBALANCE',
           'Bearish Fair Value Gap (FVG) Mitigation',
@@ -929,7 +935,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   // STRATEGY 5: FIBONACCI OTE (61.8% - 78.6%) IN PREMIUM / DISCOUNT
   // =========================================================================
   if (!isDowntrendRegime && m15Zone === 'DISCOUNT' && currentPrice >= fib15m.bullishOteLow - 1.0 && currentPrice <= fib15m.bullishOteHigh + 1.0) {
-    if (c5mMetrics.isBottomRejection || c5mMetrics.isBull) {
+    const hasBullishFibTrigger = c5mMetrics.isBottomRejection || c5mMetrics.isEngulfingBull || (c5mMetrics.isBull && c5mMetrics.body > atr5m * 0.8);
+    if (hasBullishFibTrigger) {
       const cand = evaluateCandidate(
         'FIBONACCI_OTE',
         'Fibonacci Optimal Trade Entry (OTE 61.8% - 78.6% Discount)',
@@ -951,7 +958,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       if (cand) candidates.push(cand);
     }
   } else if (!isUptrendRegime && m15Zone === 'PREMIUM' && currentPrice >= fib15m.bearishOteLow - 1.0 && currentPrice <= fib15m.bearishOteHigh + 1.0) {
-    if (c5mMetrics.isTopRejection || c5mMetrics.isBear) {
+    const hasBearishFibTrigger = c5mMetrics.isTopRejection || c5mMetrics.isEngulfingBear || (c5mMetrics.isBear && c5mMetrics.body > atr5m * 0.8);
+    if (hasBearishFibTrigger) {
       const cand = evaluateCandidate(
         'FIBONACCI_OTE',
         'Fibonacci Optimal Trade Entry (OTE 61.8% - 78.6% Premium)',
@@ -995,7 +1003,10 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       Math.abs(currentPrice - indicators5m.vwap) <= atr5m * 1.5 ||
       currentPrice <= indicators5m.ema20 + atr5m * 1.0;
 
-    if (isPullbackToEma && (c5mMetrics.isBottomRejection || c5mMetrics.isBull)) {
+    const isBullDisplacement = c5mMetrics.isBull && (c5mMetrics.body > atr5m * 0.8 || last5m.close > prev5m.high);
+    const hasBullishHardTrigger = c5mMetrics.isBottomRejection || c5mMetrics.isEngulfingBull || isBullDisplacement;
+
+    if (isPullbackToEma && hasBullishHardTrigger) {
       const pullbackSl = Math.min(last5m.low, prev5m.low);
       const cand = evaluateCandidate(
         'MARKET_STRUCTURE',
@@ -1025,7 +1036,10 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       Math.abs(currentPrice - indicators5m.vwap) <= atr5m * 1.5 ||
       currentPrice >= indicators5m.ema20 - atr5m * 1.0;
 
-    if (isPullbackToEma && (c5mMetrics.isTopRejection || c5mMetrics.isBear)) {
+    const isBearDisplacement = c5mMetrics.isBear && (c5mMetrics.body > atr5m * 0.8 || last5m.close < prev5m.low);
+    const hasBearishHardTrigger = c5mMetrics.isTopRejection || c5mMetrics.isEngulfingBear || isBearDisplacement;
+
+    if (isPullbackToEma && hasBearishHardTrigger) {
       const pullbackSl = Math.max(last5m.high, prev5m.high);
       const cand = evaluateCandidate(
         'MARKET_STRUCTURE',
@@ -1115,12 +1129,12 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       (last5m.high >= rangeHigh - sweepTolerance || prev5m.high >= rangeHigh - sweepTolerance) &&
       last5m.close <= rangeHigh + sweepTolerance * 0.7;
 
+    const isBearDisplacement = c5mMetrics.isBear && (c5mMetrics.body > atr5m * 0.8 || last5m.close < prev5m.low);
     const hasBearishRejection =
       c5mMetrics.isTopRejection ||
-      c5mMetrics.isBear ||
-      prev5mMetrics.isTopRejection ||
-      last5m.close < prev5m.close ||
-      indicators5m.rsi14 >= 52;
+      c5mMetrics.isEngulfingBear ||
+      isBearDisplacement ||
+      (prev5mMetrics.isTopRejection && c5mMetrics.isBear);
 
     if (isNearRangeHigh && sweptRangeHigh && hasBearishRejection) {
       const sfpHighPoint = Math.max(last5m.high, prev5m.high, rangeHigh);
@@ -1151,12 +1165,12 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       (last5m.low <= rangeLow + sweepTolerance || prev5m.low <= rangeLow + sweepTolerance) &&
       last5m.close >= rangeLow - sweepTolerance * 0.7;
 
+    const isBullDisplacement = c5mMetrics.isBull && (c5mMetrics.body > atr5m * 0.8 || last5m.close > prev5m.high);
     const hasBullishRejection =
       c5mMetrics.isBottomRejection ||
-      c5mMetrics.isBull ||
-      prev5mMetrics.isBottomRejection ||
-      last5m.close > prev5m.close ||
-      indicators5m.rsi14 <= 48;
+      c5mMetrics.isEngulfingBull ||
+      isBullDisplacement ||
+      (prev5mMetrics.isBottomRejection && c5mMetrics.isBull);
 
     if (isNearRangeLow && sweptRangeLow && hasBullishRejection) {
       const sfpLowPoint = Math.min(last5m.low, prev5m.low, rangeLow);
