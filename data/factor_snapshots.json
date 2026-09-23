@@ -145,5 +145,26 @@
     },
     "combinationKey": "direction=BUY|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=SWEEP_SELL_SIDE|m15Structure=BEARISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Range SFP Reversal (Range Low Liquidity Sweep & Rejection)|volatility=HIGH|zone=DISCOUNT",
     "createdAt": 1790159024955
+  },
+  "sig_1790184734192_crdcz": {
+    "signalId": "sig_1790184734192_crdcz",
+    "setupFamily": "Range SFP Reversal (Range Low Liquidity Sweep & Rejection)",
+    "direction": "BUY",
+    "factors": {
+      "setupFamily": "Range SFP Reversal (Range Low Liquidity Sweep & Rejection)",
+      "direction": "BUY",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND",
+      "liquidity": "SWEEP_SELL_SIDE",
+      "orderBlock": "BULLISH_OB",
+      "fvg": "BEARISH_FVG",
+      "zone": "DISCOUNT",
+      "rsi": "NEUTRAL",
+      "macd": "BULLISH",
+      "volatility": "HIGH"
+    },
+    "combinationKey": "direction=BUY|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=SWEEP_SELL_SIDE|m15Structure=BEARISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Range SFP Reversal (Range Low Liquidity Sweep & Rejection)|volatility=HIGH|zone=DISCOUNT",
+    "createdAt": 1790184734192
   }
 }

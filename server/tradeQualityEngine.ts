@@ -32,9 +32,12 @@ import { assessEntryLocationQuality, EntryLocationQuality } from './entryLocatio
 export class PoiFreshnessTracker {
   private pois: Map<string, PoiRecord> = new Map();
 
-  constructor(initialPois: PoiRecord[] = []) {
-    for (const poi of initialPois) {
-      this.pois.set(poi.id, poi);
+  constructor(initialPois?: PoiRecord[]) {
+    const list = initialPois ?? (typeof storage?.getPois === 'function' ? storage.getPois() : []);
+    for (const poi of list) {
+      if (poi && poi.id) {
+        this.pois.set(poi.id, poi);
+      }
     }
   }
 
@@ -90,6 +93,11 @@ export class PoiFreshnessTracker {
     };
 
     this.pois.set(id, newPoi);
+    try {
+      storage.savePoi(newPoi);
+    } catch {
+      // Non-blocking
+    }
     return newPoi;
   }
 
@@ -194,7 +202,14 @@ export class PoiFreshnessTracker {
     let reason = 'Fresh zone (0 previous mitigations)';
 
     const currentState = poi.state;
+    try {
+      storage.savePoi(poi);
+    } catch {
+      // Non-blocking
+    }
+
     if (poi.type === 'DYNAMIC_MA') {
+      poi.state = poi.tapCount <= 2 ? 'FRESH' : 'TESTED_ONCE';
       isTradable = true;
       multiplier = 0.95;
       reason = 'Dynamic MA/VWAP support/resistance (Active trend pullback)';
@@ -1567,7 +1582,8 @@ export function rankCandidate(cand: any, htfRegime?: string): number {
 
   // 3. HTF regime alignment
   const dir = cand.direction || (cand.signal?.includes('BUY') ? 'BUY' : 'SELL');
-  const regime = (htfRegime || '').toUpperCase();
+  const regimeStr = typeof htfRegime === 'string' ? htfRegime : (htfRegime as any)?.regime || String(htfRegime || '');
+  const regime = regimeStr.toUpperCase();
   if (dir === 'BUY' && (regime.includes('UPTREND') || regime.includes('BULLISH'))) {
     score += 15;
   } else if (dir === 'SELL' && (regime.includes('DOWNTREND') || regime.includes('BEARISH'))) {
@@ -2016,15 +2032,12 @@ export function resolveFinalSignalConflict(
     for (const cand of clusterRepresentatives) {
       const candIsBuy = (cand.direction || cand.signal || '').toUpperCase().includes('BUY');
       if (candIsBuy !== activeIsBuy) {
-        // Candidate opposes active trade
-        const candScore = rankCandidate(cand, htfRegime);
-        if (candScore <= activeScore + 5.0) {
-          clusterSuppressed.push({
-            candidate: cand,
-            reason: `OPPOSING_ACTIVE_BLOCKED: صفقة ${activeIsBuy ? 'BUY' : 'SELL'} جارية حالياً (${activeTrade.setup || 'Active Trade'}). تم حظر إشارة ${cand.signal || cand.direction} (${cand.setup || cand.setupName}) المعارضة لمنع التضارب حتى اكتمال الصفقة الجارية.`,
-          });
-          continue;
-        }
+        // Candidate opposes active trade - strictly block to prevent contradictory positions
+        clusterSuppressed.push({
+          candidate: cand,
+          reason: `OPPOSING_ACTIVE_BLOCKED: صفقة ${activeIsBuy ? 'BUY' : 'SELL'} جارية حالياً (${activeTrade.setup || 'Active Trade'}). تم حظر إشارة ${cand.signal || cand.direction} (${cand.setup || cand.setupName}) المعارضة لمنع التضارب حتى اكتمال الصفقة الجارية.`,
+        });
+        continue;
       }
       nonOpposedReps.push(cand);
     }
@@ -2642,7 +2655,8 @@ export function validateTradeSignalCandidate(
     family !== 'COUNTERTREND_SCALP' &&
     family !== 'DOUBLE_TOP_BOTTOM' &&
     family !== 'BARE_SR' &&
-    family !== 'STRUCTURE_ENGULFING'
+    family !== 'STRUCTURE_ENGULFING' &&
+    family !== 'MARKET_STRUCTURE'
   ) {
     return {
       isValid: false,

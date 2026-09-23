@@ -1,5 +1,5 @@
 import { assessEntryTimingAndAntiChase, assessStopLossQuality, validateTradeSignalCandidate } from '../server/tradeQualityEngine.js';
-import { optimizeSetupExecutability, evaluateTradeRisk } from '../server/riskManager.js';
+import { evaluateTradeRisk } from '../server/riskManager.js';
 import { analyzeTechnicals } from '../server/indicators.js';
 import { Candle } from '../src/types.js';
 
@@ -413,10 +413,12 @@ async function runEntrySlQualityRegressionSuite() {
   // -------------------------------------------------------------------------
   // SCENARIO 15: Executability optimization preserves structural SL without artificial tightening
   // -------------------------------------------------------------------------
+  // SCENARIO 15: Trade risk evaluation preserves structural SL without artificial tightening
+  // -------------------------------------------------------------------------
   {
     const entry = 2501.0;
     const stopLoss = 2496.0; // 50 pts SL
-    const opt = optimizeSetupExecutability({
+    const res = evaluateTradeRisk({
       balance: 10,
       riskPercent: 15,
       entry,
@@ -439,19 +441,19 @@ async function runEntrySlQualityRegressionSuite() {
       },
     });
     assert(
-      opt.wasOptimized === false && opt.optimizedStopLoss === stopLoss,
-      'Scenario 15: optimizeSetupExecutability preserves structural SL without artificial tightening',
-      `wasOptimized=${opt.wasOptimized}, initialSL=${stopLoss}, optimizedSL=${opt.optimizedStopLoss}`
+      res.positionSizing.stopLossPrice === stopLoss,
+      'Scenario 15: evaluateTradeRisk preserves structural SL without artificial tightening',
+      `initialSL=${stopLoss}, evaluatedSL=${res.positionSizing.stopLossPrice}`
     );
   }
 
   // -------------------------------------------------------------------------
-  // SCENARIO 16: Executability optimization preserves structural entry without artificial shifting
+  // SCENARIO 16: Trade risk evaluation preserves structural entry without artificial shifting
   // -------------------------------------------------------------------------
   {
     const entry = 2501.0;
     const stopLoss = 2496.0;
-    const opt = optimizeSetupExecutability({
+    const res = evaluateTradeRisk({
       balance: 10,
       riskPercent: 15,
       entry,
@@ -474,9 +476,9 @@ async function runEntrySlQualityRegressionSuite() {
       },
     });
     assert(
-      opt.optimizedEntry === entry,
-      'Scenario 16: optimizeSetupExecutability preserves structural entry without artificial shifting',
-      `initialEntry=${entry}, optimizedEntry=${opt.optimizedEntry}`
+      res.positionSizing.entryPrice === entry,
+      'Scenario 16: evaluateTradeRisk preserves structural entry without artificial shifting',
+      `initialEntry=${entry}, evaluatedEntry=${res.positionSizing.entryPrice}`
     );
   }
 

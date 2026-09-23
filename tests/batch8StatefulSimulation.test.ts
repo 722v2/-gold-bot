@@ -14,7 +14,6 @@ import {
 } from '../server/tradeQualityEngine.js';
 import {
   evaluateTradeRisk,
-  optimizeSetupExecutability,
 } from '../server/riskManager.js';
 import {
   TradeManagementEngine,

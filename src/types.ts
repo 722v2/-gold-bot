@@ -198,6 +198,9 @@ export interface TechnicalIndicators {
   trendStructure?: 'HH_HL' | 'LH_LL' | 'RANGING';
   chochDetected?: boolean;
   bosDetected?: boolean;
+  mssDetected?: boolean;
+  mssDirection?: 'BULLISH' | 'BEARISH';
+  mssType?: string;
   liquidityLevels?: {
     buySideLiquidity: number; // Swing Highs pool
     sellSideLiquidity: number; // Swing Lows pool

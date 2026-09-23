@@ -529,14 +529,14 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
         derivedPoiPrice = patternMetadata.dynamicPoiLevel;
         derivedPoiTop = patternMetadata.dynamicPoiLevel + 0.25 * atr5m;
         derivedPoiBottom = patternMetadata.dynamicPoiLevel - 0.25 * atr5m;
-        poiType = 'SWING_LEVEL';
+        poiType = 'DYNAMIC_MA';
       } else if (family === 'MARKET_STRUCTURE') {
         const emaRef = indicators5m.ema20 ?? indicators5m.vwap;
         if (emaRef) {
           derivedPoiPrice = emaRef;
           derivedPoiTop = emaRef + 0.25 * atr5m;
           derivedPoiBottom = emaRef - 0.25 * atr5m;
-          poiType = 'SWING_LEVEL';
+          poiType = 'DYNAMIC_MA';
         }
       } else if (family === 'ORDER_BLOCK') {
         const ob = direction === 'BUY'
@@ -610,7 +610,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       family !== 'COUNTERTREND_SCALP' &&
       family !== 'DOUBLE_TOP_BOTTOM' &&
       family !== 'BARE_SR' &&
-      family !== 'STRUCTURE_ENGULFING'
+      family !== 'STRUCTURE_ENGULFING' &&
+      family !== 'MARKET_STRUCTURE'
     ) {
       console.log(`[StrategyEngine] Disqualified ${setupName} due to invalid pullback structure (${pullbackAssessment.reasons.join(', ')})`);
       return null;
@@ -1029,11 +1030,28 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   }
 
   // =========================================================================
-  // STRATEGY 4: MARKET STRUCTURE BOS / CHOCH CONTINUATION & RETEST
+  // STRATEGY 4: MARKET STRUCTURE BOS / CHOCH / MSS CONTINUATION & RETEST
   // =========================================================================
-  if (indicators15m.bosDetected || indicators15m.chochDetected || indicators5m.bosDetected || indicators5m.chochDetected) {
-    const isBullShift = indicators15m.structureShift?.includes('Bullish') || indicators5m.structureShift?.includes('Bullish');
-    const isBearShift = indicators15m.structureShift?.includes('Bearish') || indicators5m.structureShift?.includes('Bearish');
+  const hasStructuralShift =
+    indicators15m.bosDetected ||
+    indicators15m.chochDetected ||
+    indicators15m.mssDetected ||
+    indicators5m.bosDetected ||
+    indicators5m.chochDetected ||
+    indicators5m.mssDetected;
+
+  if (hasStructuralShift) {
+    const isBullShift =
+      indicators15m.mssDirection === 'BULLISH' ||
+      indicators5m.mssDirection === 'BULLISH' ||
+      indicators15m.structureShift?.includes('Bullish') ||
+      indicators5m.structureShift?.includes('Bullish');
+
+    const isBearShift =
+      indicators15m.mssDirection === 'BEARISH' ||
+      indicators5m.mssDirection === 'BEARISH' ||
+      indicators15m.structureShift?.includes('Bearish') ||
+      indicators5m.structureShift?.includes('Bearish');
 
     if (isBullShift && currentPrice > indicators5m.ema20) {
       const recentLow = indicators5m.swingLow;
@@ -1241,7 +1259,18 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   // =========================================================================
   // STRATEGY 7: COUNTERTREND SCALP (Extreme Extension + Strong Reversal)
   // =========================================================================
-  if (indicators5m.rsi14 >= 72 && c5mMetrics.isTopRejection && currentPrice > indicators15m.swingHigh - 1.0) {
+  const distFrom5mEma = Math.abs(currentPrice - indicators5m.ema20);
+  const isExtremeExtensionSell =
+    indicators5m.rsi14 >= 74 ||
+    distFrom5mEma >= atr5m * 2.5 ||
+    (indicators5m.bollingerBands && last5m.high >= indicators5m.bollingerBands.upper);
+
+  const isExtremeExtensionBuy =
+    indicators5m.rsi14 <= 26 ||
+    distFrom5mEma >= atr5m * 2.5 ||
+    (indicators5m.bollingerBands && last5m.low <= indicators5m.bollingerBands.lower);
+
+  if (isExtremeExtensionSell && c5mMetrics.isTopRejection && currentPrice >= Math.min(indicators15m.swingHigh, indicators5m.swingHigh) - 0.5) {
     const cand = evaluateCandidate(
       'COUNTERTREND_SCALP',
       'Countertrend Mean-Reversion Scalp (Overbought Rejection)',
@@ -1250,7 +1279,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       currentPrice,
       Math.max(last5m.high, indicators5m.swingHigh),
       [
-        `تشبع شرائي حاد (RSI > 72) مع ذيل رفض علوي قوي عند قمة النطاق.`,
+        `تشبع شرائي حاد (RSI = ${indicators5m.rsi14.toFixed(1)}) مع ذيل رفض علوي قوي عند قمة النطاق.`,
         `فرصة مضاربية سريعة لاستهداف الارتداد نحو خط التوازن (VWAP / 50% Equilibrium).`,
         `وقف خسارة فني محكم أعلى قمة الشمعة الحالية.`,
       ],
@@ -1261,7 +1290,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       17
     );
     if (cand) candidates.push(cand);
-  } else if (indicators5m.rsi14 <= 28 && c5mMetrics.isBottomRejection && currentPrice < indicators15m.swingLow + 1.0) {
+  } else if (isExtremeExtensionBuy && c5mMetrics.isBottomRejection && currentPrice <= Math.max(indicators15m.swingLow, indicators5m.swingLow) + 0.5) {
     const cand = evaluateCandidate(
       'COUNTERTREND_SCALP',
       'Countertrend Mean-Reversion Scalp (Oversold Bounce)',
@@ -1270,7 +1299,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       currentPrice,
       Math.min(last5m.low, indicators5m.swingLow),
       [
-        `تشبع بيعي مفرط (RSI < 28) مع شمعة ارتداد ذات ذيل سفلي واضح.`,
+        `تشبع بيعي مفرط (RSI = ${indicators5m.rsi14.toFixed(1)}) مع شمعة ارتداد ذات ذيل سفلي واضح.`,
         `صفقة سريعة لاستهداف الارتداد التصحيحي نحو متوسطات الحركة.`,
         `وقف خسارة دقيق أسفل قاع السيولة الأخير.`,
       ],
@@ -1400,16 +1429,14 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   const effectiveLowFloor = isCompressionActive ? Math.max(rangeLowBoundary, localConsolidationLow) : rangeLowBoundary;
 
   const bb5mWidth = indicators5m.bollingerBands ? (indicators5m.bollingerBands.upper - indicators5m.bollingerBands.lower) : 10.0;
+  const isVolatilityCompressed = (indicators15m.regimeContext?.volatilityRatio !== undefined && indicators15m.regimeContext.volatilityRatio <= 0.90);
+  const isConsolidationTight = Math.abs(localConsolidationHigh - localConsolidationLow) <= Math.max(3.5, atr5m * 2.5);
+
   const isSqueezePreceding =
     isCompressionActive ||
-    bb5mWidth <= Math.max(12.0, atr5m * 5.0) ||
-    indicators15m.marketRegime === 'NORMAL_RANGE' ||
-    indicators15m.marketRegime === 'VOLATILE_RANGE' ||
-    indicators15m.marketRegime === 'TRANSITION' ||
-    indicators15m.marketRegime === 'STRONG_UPTREND' ||
-    indicators15m.marketRegime === 'STRONG_DOWNTREND' ||
-    indicators15m.marketRegime === 'WEAK_UPTREND' ||
-    indicators15m.marketRegime === 'WEAK_DOWNTREND';
+    bb5mWidth <= Math.max(8.0, atr5m * 2.8) ||
+    isVolatilityCompressed ||
+    isConsolidationTight;
 
   const isOverextendedRegime = indicators15m.regimeContext?.isOverextended === true;
 

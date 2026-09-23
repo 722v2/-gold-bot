@@ -120,6 +120,10 @@ export function assessEntryLocationQuality(params: {
     ) {
       return;
     }
+    // Ignore current entry/candle level noise (within 0.3 ATR of entry)
+    if (Math.abs(price - entry) < 0.3 * atr) {
+      return;
+    }
     if (direction === 'SELL' && price < entry - 0.05) barriers.push(price);
     if (direction === 'BUY' && price > entry + 0.05) barriers.push(price);
   };

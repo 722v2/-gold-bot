@@ -6,7 +6,7 @@ import {
   assessEntryTimingAndAntiChase,
   validateTradeSignalCandidate,
 } from '../server/tradeQualityEngine.js';
-import { optimizeSetupExecutability } from '../server/riskManager.js';
+import { evaluateTradeRisk } from '../server/riskManager.js';
 import { Candle, TechnicalIndicators } from '../src/types.js';
 
 function buildMockCandle(
@@ -605,12 +605,12 @@ export async function runEntryTimingQualityRegressionSuite() {
   // -------------------------------------------------------------------------
   // TEST 14: No Artificial Repair on BUY (SL / Entry / TP Immutable)
   // -------------------------------------------------------------------------
-  runTest('TEST 14: No artificial repair on BUY — optimizeSetupExecutability does not shift entry, widen SL, or stretch TP', () => {
+  runTest('TEST 14: No artificial repair on BUY — evaluateTradeRisk does not shift entry, widen SL, or stretch TP', () => {
     const rawEntry = 2642.0;
     const rawSl = 2634.0; // 8.0 pts = 80 gold pts (> 65 pts ceiling)
     const rawTp1 = 2650.0;
 
-    const opt = optimizeSetupExecutability({
+    const res = evaluateTradeRisk({
       balance: 100,
       riskPercent: 5.0,
       entry: rawEntry,
@@ -621,23 +621,20 @@ export async function runEntryTimingQualityRegressionSuite() {
       brokerSpecs: { minSlPoints: 35, maxSlPoints: 65, minRr: 1.0 },
     });
 
-    // Optimizer must NOT artificially compress SL or shift entry to make it pass
-    assert.strictEqual(opt.wasOptimized, false, 'wasOptimized must remain false');
-    assert.strictEqual(opt.optimizedEntry, rawEntry, 'Entry must NOT be shifted');
-    assert.strictEqual(opt.optimizedStopLoss, rawSl, 'Stop Loss must NOT be clamped or tightened');
-    assert.strictEqual(opt.optimizedTp1, rawTp1, 'TP1 must NOT be stretched');
-    assert.strictEqual(opt.isExecutable, false, 'Setup violating 65 pt ceiling must be marked isExecutable: false');
+    assert.strictEqual(res.valid, false, 'Setup violating 65 pt ceiling must be rejected');
+    assert.strictEqual(res.positionSizing.entryPrice, rawEntry, 'Entry must NOT be shifted');
+    assert.strictEqual(res.positionSizing.stopLossPrice, rawSl, 'Stop Loss must NOT be clamped or tightened');
   });
 
   // -------------------------------------------------------------------------
   // TEST 15: No Artificial Repair on SELL (SL / Entry / TP Immutable)
   // -------------------------------------------------------------------------
-  runTest('TEST 15: No artificial repair on SELL — optimizeSetupExecutability does not shift entry, widen SL, or stretch TP', () => {
+  runTest('TEST 15: No artificial repair on SELL — evaluateTradeRisk does not shift entry, widen SL, or stretch TP', () => {
     const rawEntry = 2658.0;
     const rawSl = 2666.0; // 8.0 pts = 80 gold pts (> 65 pts ceiling)
     const rawTp1 = 2650.0;
 
-    const opt = optimizeSetupExecutability({
+    const res = evaluateTradeRisk({
       balance: 100,
       riskPercent: 5.0,
       entry: rawEntry,
@@ -648,11 +645,9 @@ export async function runEntryTimingQualityRegressionSuite() {
       brokerSpecs: { minSlPoints: 35, maxSlPoints: 65, minRr: 1.0 },
     });
 
-    assert.strictEqual(opt.wasOptimized, false, 'wasOptimized must remain false');
-    assert.strictEqual(opt.optimizedEntry, rawEntry, 'Entry must NOT be shifted');
-    assert.strictEqual(opt.optimizedStopLoss, rawSl, 'Stop Loss must NOT be clamped or tightened');
-    assert.strictEqual(opt.optimizedTp1, rawTp1, 'TP1 must NOT be stretched');
-    assert.strictEqual(opt.isExecutable, false, 'Setup violating 65 pt ceiling must be marked isExecutable: false');
+    assert.strictEqual(res.valid, false, 'Setup violating 65 pt ceiling must be rejected');
+    assert.strictEqual(res.positionSizing.entryPrice, rawEntry, 'Entry must NOT be shifted');
+    assert.strictEqual(res.positionSizing.stopLossPrice, rawSl, 'Stop Loss must NOT be clamped or tightened');
   });
 
   // -------------------------------------------------------------------------

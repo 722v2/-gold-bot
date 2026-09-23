@@ -272,7 +272,7 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
       const high = Number(Math.max(c.open, c.close).toFixed(2));
       const low = Number(c.low.toFixed(2));
       const candlesAfter = recent.slice(i + 2);
-      const isMitigated = candlesAfter.some((after) => after.close < low);
+      const isMitigated = candlesAfter.some((after) => after.low <= high);
       if (!isMitigated && orderBlocks.length < 5) {
         orderBlocks.push({
           type: 'BULLISH',
@@ -289,7 +289,7 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
       const high = Number(c.high.toFixed(2));
       const low = Number(Math.min(c.open, c.close).toFixed(2));
       const candlesAfter = recent.slice(i + 2);
-      const isMitigated = candlesAfter.some((after) => after.close > high);
+      const isMitigated = candlesAfter.some((after) => after.high >= low);
       if (!isMitigated && orderBlocks.length < 5) {
         orderBlocks.push({
           type: 'BEARISH',
@@ -315,7 +315,7 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
       const top = Number(c3.low.toFixed(2));
       const bottom = Number(c1.high.toFixed(2));
       const candlesAfter = recent.slice(i + 1);
-      const isMitigated = candlesAfter.some((after) => after.low <= bottom);
+      const isMitigated = candlesAfter.some((after) => after.low <= top);
       if (!isMitigated && fvgZones.length < 5) {
         fvgZones.push({
           type: 'BULLISH',
@@ -331,7 +331,7 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
       const top = Number(c1.low.toFixed(2));
       const bottom = Number(c3.high.toFixed(2));
       const candlesAfter = recent.slice(i + 1);
-      const isMitigated = candlesAfter.some((after) => after.high >= top);
+      const isMitigated = candlesAfter.some((after) => after.high >= bottom);
       if (!isMitigated && fvgZones.length < 5) {
         fvgZones.push({
           type: 'BEARISH',
@@ -458,6 +458,10 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
     trendStructure = 'LH_LL'; // Lower Highs & Lower Lows (Bearish Structure)
   }
 
+  let mssDetected = false;
+  let mssDirection: 'BULLISH' | 'BEARISH' | undefined = undefined;
+  let mssType: string | undefined = undefined;
+
   // CHOCH (Change of Character): Reversal breaking the structural pivot
   if (trendStructure === 'HH_HL' && latestClose < priorLow) {
     chochDetected = true;
@@ -471,10 +475,23 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
   } else if (latestClose < swingLow) {
     bosDetected = true;
     structureShift = 'Bearish BOS (Break of Structure)';
-  } else if (sweptHigh && latestClose < ema20) {
-    structureShift = 'Bearish MSS after Liquidity Sweep';
+  }
+
+  // MSS (Market Structure Shift) after Liquidity Sweep
+  if (sweptHigh && latestClose < ema20) {
+    mssDetected = true;
+    mssDirection = 'BEARISH';
+    mssType = 'SWEEP_MSS';
+    if (!structureShift) {
+      structureShift = 'Bearish MSS after Liquidity Sweep';
+    }
   } else if (sweptLow && latestClose > ema20) {
-    structureShift = 'Bullish MSS after Liquidity Sweep';
+    mssDetected = true;
+    mssDirection = 'BULLISH';
+    mssType = 'SWEEP_MSS';
+    if (!structureShift) {
+      structureShift = 'Bullish MSS after Liquidity Sweep';
+    }
   }
 
   // Liquidity levels: Buy-side liquidity (BSL) above swing highs, Sell-side liquidity (SSL) below swing lows
@@ -614,6 +631,9 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
     trendStructure,
     chochDetected,
     bosDetected,
+    mssDetected,
+    mssDirection,
+    mssType,
     liquidityLevels,
     orderBlock,
     orderBlocks,
@@ -1016,9 +1036,15 @@ export function hasConfirmedReversalStructure(
 ): boolean {
   if (direction === 'BUY') {
     // Bullish reversal confirmation
-    // 1. Confirmed M15 structural shift / BOS in bullish direction
+    // 1. Confirmed M15 / M5 structural shift / BOS / MSS in bullish direction
     const shift15m = String(indicators15m?.structureShift || '');
-    if (shift15m.includes('BULLISH') || shift15m.includes('CHOCH_BULLISH') || shift15m.includes('BOS_BULLISH')) {
+    const shift5m = String(indicators5m?.structureShift || '');
+    if (
+      (indicators15m?.mssDetected && indicators15m?.mssDirection === 'BULLISH') ||
+      (indicators5m?.mssDetected && indicators5m?.mssDirection === 'BULLISH') ||
+      shift15m.includes('BULLISH') || shift15m.includes('Bullish') ||
+      shift5m.includes('BULLISH') || shift5m.includes('Bullish')
+    ) {
       return true;
     }
 
@@ -1044,9 +1070,15 @@ export function hasConfirmedReversalStructure(
     return false;
   } else {
     // Bearish reversal confirmation
-    // 1. Confirmed M15 structural shift / BOS in bearish direction
+    // 1. Confirmed M15 / M5 structural shift / BOS / MSS in bearish direction
     const shift15m = String(indicators15m?.structureShift || '');
-    if (shift15m.includes('BEARISH') || shift15m.includes('CHOCH_BEARISH') || shift15m.includes('BOS_BEARISH')) {
+    const shift5m = String(indicators5m?.structureShift || '');
+    if (
+      (indicators15m?.mssDetected && indicators15m?.mssDirection === 'BEARISH') ||
+      (indicators5m?.mssDetected && indicators5m?.mssDirection === 'BEARISH') ||
+      shift15m.includes('BEARISH') || shift15m.includes('Bearish') ||
+      shift5m.includes('BEARISH') || shift5m.includes('Bearish')
+    ) {
       return true;
     }
 

@@ -641,5 +641,83 @@
     "realizedPnl": -4.5,
     "setupFamily": "Range Breakout & Expansion (Bearish Volatility Expansion)",
     "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=OVERSOLD|setupFamily=Range Breakout & Expansion (Bearish Volatility Expansion)|volatility=HIGH|zone=DISCOUNT"
+  },
+  {
+    "id": "exp_sig_1790164420153_rph9n_1790165011570",
+    "rr": 1.34,
+    "factors": {
+      "fvg": "BEARISH_FVG",
+      "rsi": "NEUTRAL",
+      "macd": "BEARISH",
+      "zone": "DISCOUNT",
+      "direction": "SELL",
+      "liquidity": "NONE",
+      "orderBlock": "NONE",
+      "volatility": "HIGH",
+      "setupFamily": "Horizontal Support Breakout & Retest",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND"
+    },
+    "outcome": "LOSS",
+    "tradeId": "sig_1790164420153_rph9n",
+    "signalId": "sig_1790164420153_rph9n",
+    "direction": "SELL",
+    "completedAt": 1790165011570,
+    "realizedPnl": -4,
+    "setupFamily": "Horizontal Support Breakout & Retest",
+    "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=NONE|rsi=NEUTRAL|setupFamily=Horizontal Support Breakout & Retest|volatility=HIGH|zone=DISCOUNT"
+  },
+  {
+    "id": "exp_sig_1790170062023_ntup8_1790170391171",
+    "rr": 1.53,
+    "factors": {
+      "fvg": "BEARISH_FVG",
+      "rsi": "NEUTRAL",
+      "macd": "BEARISH",
+      "zone": "DISCOUNT",
+      "direction": "SELL",
+      "liquidity": "NONE",
+      "orderBlock": "NONE",
+      "volatility": "HIGH",
+      "setupFamily": "Bearish Trend Continuation (EMA/VWAP Pullback)",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND"
+    },
+    "outcome": "WIN",
+    "tradeId": "sig_1790170062023_ntup8",
+    "signalId": "sig_1790170062023_ntup8",
+    "direction": "SELL",
+    "completedAt": 1790170391171,
+    "realizedPnl": 6,
+    "setupFamily": "Bearish Trend Continuation (EMA/VWAP Pullback)",
+    "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=NONE|rsi=NEUTRAL|setupFamily=Bearish Trend Continuation (EMA/VWAP Pullback)|volatility=HIGH|zone=DISCOUNT"
+  },
+  {
+    "id": "exp_sig_1790174081924_d03jr_1790174415279",
+    "rr": 1.53,
+    "factors": {
+      "fvg": "BEARISH_FVG",
+      "rsi": "NEUTRAL",
+      "macd": "BEARISH",
+      "zone": "DISCOUNT",
+      "direction": "SELL",
+      "liquidity": "NONE",
+      "orderBlock": "BEARISH_OB",
+      "volatility": "HIGH",
+      "setupFamily": "Range Breakout & Expansion (Bearish Volatility Expansion)",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND"
+    },
+    "outcome": "WIN",
+    "tradeId": "sig_1790174081924_d03jr",
+    "signalId": "sig_1790174081924_d03jr",
+    "direction": "SELL",
+    "completedAt": 1790174415279,
+    "realizedPnl": 5.6,
+    "setupFamily": "Range Breakout & Expansion (Bearish Volatility Expansion)",
+    "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Range Breakout & Expansion (Bearish Volatility Expansion)|volatility=HIGH|zone=DISCOUNT"
   }
 ]

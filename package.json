@@ -12,7 +12,9 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "tsx tests/runAllTests.ts",
+    "test:regression": "tsx tests/runAllTests.ts"
   },
   "dependencies": {
     "@google-cloud/firestore": "^9.1.0",

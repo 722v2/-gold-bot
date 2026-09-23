@@ -245,101 +245,7 @@ export function calculatePositionSizing(
   };
 }
 
-/**
- * Intelligent Executability Optimizer
- * 
- * Attempts to optimize Entry and Stop Loss within the existing strategy and technical structure
- * so that the setup becomes executable at minimum lot within or as close as possible to the allowed risk limit.
- */
-export function optimizeSetupExecutability(params: {
-  balance: number;
-  riskPercent: number;
-  entry: number;
-  stopLoss: number;
-  tp1: number;
-  tp2?: number;
-  direction: 'BUY' | 'SELL';
-  asset: 'XAU/USD' | 'BTC/USD';
-  brokerSpecs: Partial<BrokerContractSpecs>;
-}): {
-  wasOptimized: boolean;
-  optimizedEntry: number;
-  optimizedStopLoss: number;
-  optimizedTp1: number;
-  optimizedTp2?: number;
-  priceDistance: number;
-  slPoints: number;
-  tp1Distance: number;
-  tp1Points: number;
-  tp1Rr: number;
-  tp2Distance: number;
-  tp2Points: number;
-  tp2Rr: number;
-  optimizationNote?: string;
-  isExecutable: boolean;
-} {
-  const {
-    balance,
-    riskPercent,
-    entry,
-    stopLoss,
-    tp1,
-    tp2,
-    direction,
-    asset,
-    brokerSpecs,
-  } = params;
 
-  const contractSizeOz = Number(brokerSpecs.contractSizeOz ?? DEFAULT_BROKER_SPECS.contractSizeOz);
-  const minimumLot = Number(brokerSpecs.minimumLot ?? DEFAULT_BROKER_SPECS.minimumLot);
-  const minSlFloor = Number(brokerSpecs.minSlPoints ?? brokerSpecs.minGoldSlPoints ?? DEFAULT_BROKER_SPECS.minGoldSlPoints ?? 35);
-  const maxSlCeiling = Number(brokerSpecs.maxSlPoints ?? brokerSpecs.maxGoldSlPoints ?? DEFAULT_BROKER_SPECS.maxGoldSlPoints ?? 65);
-  const minRr = Number(brokerSpecs.minRr ?? DEFAULT_BROKER_SPECS.minRr ?? 1.0);
-  const pointValue = asset === 'XAU/USD' ? 0.1 : 1.0;
-
-  const maxLossLimit = typeof brokerSpecs.maxLoss === 'number' && brokerSpecs.maxLoss > 0
-    ? brokerSpecs.maxLoss
-    : (typeof brokerSpecs.maxGoldSlPoints === 'number' && brokerSpecs.maxGoldSlPoints > 0
-        ? Number(((brokerSpecs.maxGoldSlPoints * contractSizeOz * 0.1) * minimumLot).toFixed(2))
-        : 5.0);
-
-  const riskDollars = Number(((balance * riskPercent) / 100).toFixed(4));
-  const initialDistance = Number(Math.abs(entry - stopLoss).toFixed(4));
-  const initialSlPoints = Number((initialDistance / pointValue).toFixed(1));
-  const initialRiskAtMinLot = Number((minimumLot * initialDistance * contractSizeOz).toFixed(4));
-
-  const tp1Dist = Number(Math.abs(tp1 - entry).toFixed(2));
-  const tp1Pts = Number((tp1Dist / pointValue).toFixed(1));
-  const tp1RrVal = initialDistance > 0 ? Number((tp1Dist / initialDistance).toFixed(2)) : 0;
-  const tp2Dist = (tp2 && tp2 > 0) ? Number(Math.abs(tp2 - entry).toFixed(2)) : 0;
-  const tp2Pts = (tp2 && tp2 > 0) ? Number((tp2Dist / pointValue).toFixed(1)) : 0;
-  const tp2RrVal = (initialDistance > 0 && tp2 && tp2 > 0) ? Number((tp2Dist / initialDistance).toFixed(2)) : 0;
-
-  // Structural Stop Loss is authoritative: NEVER artificially clamp, compress, or tighten SL or shift entry
-  // If the structural SL violates safety bounds [35, 65] pts or exceeds risk budget at minimum lot, reject as not executable
-  const isExecutable =
-    (initialRiskAtMinLot <= riskDollars + 0.0001 || initialRiskAtMinLot <= maxLossLimit + 0.0001) &&
-    initialSlPoints >= minSlFloor &&
-    initialSlPoints <= maxSlCeiling &&
-    tp1RrVal >= minRr;
-
-  return {
-    wasOptimized: false,
-    optimizedEntry: entry,
-    optimizedStopLoss: stopLoss,
-    optimizedTp1: tp1,
-    optimizedTp2: tp2,
-    priceDistance: initialDistance,
-    slPoints: initialSlPoints,
-    tp1Distance: tp1Dist,
-    tp1Points: tp1Pts,
-    tp1Rr: tp1RrVal,
-    tp2Distance: tp2Dist,
-    tp2Points: tp2Pts,
-    tp2Rr: tp2RrVal,
-    isExecutable,
-  };
-}
 
 /**
  * Validates and calculates risk parameters according to strict Gold AI Challenge rules
@@ -452,37 +358,12 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
   // Resolve trade direction
   const resolvedDirection: 'BUY' | 'SELL' = direction || (initialEntry >= initialStopLoss ? 'BUY' : 'SELL');
 
-  // Executability Intelligence (Step 1 & Step 2):
-  // Optimize Entry and Stop Loss within existing strategy and technical structure
   let entry = initialEntry;
   let stopLoss = initialStopLoss;
   let tp1 = initialTp1;
   let tp2 = initialTp2;
   let wasOptimizedForExecutability = false;
   let optimizationNote: string | undefined;
-
-  if (allowExecutabilityOptimization) {
-    const opt = optimizeSetupExecutability({
-      balance,
-      riskPercent,
-      entry: initialEntry,
-      stopLoss: initialStopLoss,
-      tp1: initialTp1,
-      tp2: initialTp2,
-      direction: resolvedDirection,
-      asset,
-      brokerSpecs,
-    });
-
-    if (opt.wasOptimized) {
-      entry = opt.optimizedEntry;
-      stopLoss = opt.optimizedStopLoss;
-      tp1 = opt.optimizedTp1;
-      tp2 = opt.optimizedTp2;
-      wasOptimizedForExecutability = true;
-      optimizationNote = opt.optimizationNote;
-    }
-  }
 
   const priceDistance = Math.abs(entry - stopLoss);
 

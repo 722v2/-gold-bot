@@ -100,21 +100,25 @@ export function parseAndValidateAiResponse(rawContent: any): {
     throw new Error(`Invalid signal value "${parsed.signal}" in AI response`);
   }
 
-  if (parsed.confidence !== undefined && (typeof parsed.confidence !== 'number' || isNaN(parsed.confidence))) {
-    throw new Error('Invalid "confidence" field in AI response (must be a number)');
+  if (parsed.confidence !== undefined && (typeof parsed.confidence !== 'number' || !Number.isFinite(parsed.confidence) || parsed.confidence < 0 || parsed.confidence > 100)) {
+    throw new Error('Invalid "confidence" field in AI response (must be a finite number between 0 and 100)');
   }
 
   if (parsed.setup !== undefined && typeof parsed.setup !== 'string') {
     throw new Error('Invalid "setup" field in AI response (must be a string)');
   }
 
+  const normalizedConfidence = typeof parsed.confidence === 'number' && Number.isFinite(parsed.confidence)
+    ? Math.min(100, Math.max(0, parsed.confidence))
+    : 75;
+
   return {
     signal: upperSignal as SignalDecision,
-    entry: typeof parsed.entry === 'number' && !isNaN(parsed.entry) ? parsed.entry : undefined,
-    stopLoss: typeof parsed.stopLoss === 'number' && !isNaN(parsed.stopLoss) ? parsed.stopLoss : undefined,
-    tp1: typeof parsed.tp1 === 'number' && !isNaN(parsed.tp1) ? parsed.tp1 : undefined,
-    tp2: typeof parsed.tp2 === 'number' && !isNaN(parsed.tp2) ? parsed.tp2 : undefined,
-    confidence: typeof parsed.confidence === 'number' && !isNaN(parsed.confidence) ? parsed.confidence : 75,
+    entry: typeof parsed.entry === 'number' && Number.isFinite(parsed.entry) ? parsed.entry : undefined,
+    stopLoss: typeof parsed.stopLoss === 'number' && Number.isFinite(parsed.stopLoss) ? parsed.stopLoss : undefined,
+    tp1: typeof parsed.tp1 === 'number' && Number.isFinite(parsed.tp1) ? parsed.tp1 : undefined,
+    tp2: typeof parsed.tp2 === 'number' && Number.isFinite(parsed.tp2) ? parsed.tp2 : undefined,
+    confidence: normalizedConfidence,
     timeframe: typeof parsed.timeframe === 'string' ? parsed.timeframe : '15M / 5M',
     setup: typeof parsed.setup === 'string' && parsed.setup.trim().length > 0 ? parsed.setup : 'AI Market Structure Setup',
     mainReasons: Array.isArray(parsed.mainReasons) ? parsed.mainReasons.map((r: any) => String(r)) : undefined,
@@ -141,7 +145,35 @@ export function resolveAiProviderConfig(): AiProviderConfig {
     );
   };
 
+  const requestedProvider = (process.env.AI_PROVIDER || process.env.PROVIDER || '').trim().toLowerCase();
   const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
+  const nvidiaKey = (process.env.NVIDIA_API_KEY || '').trim();
+
+  if (requestedProvider === 'openrouter') {
+    if (isKeyValid(openRouterKey)) {
+      return {
+        provider: 'openrouter',
+        apiKey: openRouterKey,
+        baseURL: (process.env.OPENROUTER_BASE_URL || '').trim() || 'https://openrouter.ai/api/v1',
+        model: (process.env.OPENROUTER_MODEL || '').trim() || 'google/gemini-2.5-flash-lite',
+      };
+    }
+    return { provider: 'none', apiKey: '', baseURL: '', model: '' };
+  }
+
+  if (requestedProvider === 'nvidia') {
+    if (isKeyValid(nvidiaKey)) {
+      return {
+        provider: 'nvidia',
+        apiKey: nvidiaKey,
+        baseURL: (process.env.NVIDIA_BASE_URL || '').trim() || 'https://integrate.api.nvidia.com/v1',
+        model: (process.env.NVIDIA_MODEL || '').trim() || 'deepseek-ai/deepseek-v4-flash-0731',
+      };
+    }
+    return { provider: 'none', apiKey: '', baseURL: '', model: '' };
+  }
+
+  // Auto-detection mode
   if (isKeyValid(openRouterKey)) {
     return {
       provider: 'openrouter',
@@ -151,7 +183,6 @@ export function resolveAiProviderConfig(): AiProviderConfig {
     };
   }
 
-  const nvidiaKey = (process.env.NVIDIA_API_KEY || '').trim();
   if (isKeyValid(nvidiaKey)) {
     return {
       provider: 'nvidia',
@@ -734,7 +765,42 @@ export function resolveAiSignalWithDeterministicFallback(
       }
     );
 
-    if (!valResult.isValid) {
+    const minRequiredConfidence = Number((input.brokerSpecs as any)?.minConfidence ?? 70);
+    const aiConfidence = Number(parsed.confidence ?? 75);
+
+    if (aiConfidence < minRequiredConfidence) {
+      console.warn(`[AI Engine] AI candidate rejected due to sub-floor confidence (${aiConfidence} < ${minRequiredConfidence})`);
+      const validFallback = candidatesContext?.selectedCandidate || candidatesContext?.allCandidates?.find((c: any) => c.direction === 'BUY' || c.direction === 'SELL');
+      if (validFallback) {
+        console.log(`[AI Engine] Substituting low-confidence AI candidate with top qualified deterministic candidate (${validFallback.setupName || 'Qualified Deterministic Setup'})`);
+        finalSignal = buildFinalSignal({
+          decision: validFallback.direction === 'BUY' ? 'BUY NOW' : 'SELL NOW',
+          entry: validFallback.entry,
+          stopLoss: validFallback.stopLoss,
+          tp1: validFallback.tp1,
+          tp2: validFallback.tp2,
+          confidence: validFallback.confidence,
+          timeframe: validFallback.timeframe || '15M / 5M',
+          setup: validFallback.setupName || 'Deterministic Structural Setup',
+          mainReasons: validFallback.mainReasons || ['نموذج هيكلي مؤكد حسابياً عبر محرك الإشارات الحتمي.'],
+          invalidation: validFallback.invalidation || (validFallback.direction === 'BUY' ? `Close candle below ${validFallback.stopLoss}` : `Close candle above ${validFallback.stopLoss}`),
+        }, input);
+      } else {
+        finalSignal = buildFinalSignal({
+          decision: 'NO TRADE',
+          entry: currentPrice,
+          stopLoss: currentPrice,
+          tp1: currentPrice,
+          tp2: currentPrice,
+          confidence: aiConfidence,
+          timeframe: '15M / 5M',
+          setup: 'No Valid Setup',
+          mainReasons: [],
+          invalidation: 'N/A',
+          noTradeReason: `تم رفض مقترح الذكاء الاصطناعي لانخفاض مؤشر الثقة الفنية (${aiConfidence}) عن الحد الأدنى (${minRequiredConfidence}).`
+        }, input);
+      }
+    } else if (!valResult.isValid) {
       console.warn(`[AI Engine] AI candidate rejected by deterministic technical validation: ${valResult.rejectionReason}`);
       
       // Prefer highest-quality deterministic candidate that already passed validation

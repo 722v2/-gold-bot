@@ -463,11 +463,48 @@
         ]
       ]
     },
-    "status": "PENDING",
+    "status": "SUPPRESSED",
     "attempts": 1,
     "maxAttempts": 10,
     "nextRetryAt": 1790159027007,
     "createdAt": 1790159024955,
+    "lastError": "Historical event suppressed: exceeded actionability window"
+  },
+  {
+    "notificationId": "signal_sig_1790184734192_crdcz",
+    "tradeId": "sig_1790184734192_crdcz",
+    "event": "SIGNAL_NEW",
+    "chatId": "1189889156",
+    "message": "<b>🔔 إشارة تداول جديدة من Gold AI Scanner!</b>\n\n🟢 <b>الصفقة المقترحة:</b> شراء الآن (BUY NOW)\n📊 <b>الأصل:</b> XAU/USD\n📈 <b>سعر الدخول:</b> $4278.08\n🛑 <b>وقف الخسارة (SL):</b> $4274.08 (40 نقطة)\n🎯 <b>الهدف الأول (TP1):</b> $4282.73\n🎯 <b>الهدف الثاني (TP2):</b> $4284.48\n⚖️ <b>المخاطرة:</b> 16% ($4.00)\n🧠 <b>نسبة الثقة:</b> 89%\n🛠️ <b>النموذج الفني:</b> Range SFP Reversal (Range Low Liquidity Sweep &amp; Rejection)\n\n⏱ <i>الوقت: ٥:٣٢:١٤ م</i>",
+    "replyMarkup": {
+      "inline_keyboard": [
+        [
+          {
+            "text": "🟢 دخلت الصفقة (ENTERED)",
+            "callback_data": "entered:sig_1790184734192_crdcz"
+          },
+          {
+            "text": "⚪ لم أدخل (NOT ENTERED)",
+            "callback_data": "not_entered:sig_1790184734192_crdcz"
+          }
+        ],
+        [
+          {
+            "text": "✅ WIN",
+            "callback_data": "win:sig_1790184734192_crdcz"
+          },
+          {
+            "text": "❌ LOSS",
+            "callback_data": "loss:sig_1790184734192_crdcz"
+          }
+        ]
+      ]
+    },
+    "status": "PENDING",
+    "attempts": 1,
+    "maxAttempts": 10,
+    "nextRetryAt": 1790184736248,
+    "createdAt": 1790184734192,
     "lastError": "TELEGRAM_BOT_TOKEN is not configured."
   }
 ]
