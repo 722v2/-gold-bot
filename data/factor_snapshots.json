@@ -82,5 +82,68 @@
     },
     "combinationKey": "direction=SELL|fvg=BULLISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Horizontal Support Breakout & Retest|volatility=HIGH|zone=EQUILIBRIUM",
     "createdAt": 1790088911700
+  },
+  "sig_1790156115420_jcgk2": {
+    "signalId": "sig_1790156115420_jcgk2",
+    "setupFamily": "Range Breakout & Expansion (Bearish Volatility Expansion)",
+    "direction": "SELL",
+    "factors": {
+      "setupFamily": "Range Breakout & Expansion (Bearish Volatility Expansion)",
+      "direction": "SELL",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND",
+      "liquidity": "NONE",
+      "orderBlock": "BEARISH_OB",
+      "fvg": "BEARISH_FVG",
+      "zone": "DISCOUNT",
+      "rsi": "NEUTRAL",
+      "macd": "BULLISH",
+      "volatility": "HIGH"
+    },
+    "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Range Breakout & Expansion (Bearish Volatility Expansion)|volatility=HIGH|zone=DISCOUNT",
+    "createdAt": 1790156115420
+  },
+  "sig_1790157868020_ogic3": {
+    "signalId": "sig_1790157868020_ogic3",
+    "setupFamily": "Double Top Reversal (Confirmed M-Formation)",
+    "direction": "SELL",
+    "factors": {
+      "setupFamily": "Double Top Reversal (Confirmed M-Formation)",
+      "direction": "SELL",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND",
+      "liquidity": "NONE",
+      "orderBlock": "BEARISH_OB",
+      "fvg": "BEARISH_FVG",
+      "zone": "DISCOUNT",
+      "rsi": "NEUTRAL",
+      "macd": "BEARISH",
+      "volatility": "HIGH"
+    },
+    "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Double Top Reversal (Confirmed M-Formation)|volatility=HIGH|zone=DISCOUNT",
+    "createdAt": 1790157868020
+  },
+  "sig_1790159024954_gi44s": {
+    "signalId": "sig_1790159024954_gi44s",
+    "setupFamily": "Range SFP Reversal (Range Low Liquidity Sweep & Rejection)",
+    "direction": "BUY",
+    "factors": {
+      "setupFamily": "Range SFP Reversal (Range Low Liquidity Sweep & Rejection)",
+      "direction": "BUY",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND",
+      "liquidity": "SWEEP_SELL_SIDE",
+      "orderBlock": "BULLISH_OB",
+      "fvg": "BEARISH_FVG",
+      "zone": "DISCOUNT",
+      "rsi": "NEUTRAL",
+      "macd": "BULLISH",
+      "volatility": "HIGH"
+    },
+    "combinationKey": "direction=BUY|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=SWEEP_SELL_SIDE|m15Structure=BEARISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Range SFP Reversal (Range Low Liquidity Sweep & Rejection)|volatility=HIGH|zone=DISCOUNT",
+    "createdAt": 1790159024955
   }
 }

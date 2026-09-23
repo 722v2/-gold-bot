@@ -32,6 +32,11 @@ import {
   calculateExecutionQualityScore,
   resolveFinalSignalConflict,
 } from './tradeQualityEngine.js';
+import {
+  assessEntryLocationQuality,
+  EntryLocationQuality,
+  EntryLocationClassification,
+} from './entryLocationQuality.js';
 
 export interface SetupCandidate {
   id: string;
@@ -56,6 +61,8 @@ export interface SetupCandidate {
   timingWarning?: string;
   setupFreshness?: PoiFreshnessState;
   pullbackQuality?: PullbackQuality;
+  entryLocationQuality?: EntryLocationQuality;
+  entryLocationClassification?: EntryLocationClassification;
   tpRunway?: TpPathRunway;
   lifecycleState?: CandidateLifecycleState;
   poiId?: string;
@@ -398,9 +405,10 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     basePriceActionScore: number,
     baseLocationScore: number,
     poiMeta?: {
-      type?: 'ORDER_BLOCK' | 'FVG' | 'SFP_ZONE' | 'SWING_LEVEL';
+      type?: 'ORDER_BLOCK' | 'FVG' | 'SFP_ZONE' | 'SWING_LEVEL' | 'DYNAMIC_MA';
       top?: number;
       bottom?: number;
+      poiPrice?: number;
       timeframe?: '1H' | '15M' | '5M';
       createdCandleTime?: number;
       invalidationPrice?: number;
@@ -413,13 +421,21 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       ? Number((rawSl - bufferGold).toFixed(2))
       : Number((rawSl + bufferGold).toFixed(2));
 
-    const slDistance = Math.abs(entry - stopLoss);
-    const slPoints = Number((slDistance / 0.1).toFixed(1));
+    let slDistance = Math.abs(entry - stopLoss);
+    let slPoints = Number((slDistance / 0.1).toFixed(1));
 
     // SL constraint check: Must be technically meaningful (35 to 65 points on Gold)
-    // If the structurally correct SL cannot satisfy the broker/risk constraints, reject the setup rather than distorting the SL
-    if (slPoints < minSlPoints || slPoints > maxSlPoints) {
-      return null; // Reject setup rather than artificially moving SL
+    // When structural SL < minSlPoints (e.g. 20-30 pts), expand/clamp to minimum floor away from invalidation point
+    if (slPoints < minSlPoints) {
+      stopLoss = direction === 'BUY'
+        ? Number((entry - (minSlPoints * 0.1)).toFixed(2))
+        : Number((entry + (minSlPoints * 0.1)).toFixed(2));
+      slDistance = Math.abs(entry - stopLoss);
+      slPoints = Number((slDistance / 0.1).toFixed(1));
+    }
+
+    if (slPoints > maxSlPoints) {
+      return null; // Reject setups exceeding maximum risk boundary
     }
 
     const finalSlDistance = Math.abs(entry - stopLoss);
@@ -488,9 +504,79 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     }
 
     // 4. Phase 3: Setup Freshness & POI Mitigation
-    let poiType = poiMeta?.type || (family === 'ORDER_BLOCK' ? 'ORDER_BLOCK' : family === 'FVG_IMBALANCE' ? 'FVG' : family === 'RANGE_SFP_REVERSAL' ? 'SFP_ZONE' : 'SWING_LEVEL');
-    let poiTop = poiMeta?.top ?? (direction === 'BUY' ? Math.max(entry, rawSl) : Math.max(entry, rawSl));
-    let poiBottom = poiMeta?.bottom ?? (direction === 'BUY' ? Math.min(entry, rawSl) : Math.min(entry, rawSl));
+    let derivedPoiPrice: number | undefined = poiMeta?.poiPrice;
+    let derivedPoiTop: number | undefined = poiMeta?.top;
+    let derivedPoiBottom: number | undefined = poiMeta?.bottom;
+    let poiType = poiMeta?.type;
+
+    if (!derivedPoiPrice && !derivedPoiTop && !derivedPoiBottom) {
+      if (patternMetadata?.brokenLevel !== undefined && Number.isFinite(patternMetadata.brokenLevel)) {
+        derivedPoiPrice = patternMetadata.brokenLevel;
+        derivedPoiTop = patternMetadata.brokenLevel + 0.25 * atr5m;
+        derivedPoiBottom = patternMetadata.brokenLevel - 0.25 * atr5m;
+        poiType = 'SWING_LEVEL';
+      } else if (patternMetadata?.retestLevel !== undefined && Number.isFinite(patternMetadata.retestLevel)) {
+        derivedPoiPrice = patternMetadata.retestLevel;
+        derivedPoiTop = patternMetadata.retestLevel + 0.25 * atr5m;
+        derivedPoiBottom = patternMetadata.retestLevel - 0.25 * atr5m;
+        poiType = 'SWING_LEVEL';
+      } else if (patternMetadata?.neckline !== undefined && Number.isFinite(patternMetadata.neckline)) {
+        derivedPoiPrice = patternMetadata.neckline;
+        derivedPoiTop = patternMetadata.neckline + 0.25 * atr5m;
+        derivedPoiBottom = patternMetadata.neckline - 0.25 * atr5m;
+        poiType = 'SWING_LEVEL';
+      } else if (patternMetadata?.dynamicPoiLevel !== undefined && Number.isFinite(patternMetadata.dynamicPoiLevel)) {
+        derivedPoiPrice = patternMetadata.dynamicPoiLevel;
+        derivedPoiTop = patternMetadata.dynamicPoiLevel + 0.25 * atr5m;
+        derivedPoiBottom = patternMetadata.dynamicPoiLevel - 0.25 * atr5m;
+        poiType = 'SWING_LEVEL';
+      } else if (family === 'MARKET_STRUCTURE') {
+        const emaRef = indicators5m.ema20 ?? indicators5m.vwap;
+        if (emaRef) {
+          derivedPoiPrice = emaRef;
+          derivedPoiTop = emaRef + 0.25 * atr5m;
+          derivedPoiBottom = emaRef - 0.25 * atr5m;
+          poiType = 'SWING_LEVEL';
+        }
+      } else if (family === 'ORDER_BLOCK') {
+        const ob = direction === 'BUY'
+          ? (indicators15m.orderBlock?.type === 'BULLISH' ? indicators15m.orderBlock : indicators5m.orderBlock?.type === 'BULLISH' ? indicators5m.orderBlock : undefined)
+          : (indicators15m.orderBlock?.type === 'BEARISH' ? indicators15m.orderBlock : indicators5m.orderBlock?.type === 'BEARISH' ? indicators5m.orderBlock : undefined);
+        if (ob) {
+          derivedPoiTop = ob.high;
+          derivedPoiBottom = ob.low;
+          derivedPoiPrice = direction === 'BUY' ? ob.high : ob.low;
+          poiType = 'ORDER_BLOCK';
+        }
+      } else if (family === 'FVG_IMBALANCE') {
+        const fvg = direction === 'BUY'
+          ? (indicators15m.fvg?.type === 'BULLISH' ? indicators15m.fvg : indicators5m.fvg?.type === 'BULLISH' ? indicators5m.fvg : undefined)
+          : (indicators15m.fvg?.type === 'BEARISH' ? indicators15m.fvg : indicators5m.fvg?.type === 'BEARISH' ? indicators5m.fvg : undefined);
+        if (fvg) {
+          derivedPoiTop = fvg.top;
+          derivedPoiBottom = fvg.bottom;
+          derivedPoiPrice = direction === 'BUY' ? fvg.top : fvg.bottom;
+          poiType = 'FVG';
+        }
+      } else if (family === 'RANGE_SFP_REVERSAL' || family === 'LIQUIDITY_SWEEP') {
+        const sweepLevel = direction === 'BUY'
+          ? (indicators15m.swingLow ?? indicators5m.swingLow)
+          : (indicators15m.swingHigh ?? indicators5m.swingHigh);
+        if (sweepLevel) {
+          derivedPoiPrice = sweepLevel;
+          derivedPoiTop = sweepLevel + 0.25 * atr5m;
+          derivedPoiBottom = sweepLevel - 0.25 * atr5m;
+          poiType = 'SFP_ZONE';
+        }
+      }
+    }
+
+    if (!poiType) {
+      poiType = family === 'ORDER_BLOCK' ? 'ORDER_BLOCK' : family === 'FVG_IMBALANCE' ? 'FVG' : family === 'RANGE_SFP_REVERSAL' ? 'SFP_ZONE' : 'SWING_LEVEL';
+    }
+
+    const poiTop = derivedPoiTop ?? (direction === 'BUY' ? Math.max(entry, rawSl) : Math.max(entry, rawSl));
+    const poiBottom = derivedPoiBottom ?? (direction === 'BUY' ? Math.min(entry, rawSl) : Math.min(entry, rawSl));
     const poiTimeframe = poiMeta?.timeframe || '15M';
 
     const registeredPoi = globalPoiTracker.registerPoi(
@@ -524,17 +610,36 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       family !== 'COUNTERTREND_SCALP' &&
       family !== 'DOUBLE_TOP_BOTTOM' &&
       family !== 'BARE_SR' &&
-      family !== 'STRUCTURE_ENGULFING' &&
-      family !== 'MARKET_STRUCTURE'
+      family !== 'STRUCTURE_ENGULFING'
     ) {
       console.log(`[StrategyEngine] Disqualified ${setupName} due to invalid pullback structure (${pullbackAssessment.reasons.join(', ')})`);
       return null;
     }
 
+    // 5.5 Phase 3: Entry Location Quality (ELQ) Assessment
+    const explicitRetest = patternMetadata?.brokenLevel ?? patternMetadata?.retestLevel;
+    const elq = assessEntryLocationQuality({
+      direction,
+      family,
+      entry,
+      currentPrice,
+      candles5m,
+      indicators5m,
+      indicators15m,
+      indicators1h,
+      explicitRetestLevel: explicitRetest,
+      setupName,
+    });
+
+    if (elq.hardBlocked) {
+      console.log(`[StrategyEngine] Disqualified ${setupName} due to entry location quality (${elq.rejectionReason})`);
+      return null;
+    }
+
     // 6. Phase 3: Entry Timing & Overextension / Anti-Chase Assessment
-    let poiRef = direction === 'BUY' ? poiTop : poiBottom;
-    let pTop = poiTop;
-    let pBottom = poiBottom;
+    let poiRef = derivedPoiPrice ?? (direction === 'BUY' ? derivedPoiTop : derivedPoiBottom);
+    let pTop = derivedPoiTop;
+    let pBottom = derivedPoiBottom;
     if (family === 'DOUBLE_TOP_BOTTOM' && patternMetadata?.neckline && isFinite(patternMetadata.neckline)) {
       poiRef = patternMetadata.neckline;
       pTop = patternMetadata.neckline + 0.3 * atr5m;
@@ -548,12 +653,12 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       candles5m,
       indicators5m,
       indicators15m.marketRegime || 'UNCLEAR',
-      {
+      (pTop !== undefined && pBottom !== undefined) ? {
         top: pTop,
         bottom: pBottom,
         poiPrice: poiRef,
         type: poiType,
-      },
+      } : undefined,
       input.candles1m || [],
       input.currentSpread
     );
@@ -618,7 +723,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     const structureScore = Math.min(25, baseStructureScore + htfBonus);
     const liquidityScore = Math.min(25, baseLiquidityScore + Math.min(4, liquidityContext.liquidityScoreBonus));
     const priceActionScore = Math.min(20, basePriceActionScore);
-    const locationScore = Math.min(20, baseLocationScore);
+    const locationScore = Math.min(20, baseLocationScore + elq.locationScoreBonus);
     const techScore = Math.min(10, technicalScore);
 
     const baseRawScore = structureScore + liquidityScore + priceActionScore + locationScore + techScore;
@@ -671,6 +776,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       executionQualityScore: eqResult.score,
       entryTiming: timingAssessment.timing,
       timingWarning,
+      entryLocationQuality: elq,
+      entryLocationClassification: elq.classification,
       setupFreshness: poiFreshness.state,
       pullbackQuality: pullbackAssessment.quality,
       tpRunway: tpPathAssessment.runway,
@@ -760,119 +867,163 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   }
 
   // =========================================================================
-  // STRATEGY 2: ORDER BLOCK (OB) RETEST & REACTION
+  // STRATEGY 2: ORDER BLOCK (OB) RETEST & REACTION (Multi-Zone Cache & ATR Tolerance)
   // =========================================================================
-  if (indicators15m.orderBlock || indicators5m.orderBlock) {
-    const ob15m = indicators15m.orderBlock;
-    const ob5m = indicators5m.orderBlock;
+  const activeObs: Array<{ type: 'BULLISH' | 'BEARISH'; high: number; low: number }> = [];
+  if (indicators15m.orderBlocks) activeObs.push(...indicators15m.orderBlocks);
+  if (indicators5m.orderBlocks) activeObs.push(...indicators5m.orderBlocks);
+  if (activeObs.length === 0) {
+    if (indicators15m.orderBlock) activeObs.push(indicators15m.orderBlock);
+    if (indicators5m.orderBlock) activeObs.push(indicators5m.orderBlock);
+  }
 
-    // Bullish OB Retest (Demand Zone) - Gated: Blocked in STRONG_DOWNTREND / WEAK_DOWNTREND
-    const bullishOb = ob15m?.type === 'BULLISH' ? ob15m : ob5m?.type === 'BULLISH' ? ob5m : null;
-    if (!isDowntrendRegime && bullishOb && currentPrice >= bullishOb.low - 0.5 && currentPrice <= bullishOb.high + 1.2) {
-      const hasBullishObTrigger = c5mMetrics.isBottomRejection || c5mMetrics.isEngulfingBull || (c5mMetrics.isBull && c5mMetrics.body > atr5m * 0.8) || (prev5mMetrics.isBottomRejection && c5mMetrics.isBull);
-      if (hasBullishObTrigger) {
-        const cand = evaluateCandidate(
-          'ORDER_BLOCK',
-          'Bullish Order Block Retest & Reaction',
-          'BUY',
-          'MARKET',
-          currentPrice,
-          bullishOb.low,
-          [
-            `ارتداد واختبار منطقة طلب مؤسسية (Bullish Order Block) عند [$${bullishOb.low} - $${bullishOb.high}].`,
-            `تأكيد سلوك السعر بظهور ذيل رفض سفلي واحترام نطاق الـOB.`,
-            `حماية وقف الخسارة أسفل قاع الـOB واستحقاق عائد استثماري مجزٍ.`,
-          ],
-          ['Order Block Tap', 'Demand Zone', 'Bullish Reaction', 'Structure Protection'],
-          20,
-          18,
-          16,
-          20
-        );
-        if (cand) candidates.push(cand);
+  const obTolerance = Math.min(2.5, Math.max(1.2, atr5m * 0.8));
+
+  // Bullish OB Retest (Demand Zone) - Gated: Blocked in STRONG_DOWNTREND / WEAK_DOWNTREND
+  if (!isDowntrendRegime) {
+    const bullishObs = activeObs.filter((ob) => ob.type === 'BULLISH');
+    for (const bullishOb of bullishObs) {
+      if (currentPrice >= bullishOb.low - 0.5 && currentPrice <= bullishOb.high + obTolerance) {
+        const hasBullishObTrigger = c5mMetrics.isBottomRejection || c5mMetrics.isEngulfingBull || (c5mMetrics.isBull && c5mMetrics.body > atr5m * 0.8) || (prev5mMetrics.isBottomRejection && c5mMetrics.isBull);
+        if (hasBullishObTrigger) {
+          const cand = evaluateCandidate(
+            'ORDER_BLOCK',
+            'Bullish Order Block Retest & Reaction',
+            'BUY',
+            'MARKET',
+            currentPrice,
+            bullishOb.low,
+            [
+              `ارتداد واختبار منطقة طلب مؤسسية (Bullish Order Block) عند [$${bullishOb.low} - $${bullishOb.high}].`,
+              `تأكيد سلوك السعر بظهور ذيل رفض سفلي واحترام نطاق الـOB.`,
+              `حماية وقف الخسارة أسفل قاع الـOB واستحقاق عائد استثماري مجزٍ.`,
+            ],
+            ['Order Block Tap', 'Demand Zone', 'Bullish Reaction', 'Structure Protection'],
+            20,
+            18,
+            16,
+            20
+          );
+          if (cand) {
+            candidates.push(cand);
+            break;
+          }
+        }
       }
     }
+  }
 
-    // Bearish OB Retest (Supply Zone) - Gated: Blocked in STRONG_UPTREND / WEAK_UPTREND
-    const bearishOb = ob15m?.type === 'BEARISH' ? ob15m : ob5m?.type === 'BEARISH' ? ob5m : null;
-    if (!isUptrendRegime && bearishOb && currentPrice <= bearishOb.high + 0.5 && currentPrice >= bearishOb.low - 1.2) {
-      const hasBearishObTrigger = c5mMetrics.isTopRejection || c5mMetrics.isEngulfingBear || (c5mMetrics.isBear && c5mMetrics.body > atr5m * 0.8) || (prev5mMetrics.isTopRejection && c5mMetrics.isBear);
-      if (hasBearishObTrigger) {
-        const cand = evaluateCandidate(
-          'ORDER_BLOCK',
-          'Bearish Order Block Retest & Reaction',
-          'SELL',
-          'MARKET',
-          currentPrice,
-          bearishOb.high,
-          [
-            `اختبار منطقة عرض مؤسسية (Bearish Order Block) عند [$${bearishOb.low} - $${bearishOb.high}].`,
-            `ظهور شمعة رفض بيعية واحترام واضح لحدود الـOB.`,
-            `وقف خسارة آمن أعلى قمة الـOB مع هدف ربحي ممتاز.`,
-          ],
-          ['Order Block Tap', 'Supply Zone', 'Bearish Reaction', 'Structure Protection'],
-          20,
-          18,
-          16,
-          20
-        );
-        if (cand) candidates.push(cand);
+  // Bearish OB Retest (Supply Zone) - Gated: Blocked in STRONG_UPTREND / WEAK_UPTREND
+  if (!isUptrendRegime) {
+    const bearishObs = activeObs.filter((ob) => ob.type === 'BEARISH');
+    for (const bearishOb of bearishObs) {
+      if (currentPrice <= bearishOb.high + 0.5 && currentPrice >= bearishOb.low - obTolerance) {
+        const hasBearishObTrigger = c5mMetrics.isTopRejection || c5mMetrics.isEngulfingBear || (c5mMetrics.isBear && c5mMetrics.body > atr5m * 0.8) || (prev5mMetrics.isTopRejection && c5mMetrics.isBear);
+        if (hasBearishObTrigger) {
+          const cand = evaluateCandidate(
+            'ORDER_BLOCK',
+            'Bearish Order Block Retest & Reaction',
+            'SELL',
+            'MARKET',
+            currentPrice,
+            bearishOb.high,
+            [
+              `اختبار منطقة عرض مؤسسية (Bearish Order Block) عند [$${bearishOb.low} - $${bearishOb.high}].`,
+              `ظهور شمعة رفض بيعية واحترام واضح لحدود الـOB.`,
+              `وقف خسارة آمن أعلى قمة الـOB مع هدف ربحي ممتاز.`,
+            ],
+            ['Order Block Tap', 'Supply Zone', 'Bearish Reaction', 'Structure Protection'],
+            20,
+            18,
+            16,
+            20
+          );
+          if (cand) {
+            candidates.push(cand);
+            break;
+          }
+        }
       }
     }
   }
 
   // =========================================================================
-  // STRATEGY 3: FAIR VALUE GAP (FVG) / IMBALANCE MITIGATION
+  // STRATEGY 3: FAIR VALUE GAP (FVG) / IMBALANCE MITIGATION (Multi-Zone Cache & ATR Tolerance)
   // =========================================================================
-  if (indicators15m.fvg || indicators5m.fvg) {
-    const fvg = indicators15m.fvg || indicators5m.fvg;
-    // Bullish FVG - Gated: Blocked in STRONG_DOWNTREND / WEAK_DOWNTREND
-    if (!isDowntrendRegime && fvg && fvg.type === 'BULLISH' && currentPrice >= fvg.bottom - 0.5 && currentPrice <= fvg.top + 0.8) {
-      const hasBullishFvgTrigger = c5mMetrics.isBottomRejection || c5mMetrics.isEngulfingBull || (c5mMetrics.isBull && c5mMetrics.body > atr5m * 0.8);
-      if (hasBullishFvgTrigger) {
-        const cand = evaluateCandidate(
-          'FVG_IMBALANCE',
-          'Bullish Fair Value Gap (FVG) Mitigation',
-          'BUY',
-          'MARKET',
-          currentPrice,
-          fvg.bottom,
-          [
-            `تغطية وإعادة توازن فجوة السيولة (Bullish FVG) عند [$${fvg.bottom} - $${fvg.top}].`,
-            `تفاعل شرائي إيجابي من مستوى عدم التوازن في اتجاه استمرار الحركة.`,
-            `هدف ربحي يتجاوز ${minRr}R نحو السيولة العلوية.`,
-          ],
-          ['FVG Mitigation', 'Imbalance Filled', 'Discount Alignment', 'Clean Target'],
-          19,
-          16,
-          16,
-          19
-        );
-        if (cand) candidates.push(cand);
+  const activeFvgs: Array<{ type: 'BULLISH' | 'BEARISH'; top: number; bottom: number }> = [];
+  if (indicators15m.fvgZones) activeFvgs.push(...indicators15m.fvgZones);
+  if (indicators5m.fvgZones) activeFvgs.push(...indicators5m.fvgZones);
+  if (activeFvgs.length === 0) {
+    if (indicators15m.fvg) activeFvgs.push(indicators15m.fvg);
+    if (indicators5m.fvg) activeFvgs.push(indicators5m.fvg);
+  }
+
+  const fvgTolerance = Math.min(2.2, Math.max(0.8, atr5m * 0.7));
+
+  // Bullish FVG - Gated: Blocked in STRONG_DOWNTREND / WEAK_DOWNTREND
+  if (!isDowntrendRegime) {
+    const bullishFvgs = activeFvgs.filter((f) => f.type === 'BULLISH');
+    for (const fvg of bullishFvgs) {
+      if (currentPrice >= fvg.bottom - 0.5 && currentPrice <= fvg.top + fvgTolerance) {
+        const hasBullishFvgTrigger = c5mMetrics.isBottomRejection || c5mMetrics.isEngulfingBull || (c5mMetrics.isBull && c5mMetrics.body > atr5m * 0.8);
+        if (hasBullishFvgTrigger) {
+          const cand = evaluateCandidate(
+            'FVG_IMBALANCE',
+            'Bullish Fair Value Gap (FVG) Mitigation',
+            'BUY',
+            'MARKET',
+            currentPrice,
+            fvg.bottom,
+            [
+              `تغطية وإعادة توازن فجوة السيولة (Bullish FVG) عند [$${fvg.bottom} - $${fvg.top}].`,
+              `تفاعل شرائي إيجابي من مستوى عدم التوازن في اتجاه استمرار الحركة.`,
+              `هدف ربحي يتجاوز ${minRr}R نحو السيولة العلوية.`,
+            ],
+            ['FVG Mitigation', 'Imbalance Filled', 'Discount Alignment', 'Clean Target'],
+            19,
+            16,
+            16,
+            19
+          );
+          if (cand) {
+            candidates.push(cand);
+            break;
+          }
+        }
       }
-    // Bearish FVG - Gated: Blocked in STRONG_UPTREND / WEAK_UPTREND
-    } else if (!isUptrendRegime && fvg && fvg.type === 'BEARISH' && currentPrice <= fvg.top + 0.5 && currentPrice >= fvg.bottom - 0.8) {
-      const hasBearishFvgTrigger = c5mMetrics.isTopRejection || c5mMetrics.isEngulfingBear || (c5mMetrics.isBear && c5mMetrics.body > atr5m * 0.8);
-      if (hasBearishFvgTrigger) {
-        const cand = evaluateCandidate(
-          'FVG_IMBALANCE',
-          'Bearish Fair Value Gap (FVG) Mitigation',
-          'SELL',
-          'MARKET',
-          currentPrice,
-          fvg.top,
-          [
-            `إعادة اختبار فجوة سيولة هابطة (Bearish FVG) عند [$${fvg.bottom} - $${fvg.top}].`,
-            `تفاعل بيعي هابط ورفض للصعود أعلى الفجوة.`,
-            `استهداف قيعان السيولة المقابلة بنسبة عائد تحقق الهدف الأدنى.`,
-          ],
-          ['FVG Mitigation', 'Imbalance Filled', 'Premium Alignment', 'Clean Target'],
-          19,
-          16,
-          16,
-          19
-        );
-        if (cand) candidates.push(cand);
+    }
+  }
+
+  // Bearish FVG - Gated: Blocked in STRONG_UPTREND / WEAK_UPTREND
+  if (!isUptrendRegime) {
+    const bearishFvgs = activeFvgs.filter((f) => f.type === 'BEARISH');
+    for (const fvg of bearishFvgs) {
+      if (currentPrice <= fvg.top + 0.5 && currentPrice >= fvg.bottom - fvgTolerance) {
+        const hasBearishFvgTrigger = c5mMetrics.isTopRejection || c5mMetrics.isEngulfingBear || (c5mMetrics.isBear && c5mMetrics.body > atr5m * 0.8);
+        if (hasBearishFvgTrigger) {
+          const cand = evaluateCandidate(
+            'FVG_IMBALANCE',
+            'Bearish Fair Value Gap (FVG) Mitigation',
+            'SELL',
+            'MARKET',
+            currentPrice,
+            fvg.top,
+            [
+              `إعادة اختبار فجوة سيولة هابطة (Bearish FVG) عند [$${fvg.bottom} - $${fvg.top}].`,
+              `تفاعل بيعي هابط ورفض للصعود أعلى الفجوة.`,
+              `استهداف قيعان السيولة المقابلة بنسبة عائد تحقق الهدف الأدنى.`,
+            ],
+            ['FVG Mitigation', 'Imbalance Filled', 'Premium Alignment', 'Clean Target'],
+            19,
+            16,
+            16,
+            19
+          );
+          if (cand) {
+            candidates.push(cand);
+            break;
+          }
+        }
       }
     }
   }
@@ -1024,7 +1175,19 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
         22,
         15,
         16,
-        18
+        18,
+        {
+          type: 'DYNAMIC_MA',
+          top: indicators5m.ema20 + 0.3 * atr5m,
+          bottom: indicators5m.ema20 - 0.3 * atr5m,
+          poiPrice: indicators5m.ema20,
+          timeframe: '5M',
+          createdCandleTime: last5m.timestamp,
+        },
+        {
+          strategyId: 'S6',
+          dynamicPoiLevel: indicators5m.ema20,
+        }
       );
       if (cand) candidates.push(cand);
     }
@@ -1057,7 +1220,19 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
         22,
         15,
         16,
-        18
+        18,
+        {
+          type: 'DYNAMIC_MA',
+          top: indicators5m.ema20 + 0.3 * atr5m,
+          bottom: indicators5m.ema20 - 0.3 * atr5m,
+          poiPrice: indicators5m.ema20,
+          timeframe: '5M',
+          createdCandleTime: last5m.timestamp,
+        },
+        {
+          strategyId: 'S6',
+          dynamicPoiLevel: indicators5m.ema20,
+        }
       );
       if (cand) candidates.push(cand);
     }
@@ -1109,32 +1284,41 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   }
 
   // =========================================================================
-  // STRATEGY 8 (Phase 2): RANGE_SFP_REVERSAL (Swing Failure Pattern at Range Boundaries)
+  // STRATEGY 8 (Phase 2): RANGE_SFP_REVERSAL (Swing Failure Pattern at Range Boundaries & Major Liquidity)
   // =========================================================================
   const isRangeRegime =
     indicators15m.marketRegime === 'NORMAL_RANGE' ||
     indicators15m.marketRegime === 'VOLATILE_RANGE' ||
     indicators15m.structure === 'RANGING';
 
-  if (isRangeRegime) {
-    const rangeHigh = indicators15m.regimeContext?.rangeBoundaries?.high ?? Math.max(indicators15m.swingHigh, indicators15m.resistance);
-    const rangeLow = indicators15m.regimeContext?.rangeBoundaries?.low ?? Math.min(indicators15m.swingLow, indicators15m.support);
+  const sweepDetails = indicators15m.liquiditySweepDetails || indicators5m.liquiditySweepDetails;
+  const hasLiquiditySweep = indicators15m.liquiditySweepDetected || indicators5m.liquiditySweepDetected || sweepDetails !== undefined;
+
+  if (isRangeRegime || hasLiquiditySweep) {
+    const rangeHigh = sweepDetails?.direction === 'BEARISH'
+      ? sweepDetails.sweptLevel
+      : (indicators15m.regimeContext?.rangeBoundaries?.high ?? Math.max(indicators15m.swingHigh, indicators15m.resistance));
+    const rangeLow = sweepDetails?.direction === 'BULLISH'
+      ? sweepDetails.sweptLevel
+      : (indicators15m.regimeContext?.rangeBoundaries?.low ?? Math.min(indicators15m.swingLow, indicators15m.support));
     const rangeSpan = Math.max(2.0, rangeHigh - rangeLow);
     const midZoneThreshold = rangeSpan * 0.35; // Extreme zone is within 35% of high or low
     const sweepTolerance = Math.max(0.6, atr5m * 0.25);
 
-    // 1. Bearish Range SFP (Liquidity sweep above Range High + Rejection back inside)
-    const isNearRangeHigh = currentPrice >= (rangeHigh - midZoneThreshold);
+    // 1. Bearish Range SFP (Liquidity sweep above Range/Macro High + Rejection back inside)
+    const isNearRangeHigh = currentPrice >= (rangeHigh - midZoneThreshold) || (sweepDetails?.direction === 'BEARISH');
     const sweptRangeHigh =
-      (last5m.high >= rangeHigh - sweepTolerance || prev5m.high >= rangeHigh - sweepTolerance) &&
-      last5m.close <= rangeHigh + sweepTolerance * 0.7;
+      (sweepDetails?.direction === 'BEARISH') ||
+      ((last5m.high >= rangeHigh - sweepTolerance || prev5m.high >= rangeHigh - sweepTolerance) &&
+      last5m.close <= rangeHigh + sweepTolerance * 0.7);
 
     const isBearDisplacement = c5mMetrics.isBear && (c5mMetrics.body > atr5m * 0.8 || last5m.close < prev5m.low);
     const hasBearishRejection =
       c5mMetrics.isTopRejection ||
       c5mMetrics.isEngulfingBear ||
       isBearDisplacement ||
-      (prev5mMetrics.isTopRejection && c5mMetrics.isBear);
+      (prev5mMetrics.isTopRejection && c5mMetrics.isBear) ||
+      (c5mMetrics.upperWick >= c5mMetrics.body * 1.5);
 
     if (isNearRangeHigh && sweptRangeHigh && hasBearishRejection) {
       const sfpHighPoint = Math.max(last5m.high, prev5m.high, rangeHigh);
@@ -1146,8 +1330,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
         currentPrice,
         sfpHighPoint,
         [
-          `سحب سيولة القمة (Range High SFP Sweep) أعلى $${rangeHigh.toFixed(2)} وفشل الاختراق مع عودة السعر داخل النطاق.`,
-          `ظهور شمعة رفض بيعية تؤكد فخ الشراء (Bull Trap) عند المقاومة العلوية للرينج.`,
+          `سحب سيولة القمة (High SFP Sweep) أعلى $${rangeHigh.toFixed(2)} وفشل الاختراق مع عودة السعر أسفل المستوى.`,
+          `ظهور شمعة رفض بيعية تؤكد فخ الشراء (Bull Trap) عند المقاومة المستهدفة.`,
           `استهداف قاع النطاق وخط التوازن (Equilibrium) بنسبة عائد تتجاوز ${minRr}R.`,
         ],
         ['Range High SFP', 'Liquidity Sweep', 'Bull Trap', 'Mean Reversion', 'Range Extreme'],
@@ -1159,18 +1343,20 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       if (cand) candidates.push(cand);
     }
 
-    // 2. Bullish Range SFP (Liquidity sweep below Range Low + Rejection back inside)
-    const isNearRangeLow = currentPrice <= (rangeLow + midZoneThreshold);
+    // 2. Bullish Range SFP (Liquidity sweep below Range/Macro Low + Rejection back inside)
+    const isNearRangeLow = currentPrice <= (rangeLow + midZoneThreshold) || (sweepDetails?.direction === 'BULLISH');
     const sweptRangeLow =
-      (last5m.low <= rangeLow + sweepTolerance || prev5m.low <= rangeLow + sweepTolerance) &&
-      last5m.close >= rangeLow - sweepTolerance * 0.7;
+      (sweepDetails?.direction === 'BULLISH') ||
+      ((last5m.low <= rangeLow + sweepTolerance || prev5m.low <= rangeLow + sweepTolerance) &&
+      last5m.close >= rangeLow - sweepTolerance * 0.7);
 
     const isBullDisplacement = c5mMetrics.isBull && (c5mMetrics.body > atr5m * 0.8 || last5m.close > prev5m.high);
     const hasBullishRejection =
       c5mMetrics.isBottomRejection ||
       c5mMetrics.isEngulfingBull ||
       isBullDisplacement ||
-      (prev5mMetrics.isBottomRejection && c5mMetrics.isBull);
+      (prev5mMetrics.isBottomRejection && c5mMetrics.isBull) ||
+      (c5mMetrics.lowerWick >= c5mMetrics.body * 1.5);
 
     if (isNearRangeLow && sweptRangeLow && hasBullishRejection) {
       const sfpLowPoint = Math.min(last5m.low, prev5m.low, rangeLow);
@@ -1182,8 +1368,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
         currentPrice,
         sfpLowPoint,
         [
-          `سحب سيولة القاع (Range Low SFP Sweep) أسفل $${rangeLow.toFixed(2)} وفشل الكسر الهابط مع استعادة النطاق.`,
-          `ظهور شمعة ارتداد شرائية تؤكد فخ البيع (Bear Trap) عند الدعم السفلي للرينج.`,
+          `سحب سيولة القاع (Low SFP Sweep) أسفل $${rangeLow.toFixed(2)} وفشل الكسر الهابط مع استعادة المستوى.`,
+          `ظهور شمعة ارتداد شرائية تؤكد فخ البيع (Bear Trap) عند الدعم المستهدف.`,
           `استهداف قمة النطاق وخط التوازن (Equilibrium) بنسبة عائد تتجاوز ${minRr}R.`,
         ],
         ['Range Low SFP', 'Liquidity Sweep', 'Bear Trap', 'Mean Reversion', 'Range Extreme'],
@@ -1197,13 +1383,25 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   }
 
   // =========================================================================
-  // STRATEGY 9 (Phase 2): RANGE_BREAKOUT_EXPANSION (Genuine Range Expansion)
+  // STRATEGY 9 (Phase 2): RANGE_BREAKOUT_EXPANSION (Range & Compression Expansion)
   // =========================================================================
   const rangeHighBoundary = indicators15m.regimeContext?.rangeBoundaries?.high ?? Math.max(indicators15m.swingHigh, indicators15m.resistance);
   const rangeLowBoundary = indicators15m.regimeContext?.rangeBoundaries?.low ?? Math.min(indicators15m.swingLow, indicators15m.support);
 
+  const localConsolidationHigh = (indicators5m.fractalSwings?.highs && indicators5m.fractalSwings.highs.length > 0)
+    ? Math.max(...indicators5m.fractalSwings.highs.slice(-2))
+    : rangeHighBoundary;
+  const localConsolidationLow = (indicators5m.fractalSwings?.lows && indicators5m.fractalSwings.lows.length > 0)
+    ? Math.min(...indicators5m.fractalSwings.lows.slice(-2))
+    : rangeLowBoundary;
+
+  const isCompressionActive = (indicators5m.compressionState?.isCompressed === true || indicators15m.compressionState?.isCompressed === true);
+  const effectiveHighCeiling = isCompressionActive ? Math.min(rangeHighBoundary, localConsolidationHigh) : rangeHighBoundary;
+  const effectiveLowFloor = isCompressionActive ? Math.max(rangeLowBoundary, localConsolidationLow) : rangeLowBoundary;
+
   const bb5mWidth = indicators5m.bollingerBands ? (indicators5m.bollingerBands.upper - indicators5m.bollingerBands.lower) : 10.0;
   const isSqueezePreceding =
+    isCompressionActive ||
     bb5mWidth <= Math.max(12.0, atr5m * 5.0) ||
     indicators15m.marketRegime === 'NORMAL_RANGE' ||
     indicators15m.marketRegime === 'VOLATILE_RANGE' ||
@@ -1216,16 +1414,16 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   const isOverextendedRegime = indicators15m.regimeContext?.isOverextended === true;
 
   // 1. Bullish Range Breakout & Expansion (BUY)
-  // Decisive close ABOVE range high, solid candle body, no excessive upper wick rejection
+  // Decisive close ABOVE ceiling, solid candle body, no excessive upper wick rejection
   const isDecisiveBullClose =
-    last5m.close > rangeHighBoundary &&
+    last5m.close > effectiveHighCeiling &&
     c5mMetrics.isBull &&
     c5mMetrics.body >= c5mMetrics.totalRange * 0.40 &&
     c5mMetrics.upperWick <= c5mMetrics.totalRange * 0.45;
 
   const isNotOverextendedUpside =
     !isOverextendedRegime &&
-    currentPrice <= rangeHighBoundary + Math.max(5.0, atr5m * 3.0);
+    currentPrice <= effectiveHighCeiling + Math.max(5.0, atr5m * 3.0);
 
   const hasBullMomentum =
     currentPrice >= indicators5m.ema20 ||
@@ -1234,8 +1432,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     (indicators5m.bollingerBands ? last5m.close >= indicators5m.bollingerBands.middle : true);
 
   if (isSqueezePreceding && isDecisiveBullClose && isNotOverextendedUpside && hasBullMomentum) {
-    // Structural SL placed just below broken range high / recent candle low with buffer
-    const breakoutSl = Math.min(rangeHighBoundary, last5m.low);
+    // Structural SL placed just below broken ceiling / recent candle low with buffer
+    const breakoutSl = Math.min(effectiveHighCeiling, last5m.low);
     const cand = evaluateCandidate(
       'RANGE_BREAKOUT_EXPANSION',
       'Range Breakout & Expansion (Bullish Volatility Expansion)',
@@ -1244,8 +1442,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       currentPrice,
       breakoutSl,
       [
-        `اختراق صاعد حاسم لأعلى نطاق التداول ($${rangeHighBoundary.toFixed(2)}) بإغلاق شمعة زخم كاملة فوق النطاق.`,
-        `انفجار تقلبات وزخم شرائي (Volatility Expansion) بعد مرحلة ضغط سعري وتجميع.`,
+        `اختراق صاعد حاسم لسقف التجميع ($${effectiveHighCeiling.toFixed(2)}) بإغلاق شمعة زخم كاملة فوق المستوى.`,
+        `انفجار تقلبات وزخم شرائي مبكر (Volatility Expansion) بعد مرحلة ضغط سعري وتجميع.`,
         `استهداف امتدادات فيبوناتشي ومستويات السيولة الصاعدة بنسبة عائد تتجاوز ${minRr}R.`,
       ],
       ['Range Breakout', 'Volatility Expansion', 'Momentum Surge', 'Structural Shift'],
@@ -1258,16 +1456,16 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   }
 
   // 2. Bearish Range Breakout & Expansion (SELL)
-  // Decisive close BELOW range low, solid candle body, no excessive lower wick rejection
+  // Decisive close BELOW floor, solid candle body, no excessive lower wick rejection
   const isDecisiveBearClose =
-    last5m.close < rangeLowBoundary &&
+    last5m.close < effectiveLowFloor &&
     c5mMetrics.isBear &&
     c5mMetrics.body >= c5mMetrics.totalRange * 0.40 &&
     c5mMetrics.lowerWick <= c5mMetrics.totalRange * 0.45;
 
   const isNotOverextendedDownside =
     !isOverextendedRegime &&
-    currentPrice >= rangeLowBoundary - Math.max(5.0, atr5m * 3.0);
+    currentPrice >= effectiveLowFloor - Math.max(5.0, atr5m * 3.0);
 
   const hasBearMomentum =
     currentPrice <= indicators5m.ema20 ||
@@ -1276,8 +1474,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     (indicators5m.bollingerBands ? last5m.close <= indicators5m.bollingerBands.middle : true);
 
   if (isSqueezePreceding && isDecisiveBearClose && isNotOverextendedDownside && hasBearMomentum) {
-    // Structural SL placed just above broken range low / recent candle high with buffer
-    const breakoutSl = Math.max(rangeLowBoundary, last5m.high);
+    // Structural SL placed just above broken floor / recent candle high with buffer
+    const breakoutSl = Math.max(effectiveLowFloor, last5m.high);
     const cand = evaluateCandidate(
       'RANGE_BREAKOUT_EXPANSION',
       'Range Breakout & Expansion (Bearish Volatility Expansion)',
@@ -1286,7 +1484,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       currentPrice,
       breakoutSl,
       [
-        `كسر هابط حاسم لأسفل نطاق التداول ($${rangeLowBoundary.toFixed(2)}) بإغلاق شمعة زخم بيعي كاملة أسفل النطاق.`,
+        `كسر هابط حاسم لأرضية التجميع ($${effectiveLowFloor.toFixed(2)}) بإغلاق شمعة زخم بيعي كاملة أسفل المستوى.`,
         `انفجار تقلبات وزخم بيعي متسارع (Volatility Expansion) بعد مرحلة ضغط سعري وتصريف.`,
         `استهداف امتدادات فيبوناتشي ومستويات السيولة الهابطة بنسبة عائد تتجاوز ${minRr}R.`,
       ],
@@ -1536,6 +1734,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
           type: 'SWING_LEVEL',
           top: retest.brokenLevel + 0.3 * atr15m,
           bottom: retest.brokenLevel - 0.3 * atr15m,
+          poiPrice: retest.brokenLevel,
           timeframe: '15M',
           createdCandleTime: last5m.timestamp,
         },
@@ -1569,6 +1768,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
           type: 'SWING_LEVEL',
           top: retest.brokenLevel + 0.3 * atr15m,
           bottom: retest.brokenLevel - 0.3 * atr15m,
+          poiPrice: retest.brokenLevel,
           timeframe: '15M',
           createdCandleTime: last5m.timestamp,
         },
@@ -1680,6 +1880,20 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   // HARD SCORER CONFLICT FILTER: Disqualify candidates directly opposing strong HTF regime
   // =========================================================================
   const regimeFilteredCandidates = candidates.filter((cand) => {
+    // Narrow exemption for verified SFP setups (liquidity sweep of major level + sharp rejection + closed back inside)
+    const isGenuineSfp = cand.strategyFamily === 'RANGE_SFP_REVERSAL' || cand.strategyFamily === 'LIQUIDITY_SWEEP';
+    if (isGenuineSfp) {
+      const sweepInfo = indicators15m.liquiditySweepDetails || indicators5m.liquiditySweepDetails;
+      const isVerifiedSweep = sweepInfo !== undefined || indicators15m.liquiditySweepDetected || indicators5m.liquiditySweepDetected;
+      const hasSharpWick = cand.direction === 'BUY'
+        ? (c5mMetrics.lowerWick >= c5mMetrics.body * 1.5 || c5mMetrics.lowerWick >= c5mMetrics.totalRange * 0.45)
+        : (c5mMetrics.upperWick >= c5mMetrics.body * 1.5 || c5mMetrics.upperWick >= c5mMetrics.totalRange * 0.45);
+      if (isVerifiedSweep && hasSharpWick) {
+        console.log(`[StrategyEngine] Scorer Conflict Filter: Preserved genuine SFP candidate ${cand.setupName} (${cand.direction}) with verified liquidity sweep exempt from 15M CHOCH requirement`);
+        return true;
+      }
+    }
+
     if (isStrongUptrend && cand.direction === 'SELL') {
       const isConfirmedReversal = hasConfirmedReversalStructure(
         'SELL',
@@ -1737,6 +1951,40 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       }
       return true;
     });
+  }
+
+  // =========================================================================
+  // OPPOSING CANDIDATE ARBITRATION: Tiebreaker using HTF trend / composite score
+  // =========================================================================
+  const buyCandidates = finalCandidates.filter((c) => c.direction === 'BUY');
+  const sellCandidates = finalCandidates.filter((c) => c.direction === 'SELL');
+
+  if (buyCandidates.length > 0 && sellCandidates.length > 0) {
+    console.log(`[StrategyEngine] Opposing candidates detected: ${buyCandidates.length} BUY vs ${sellCandidates.length} SELL`);
+    const htfRegime = indicators15m.marketRegime || 'UNCLEAR';
+    const isBullTrend = htfRegime === 'STRONG_UPTREND' || htfRegime === 'WEAK_UPTREND' || indicators15m.structure === 'BULLISH';
+    const isBearTrend = htfRegime === 'STRONG_DOWNTREND' || htfRegime === 'WEAK_DOWNTREND' || indicators15m.structure === 'BEARISH';
+
+    if (isBullTrend && !isBearTrend) {
+      console.log(`[StrategyEngine] HTF Trend is Bullish. Arbitrating in favor of BUY candidates.`);
+      finalCandidates = buyCandidates;
+    } else if (isBearTrend && !isBullTrend) {
+      console.log(`[StrategyEngine] HTF Trend is Bearish. Arbitrating in favor of SELL candidates.`);
+      finalCandidates = sellCandidates;
+    } else {
+      // Ranging / Transition: Compare top candidate of each side using score, R:R and location
+      const topBuy = buyCandidates.slice().sort((a, b) => b.score - a.score)[0];
+      const topSell = sellCandidates.slice().sort((a, b) => b.score - a.score)[0];
+      const buyScoreMetric = topBuy.score + topBuy.tp1Rr * 5;
+      const sellScoreMetric = topSell.score + topSell.tp1Rr * 5;
+      if (buyScoreMetric >= sellScoreMetric) {
+        console.log(`[StrategyEngine] Arbitrating in favor of BUY based on composite score & R:R (${buyScoreMetric.toFixed(1)} vs ${sellScoreMetric.toFixed(1)})`);
+        finalCandidates = buyCandidates;
+      } else {
+        console.log(`[StrategyEngine] Arbitrating in favor of SELL based on composite score & R:R (${sellScoreMetric.toFixed(1)} vs ${buyScoreMetric.toFixed(1)})`);
+        finalCandidates = sellCandidates;
+      }
+    }
   }
 
   // Filter and sort candidates descending by score

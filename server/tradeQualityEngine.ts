@@ -23,6 +23,7 @@ import {
 import { storage } from './storage.js';
 import { partition5mCandles } from './candleUtils.js';
 import { hasConfirmedReversalStructure } from './indicators.js';
+import { assessEntryLocationQuality, EntryLocationQuality } from './entryLocationQuality.js';
 
 // ============================================================================
 // 1. SETUP FRESHNESS & POI MITIGATION ENGINE
@@ -172,12 +173,16 @@ export class PoiFreshnessTracker {
           poi.tapCount += 1;
           poi.lastTestedCandleTime = candleTime;
 
-          if (poi.tapCount === 1) {
-            poi.state = 'TESTED_ONCE';
-          } else if (poi.tapCount === 2) {
-            poi.state = 'TESTED_TWICE';
-          } else if (poi.tapCount >= 3) {
-            poi.state = 'EXHAUSTED';
+          if (poi.type === 'DYNAMIC_MA') {
+            poi.state = poi.tapCount <= 1 ? 'FRESH' : 'TESTED_ONCE';
+          } else {
+            if (poi.tapCount === 1) {
+              poi.state = 'TESTED_ONCE';
+            } else if (poi.tapCount === 2) {
+              poi.state = 'TESTED_TWICE';
+            } else if (poi.tapCount >= 3) {
+              poi.state = 'EXHAUSTED';
+            }
           }
         }
       }
@@ -189,7 +194,11 @@ export class PoiFreshnessTracker {
     let reason = 'Fresh zone (0 previous mitigations)';
 
     const currentState = poi.state;
-    if (currentState === 'TESTED_ONCE') {
+    if (poi.type === 'DYNAMIC_MA') {
+      isTradable = true;
+      multiplier = 0.95;
+      reason = 'Dynamic MA/VWAP support/resistance (Active trend pullback)';
+    } else if (currentState === 'TESTED_ONCE') {
       multiplier = 0.85;
       reason = 'First retest mitigation (Healthy)';
     } else if (currentState === 'TESTED_TWICE') {
@@ -503,9 +512,35 @@ export function assessEntryTimingAndAntiChase(
 ): EntryTimingAssessment {
   const atr = Math.max(0.5, indicators5m.atr14 || 2.0);
 
-  // Calculate distance from structural POI
-  let distanceFromPoi = Math.abs(currentPrice - idealEntry);
-  if (poiContext) {
+  // Check if a real, distinct structural POI reference exists
+  const hasExplicitPoi =
+    poiContext !== undefined &&
+    (
+      poiContext.top !== undefined ||
+      poiContext.bottom !== undefined ||
+      (poiContext.poiPrice !== undefined && Math.abs(poiContext.poiPrice - currentPrice) > 0.05)
+    );
+  const hasDistinctIdealEntry = Math.abs(idealEntry - currentPrice) > 0.05;
+  const isPoiAvailable = hasExplicitPoi || hasDistinctIdealEntry;
+
+  // If POI is unavailable, measure displacement from the recent local impulse origin
+  let structuralOrigin = currentPrice;
+  if (!isPoiAvailable) {
+    const closed = candles5m.filter(c => c.isClosed !== false);
+    const recent = closed.slice(-8);
+    if (recent.length > 0) {
+      structuralOrigin = direction === 'BUY'
+        ? Math.min(...recent.map(c => c.low))
+        : Math.max(...recent.map(c => c.high));
+    }
+  }
+
+  // Calculate distance from structural POI or local origin
+  let distanceFromPoi = isPoiAvailable
+    ? Math.abs(currentPrice - idealEntry)
+    : Math.abs(currentPrice - structuralOrigin);
+
+  if (isPoiAvailable && poiContext) {
     const poiTop = poiContext.top ?? poiContext.poiPrice ?? idealEntry;
     const poiBottom = poiContext.bottom ?? poiContext.poiPrice ?? idealEntry;
 
@@ -550,10 +585,35 @@ export function assessEntryTimingAndAntiChase(
   }
   const displacementAtr = Number((totalDisplacement / atr).toFixed(2));
 
-  let timing: EntryTiming = 'OPTIMAL';
+  let timing: EntryTiming = isPoiAvailable ? 'OPTIMAL' : 'ACCEPTABLE';
   let isChasing = false;
-  let timingPenalty = 0;
-  let reason = 'Optimal entry proximity to structural POI';
+  let timingPenalty = isPoiAvailable ? 0 : 5;
+  let reason = isPoiAvailable
+    ? 'Optimal entry proximity to structural POI'
+    : 'POI structural reference unavailable; measured displacement from local impulse origin';
+
+  // If POI is unavailable, never falsely classify timing as OPTIMAL
+  if (!isPoiAvailable) {
+    if (distanceFromPoiAtr <= 1.0) {
+      timing = 'ACCEPTABLE';
+      timingPenalty = 5;
+      reason = 'POI reference unavailable; entry is within 1.0 ATR of local impulse origin';
+    } else if (distanceFromPoiAtr <= 2.0) {
+      timing = 'ACCEPTABLE';
+      timingPenalty = 10;
+      reason = `POI reference unavailable; entry is ${distanceFromPoiAtr} ATR from local impulse origin`;
+    } else if (distanceFromPoiAtr <= 2.8) {
+      timing = 'LATE';
+      timingPenalty = 20;
+      isChasing = true;
+      reason = `Late entry: Price displaced ${distanceFromPoiAtr} ATR from local impulse origin without structural POI`;
+    } else {
+      timing = 'CHASED';
+      timingPenalty = 35;
+      isChasing = true;
+      reason = `Chased entry: Price displaced ${distanceFromPoiAtr} ATR from local impulse origin without structural POI`;
+    }
+  }
 
   // Strategy-aware tolerances
   const isBreakout = strategyFamily === 'RANGE_BREAKOUT_EXPANSION' || strategyFamily === 'BREAK_AND_RETEST';
@@ -569,53 +629,55 @@ export function assessEntryTimingAndAntiChase(
     (direction === 'BUY' && netDisplacementDirection === 'UP') ||
     (direction === 'SELL' && netDisplacementDirection === 'DOWN');
 
-  if (isBreakout || isSfp) {
-    // Breakouts and SFP / Liquidity sweeps tolerate slightly larger confirmation displacement
-    if (distanceFromPoiAtr <= 1.2) {
-      timing = 'OPTIMAL';
-      reason = `Optimal ${isBreakout ? 'breakout expansion' : 'sweep reversal'} entry (within ${distanceFromPoiAtr} ATR of trigger)`;
-    } else if (distanceFromPoiAtr <= 2.2) {
-      timing = 'ACCEPTABLE';
-      timingPenalty = 8;
-      reason = `Acceptable ${isBreakout ? 'breakout' : 'sweep reversal'} entry (${distanceFromPoiAtr} ATR from trigger)`;
-    } else if (distanceFromPoiAtr <= 3.2) {
-      timing = 'LATE';
-      timingPenalty = 20;
-      isChasing = true;
-      reason = `Late ${isBreakout ? 'breakout' : 'sweep reversal'} entry (${distanceFromPoiAtr} ATR from trigger) - Risk of pullback retest`;
+  if (isPoiAvailable) {
+    if (isBreakout || isSfp) {
+      // Breakouts and SFP / Liquidity sweeps tolerate slightly larger confirmation displacement
+      if (distanceFromPoiAtr <= 1.2) {
+        timing = 'OPTIMAL';
+        reason = `Optimal ${isBreakout ? 'breakout expansion' : 'sweep reversal'} entry (within ${distanceFromPoiAtr} ATR of trigger)`;
+      } else if (distanceFromPoiAtr <= 2.2) {
+        timing = 'ACCEPTABLE';
+        timingPenalty = 8;
+        reason = `Acceptable ${isBreakout ? 'breakout' : 'sweep reversal'} entry (${distanceFromPoiAtr} ATR from trigger)`;
+      } else if (distanceFromPoiAtr <= 3.2) {
+        timing = 'LATE';
+        timingPenalty = 20;
+        isChasing = true;
+        reason = `Late ${isBreakout ? 'breakout' : 'sweep reversal'} entry (${distanceFromPoiAtr} ATR from trigger) - Risk of pullback retest`;
+      } else {
+        timing = 'CHASED';
+        timingPenalty = 40;
+        isChasing = true;
+        reason = `Chased ${isBreakout ? 'breakout expansion' : 'sweep reversal'} (${distanceFromPoiAtr} ATR displacement) - Disqualified`;
+      }
     } else {
-      timing = 'CHASED';
-      timingPenalty = 40;
-      isChasing = true;
-      reason = `Chased ${isBreakout ? 'breakout expansion' : 'sweep reversal'} (${distanceFromPoiAtr} ATR displacement) - Disqualified`;
-    }
-  } else {
-    // Pullback / Order Block / FVG / OTE setups demand tight execution near the POI
-    if (distanceFromPoiAtr <= 0.8) {
-      timing = 'OPTIMAL';
-      reason = `Optimal entry at structural POI edge (${distanceFromPoiAtr} ATR)`;
-    } else if (distanceFromPoiAtr <= 1.5) {
-      timing = 'ACCEPTABLE';
-      timingPenalty = 6;
-      reason = `Acceptable entry near POI (${distanceFromPoiAtr} ATR)`;
-    } else if (distanceFromPoiAtr <= 2.0) {
-      timing = 'LATE';
-      timingPenalty = 18;
-      isChasing = true;
-      reason = `Late entry: Price has displaced ${distanceFromPoiAtr} ATR away from ideal POI`;
-    } else {
-      timing = 'CHASED';
-      timingPenalty = 35;
-      isChasing = true;
-      reason = `Chased entry (${distanceFromPoiAtr} ATR from POI) - Disqualified to prevent chasing`;
-    }
+      // Pullback / Order Block / FVG / OTE setups demand tight execution near the POI
+      if (distanceFromPoiAtr <= 0.8) {
+        timing = 'OPTIMAL';
+        reason = `Optimal entry at structural POI edge (${distanceFromPoiAtr} ATR)`;
+      } else if (distanceFromPoiAtr <= 1.5) {
+        timing = 'ACCEPTABLE';
+        timingPenalty = 6;
+        reason = `Acceptable entry near POI (${distanceFromPoiAtr} ATR)`;
+      } else if (distanceFromPoiAtr <= 2.0) {
+        timing = 'LATE';
+        timingPenalty = 18;
+        isChasing = true;
+        reason = `Late entry: Price has displaced ${distanceFromPoiAtr} ATR away from ideal POI`;
+      } else {
+        timing = 'CHASED';
+        timingPenalty = 35;
+        isChasing = true;
+        reason = `Chased entry (${distanceFromPoiAtr} ATR from POI) - Disqualified to prevent chasing`;
+      }
 
-    // FIX 2: If recent candles exhibited strong displacement in trade direction and price is extended (> 1.2 ATR away without pullback)
-    if (isDisplacementInTradeDirection && displacementAtr >= 1.2 && distanceFromPoiAtr > 1.2) {
-      timing = 'CHASED';
-      isChasing = true;
-      timingPenalty = Math.max(timingPenalty, 30);
-      reason = `Late displacement entry: Price displaced ${displacementAtr} ATR away from POI without a pullback (${distanceFromPoiAtr} ATR from POI)`;
+      // FIX 2: If recent candles exhibited strong displacement in trade direction and price is extended (> 1.2 ATR away without pullback)
+      if (isDisplacementInTradeDirection && displacementAtr >= 1.2 && distanceFromPoiAtr > 1.2) {
+        timing = 'CHASED';
+        isChasing = true;
+        timingPenalty = Math.max(timingPenalty, 30);
+        reason = `Late displacement entry: Price displaced ${displacementAtr} ATR away from POI without a pullback (${distanceFromPoiAtr} ATR from POI)`;
+      }
     }
   }
 
@@ -904,7 +966,8 @@ export function assessTpPathRunway(
   candles15m: Candle[],
   candles1h: Candle[],
   indicators15m: TechnicalIndicators,
-  indicators1h: TechnicalIndicators
+  indicators1h: TechnicalIndicators,
+  stopLoss?: number
 ): TpPathAssessment {
   const obstacles: TpObstacle[] = [];
   const totalTargetDistance = Math.abs(tp1 - entry);
@@ -918,16 +981,26 @@ export function assessTpPathRunway(
     };
   }
 
+  const isLevelMitigated = (level: number, dir: 'BUY' | 'SELL'): boolean => {
+    const recent = candles15m.slice(-15);
+    if (dir === 'BUY') {
+      return recent.some((c) => c.close > level);
+    } else {
+      return recent.some((c) => c.close < level);
+    }
+  };
+
   // 1. Check opposing 15M / 1H Swing levels
   if (direction === 'BUY') {
     const swingHigh15m = indicators15m.swingHigh;
     if (swingHigh15m > entry && swingHigh15m < tp1) {
       const distance = swingHigh15m - entry;
+      const mitigated = isLevelMitigated(swingHigh15m, 'BUY');
       obstacles.push({
-        type: '15M Swing High Resistance',
+        type: mitigated ? 'Mitigated 15M Swing High Resistance' : '15M Swing High Resistance',
         price: swingHigh15m,
         distancePoints: Number((distance / 0.1).toFixed(1)),
-        severity: distance < totalTargetDistance * 0.5 ? 'HIGH' : 'MEDIUM',
+        severity: mitigated ? 'LOW' : (distance < totalTargetDistance * 0.5 ? 'HIGH' : 'MEDIUM'),
       });
     }
 
@@ -945,11 +1018,12 @@ export function assessTpPathRunway(
     // Check opposing Bearish Order Block
     if (indicators15m.orderBlock?.type === 'BEARISH' && indicators15m.orderBlock.low > entry && indicators15m.orderBlock.low < tp1) {
       const dist = indicators15m.orderBlock.low - entry;
+      const mitigated = isLevelMitigated(indicators15m.orderBlock.high, 'BUY');
       obstacles.push({
-        type: 'Opposing 15M Bearish Order Block',
+        type: mitigated ? 'Mitigated Opposing Bearish Order Block' : 'Opposing 15M Bearish Order Block',
         price: indicators15m.orderBlock.low,
         distancePoints: Number((dist / 0.1).toFixed(1)),
-        severity: 'HIGH',
+        severity: mitigated ? 'LOW' : 'HIGH',
       });
     }
   } else {
@@ -957,11 +1031,12 @@ export function assessTpPathRunway(
     const swingLow15m = indicators15m.swingLow;
     if (swingLow15m < entry && swingLow15m > tp1) {
       const distance = entry - swingLow15m;
+      const mitigated = isLevelMitigated(swingLow15m, 'SELL');
       obstacles.push({
-        type: '15M Swing Low Support',
+        type: mitigated ? 'Mitigated 15M Swing Low Support' : '15M Swing Low Support',
         price: swingLow15m,
         distancePoints: Number((distance / 0.1).toFixed(1)),
-        severity: distance < totalTargetDistance * 0.5 ? 'HIGH' : 'MEDIUM',
+        severity: mitigated ? 'LOW' : (distance < totalTargetDistance * 0.5 ? 'HIGH' : 'MEDIUM'),
       });
     }
 
@@ -979,19 +1054,21 @@ export function assessTpPathRunway(
     // Check opposing Bullish Order Block
     if (indicators15m.orderBlock?.type === 'BULLISH' && indicators15m.orderBlock.high < entry && indicators15m.orderBlock.high > tp1) {
       const dist = entry - indicators15m.orderBlock.high;
+      const mitigated = isLevelMitigated(indicators15m.orderBlock.low, 'SELL');
       obstacles.push({
-        type: 'Opposing 15M Bullish Order Block',
+        type: mitigated ? 'Mitigated Opposing Bullish Order Block' : 'Opposing 15M Bullish Order Block',
         price: indicators15m.orderBlock.high,
         distancePoints: Number((dist / 0.1).toFixed(1)),
-        severity: 'HIGH',
+        severity: mitigated ? 'LOW' : 'HIGH',
       });
     }
   }
 
   // Calculate clear runway ratio
   let clearRunwayRatio = 1.0;
+  let closestObstacleDist = totalTargetDistance;
   if (obstacles.length > 0) {
-    const closestObstacleDist = Math.min(...obstacles.map((o) => o.distancePoints * 0.1));
+    closestObstacleDist = Math.min(...obstacles.map((o) => o.distancePoints * 0.1));
     clearRunwayRatio = Number((closestObstacleDist / totalTargetDistance).toFixed(2));
   }
 
@@ -999,18 +1076,29 @@ export function assessTpPathRunway(
   let runwayScore = 20;
   let description = 'Clear runway to TP1 without major structural barriers';
 
-  if (obstacles.some((o) => o.severity === 'HIGH' && o.distancePoints * 0.1 < totalTargetDistance * 0.45)) {
+  // Do NOT reject high-quality trades merely because a small intermediate level exists if path to TP1 has >= 1.0R clean movement.
+  const riskDistance = stopLoss ? Math.abs(entry - stopLoss) : (totalTargetDistance / 2);
+  const has1RCocoon = closestObstacleDist >= riskDistance;
+
+  const unmitigatedHighObstacles = obstacles.filter((o) => o.severity === 'HIGH');
+  const activeObstacles = obstacles.filter((o) => o.severity !== 'LOW');
+
+  if (unmitigatedHighObstacles.some((o) => o.distancePoints * 0.1 < totalTargetDistance * 0.45 && !has1RCocoon)) {
     runway = 'BLOCKED';
     runwayScore = 3;
-    description = `Blocked TP runway: Major opposing obstacle (${obstacles[0].type} at $${obstacles[0].price.toFixed(2)}) lies directly before TP1`;
-  } else if (obstacles.length >= 2 || clearRunwayRatio < 0.65) {
+    description = `Blocked TP runway: Major opposing obstacle (${unmitigatedHighObstacles[0].type} at $${unmitigatedHighObstacles[0].price.toFixed(2)}) lies directly before TP1`;
+  } else if (activeObstacles.length >= 2 || (clearRunwayRatio < 0.65 && !has1RCocoon)) {
     runway = 'MAJOR_OBSTACLE';
     runwayScore = 8;
-    description = `Major obstacle in TP path (${obstacles[0].type} at $${obstacles[0].price.toFixed(2)}) limiting runway`;
-  } else if (obstacles.length === 1) {
+    description = `Major obstacle in TP path (${activeObstacles[0]?.type || obstacles[0].type} at $${(activeObstacles[0] || obstacles[0]).price.toFixed(2)}) limiting runway`;
+  } else if (activeObstacles.length === 1) {
     runway = 'MINOR_OBSTACLE';
     runwayScore = 14;
-    description = `Minor obstacle near target (${obstacles[0].type} at $${obstacles[0].price.toFixed(2)})`;
+    description = `Minor obstacle near target (${activeObstacles[0].type} at $${activeObstacles[0].price.toFixed(2)})`;
+  } else if (obstacles.length > 0 && activeObstacles.length === 0) {
+    runway = 'CLEAR';
+    runwayScore = 18;
+    description = `Clear runway: Intermediate zones have already been mitigated or broken`;
   }
 
   return {
@@ -2011,26 +2099,40 @@ export function resolveFinalSignalConflict(
   const topBuy = scoredBuys[0];
   const topSell = scoredSells[0];
 
-  // If neither clearly dominates (e.g. score difference <= 5.0), then NO TRADE!
-  const scoreDiff = Math.abs(topBuy.score - topSell.score);
-  if (scoreDiff <= 5.0) {
-    // Both are suppressed as OPPOSING_STRUCTURAL_BLOCKED, and we return null (NO TRADE)
-    for (const rep of clusterRepresentatives) {
-      clusterSuppressed.push({
-        candidate: rep,
-        reason: `OPPOSING_STRUCTURAL_BLOCKED: تعارض هيكلي مباشر متعادل القوة والوضوح (الفارق ${scoreDiff.toFixed(2)} ≤ 5.0). تم إلغاء كلي الإشارتين لعدم وضوح الاتجاه الحاسم (NO TRADE).`,
-      });
-    }
-    return { winningCandidate: null, suppressedCandidates: clusterSuppressed };
-  }
+  // Arbitrate opposing candidates instead of dropping both to NO TRADE:
+  // 1. HTF regime alignment as primary tiebreaker
+  // 2. If neutral, composite rank score + R:R
+  const regimeUpper = (htfRegime || '').toUpperCase();
+  const isHtfBull = regimeUpper.includes('UPTREND') || regimeUpper.includes('BULLISH');
+  const isHtfBear = regimeUpper.includes('DOWNTREND') || regimeUpper.includes('BEARISH');
 
-  const winner = topBuy.score > topSell.score ? topBuy.candidate : topSell.candidate;
+  let winner: any = null;
+  let arbitrationReason = '';
+
+  if (isHtfBull && !isHtfBear) {
+    winner = topBuy.candidate;
+    arbitrationReason = `HTF alignment tiebreaker: السوق في اتجاه صاعد رئيسي (${htfRegime})`;
+  } else if (isHtfBear && !isHtfBull) {
+    winner = topSell.candidate;
+    arbitrationReason = `HTF alignment tiebreaker: السوق في اتجاه هابط رئيسي (${htfRegime})`;
+  } else {
+    // Ranging / Transition: Compare composite score and R:R
+    const buyComposite = topBuy.score + (topBuy.candidate.tp1Rr || 1.0) * 5;
+    const sellComposite = topSell.score + (topSell.candidate.tp1Rr || 1.0) * 5;
+    if (buyComposite >= sellComposite) {
+      winner = topBuy.candidate;
+      arbitrationReason = `Composite score and R:R superiority (${buyComposite.toFixed(1)} vs ${sellComposite.toFixed(1)})`;
+    } else {
+      winner = topSell.candidate;
+      arbitrationReason = `Composite score and R:R superiority (${sellComposite.toFixed(1)} vs ${buyComposite.toFixed(1)})`;
+    }
+  }
 
   for (const rep of clusterRepresentatives) {
     if (rep !== winner) {
       clusterSuppressed.push({
         candidate: rep,
-        reason: `OPPOSING_STRUCTURAL_BLOCKED: تم حظر إشارة ${rep.signal || rep.direction} (${rep.setup || rep.setupName}) لمنع التعارض الهيكلي المباشر مع إشارة ${winner.signal || winner.direction} (${winner.setup || winner.setupName}) الأقوى دليلاً وتوافقاً بفارق تفوق حاسم (${scoreDiff.toFixed(2)} > 5.0).`,
+        reason: `OPPOSING_STRUCTURAL_ARBITRATED: تم ترجيح إشارة ${winner.signal || winner.direction} (${winner.setup || winner.setupName}) على إشارة ${rep.signal || rep.direction} (${arbitrationReason}).`,
       });
     }
   }
@@ -2053,7 +2155,7 @@ export function validateTradeSignalCandidate(
     tp1: number;
     tp2?: number;
     setupName?: string;
-    strategyFamily?: StrategyFamily;
+    strategyFamily?: StrategyFamily | string;
     confidence?: number;
     poiOriginPrice?: number;
     poiPrice?: number;
@@ -2066,6 +2168,9 @@ export function validateTradeSignalCandidate(
       createdCandleTime?: number;
       invalidationPrice?: number;
     };
+    patternMetadata?: Record<string, any>;
+    factorSnapshot?: any;
+    id?: string;
   },
   context: {
     currentPrice: number;
@@ -2089,6 +2194,7 @@ export function validateTradeSignalCandidate(
   runway?: TpPathRunway;
   triggerType?: PriceActionTriggerType;
   qualityScore?: number;
+  entryLocationQuality?: EntryLocationQuality;
 } {
   const { direction, entry, stopLoss, tp1, tp2, setupName, strategyFamily } = cand;
   const { currentPrice, candles5m, candles15m, candles1h, candles1m, indicators5m, indicators15m, indicators1h, brokerSpecs, activeTradeDirection, currentSpread } = context;
@@ -2195,13 +2301,39 @@ export function validateTradeSignalCandidate(
   }
 
   // Check structural POI presence
-  const poiRef = cand.poiPrice ?? cand.poiOriginPrice ?? cand.idealEntry ??
+  let derivedPoiRef = cand.poiPrice ?? cand.poiOriginPrice ?? cand.idealEntry ??
     (cand.direction === 'BUY'
       ? (cand.poiMeta?.top ?? cand.poiMeta?.bottom)
       : (cand.poiMeta?.bottom ?? cand.poiMeta?.top));
 
+  if (derivedPoiRef === undefined) {
+    if (cand.patternMetadata?.brokenLevel !== undefined && Number.isFinite(cand.patternMetadata.brokenLevel)) {
+      derivedPoiRef = cand.patternMetadata.brokenLevel;
+    } else if (cand.patternMetadata?.retestLevel !== undefined && Number.isFinite(cand.patternMetadata.retestLevel)) {
+      derivedPoiRef = cand.patternMetadata.retestLevel;
+    } else if (cand.patternMetadata?.neckline !== undefined && Number.isFinite(cand.patternMetadata.neckline)) {
+      derivedPoiRef = cand.patternMetadata.neckline;
+    } else if (cand.patternMetadata?.dynamicPoiLevel !== undefined && Number.isFinite(cand.patternMetadata.dynamicPoiLevel)) {
+      derivedPoiRef = cand.patternMetadata.dynamicPoiLevel;
+    } else if (
+      family === 'MARKET_STRUCTURE' ||
+      (family as string) === 'TREND_CONTINUATION' ||
+      (setupName || '').toUpperCase().includes('CONTINUATION') ||
+      (setupName || '').toUpperCase().includes('PULLBACK')
+    ) {
+      derivedPoiRef = indicators5m.ema20 ?? indicators5m.vwap;
+    } else if (family === 'LIQUIDITY_SWEEP' || family === 'RANGE_SFP_REVERSAL') {
+      derivedPoiRef = direction === 'BUY' ? (indicators15m.swingLow ?? indicators5m.swingLow) : (indicators15m.swingHigh ?? indicators5m.swingHigh);
+    } else if (family === 'ORDER_BLOCK') {
+      const ob = direction === 'BUY'
+        ? (indicators15m.orderBlock?.type === 'BULLISH' ? indicators15m.orderBlock.high : indicators5m.orderBlock?.type === 'BULLISH' ? indicators5m.orderBlock.high : undefined)
+        : (indicators15m.orderBlock?.type === 'BEARISH' ? indicators15m.orderBlock.low : indicators5m.orderBlock?.type === 'BEARISH' ? indicators5m.orderBlock.low : undefined);
+      derivedPoiRef = ob;
+    }
+  }
+
   const hasStructuralContext =
-    poiRef !== undefined ||
+    derivedPoiRef !== undefined ||
     cand.poiMeta !== undefined ||
     cand.poiPrice !== undefined ||
     cand.poiOriginPrice !== undefined ||
@@ -2225,17 +2357,17 @@ export function validateTradeSignalCandidate(
   }
 
   // 4. Entry Timing & Anti-Chase Assessment (Reject chased setups early before deeper analysis)
-  const poiContext = cand.poiMeta || (poiRef !== undefined ? {
-    top: cand.direction === 'BUY' ? poiRef : Math.max(poiRef, cand.stopLoss),
-    bottom: cand.direction === 'BUY' ? Math.min(poiRef, cand.stopLoss) : poiRef,
-    poiPrice: poiRef,
+  const poiContext = cand.poiMeta || (derivedPoiRef !== undefined ? {
+    top: cand.direction === 'BUY' ? derivedPoiRef : Math.max(derivedPoiRef, cand.stopLoss),
+    bottom: cand.direction === 'BUY' ? Math.min(derivedPoiRef, cand.stopLoss) : derivedPoiRef,
+    poiPrice: derivedPoiRef,
   } : undefined);
 
   const timingAssessment = assessEntryTimingAndAntiChase(
     direction,
     family,
     currentPrice,
-    poiRef !== undefined ? poiRef : entry,
+    derivedPoiRef !== undefined ? derivedPoiRef : entry,
     candles5m || [],
     indicators5m,
     indicators15m?.marketRegime || 'UNCLEAR',
@@ -2483,7 +2615,8 @@ export function validateTradeSignalCandidate(
     candles15m || [],
     candles1h || [],
     indicators15m,
-    indicators1h
+    indicators1h,
+    stopLoss
   );
 
   if (runwayAssessment.runway === 'BLOCKED') {
@@ -2509,13 +2642,38 @@ export function validateTradeSignalCandidate(
     family !== 'COUNTERTREND_SCALP' &&
     family !== 'DOUBLE_TOP_BOTTOM' &&
     family !== 'BARE_SR' &&
-    family !== 'STRUCTURE_ENGULFING' &&
-    family !== 'MARKET_STRUCTURE'
+    family !== 'STRUCTURE_ENGULFING'
   ) {
     return {
       isValid: false,
       rejectionReason: `INVALID_PULLBACK: Counter-trend impulse violates pullback structure (${pullbackAssessment.reasons.join(', ')})`,
       pullbackQuality: pullbackAssessment.quality,
+    };
+  }
+
+  // 7.5. Entry Location Quality (ELQ) Gate
+  const explicitRetest = cand.patternMetadata?.brokenLevel ?? cand.patternMetadata?.retestLevel;
+  const elq = assessEntryLocationQuality({
+    direction,
+    family,
+    entry,
+    currentPrice,
+    candles5m: candles5m || [],
+    indicators5m,
+    indicators15m,
+    indicators1h,
+    explicitRetestLevel: explicitRetest,
+    setupName,
+  });
+
+  if (elq.hardBlocked) {
+    return {
+      isValid: false,
+      rejectionReason: elq.rejectionReason,
+      pullbackQuality: pullbackAssessment.quality,
+      timing: timingAssessment.timing,
+      runway: runwayAssessment.runway,
+      entryLocationQuality: elq,
     };
   }
 
@@ -2533,6 +2691,7 @@ export function validateTradeSignalCandidate(
       isValid: false,
       rejectionReason: `MISSING_PRICE_ACTION_TRIGGER: Insufficient price action confirmation trigger on closed 5M candle`,
       triggerType: triggerAssessment.primaryTrigger,
+      entryLocationQuality: elq,
     };
   }
 
@@ -2542,6 +2701,7 @@ export function validateTradeSignalCandidate(
     timing: timingAssessment.timing,
     runway: runwayAssessment.runway,
     triggerType: triggerAssessment.primaryTrigger,
+    entryLocationQuality: elq,
   };
 }
 

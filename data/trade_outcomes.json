@@ -1,5 +1,23 @@
 [
   {
+    "pl": -4.5,
+    "tp1": 4291.49,
+    "entry": 4321.15,
+    "source": "MANUAL",
+    "isoTime": "2026-09-23T08:46:25.751Z",
+    "outcome": "LOSS",
+    "tradeId": "sig_1790148913881_bgta4",
+    "closedAt": 1790153185751,
+    "signalId": "sig_1790148913881_bgta4",
+    "stopLoss": 4325.49,
+    "direction": "SELL NOW",
+    "exitPrice": 4325.49,
+    "orderType": "MARKET",
+    "timestamp": 1790153185751,
+    "closeReason": "MANUAL_TELEGRAM_BUTTON",
+    "realizedPnl": -4.5
+  },
+  {
     "pl": 0,
     "tp1": 4333.32,
     "tp2": 4333.29,

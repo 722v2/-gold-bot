@@ -28,7 +28,7 @@ export type PoiFreshnessState =
 
 export interface PoiRecord {
   id: string;
-  type: 'ORDER_BLOCK' | 'FVG' | 'SFP_ZONE' | 'SWING_LEVEL';
+  type: 'ORDER_BLOCK' | 'FVG' | 'SFP_ZONE' | 'SWING_LEVEL' | 'DYNAMIC_MA';
   timeframe: '1H' | '15M' | '5M';
   direction: 'BULLISH' | 'BEARISH';
   top: number;
@@ -207,12 +207,41 @@ export interface TechnicalIndicators {
     high: number;
     low: number;
   };
+  orderBlocks?: Array<{
+    type: 'BULLISH' | 'BEARISH';
+    high: number;
+    low: number;
+    mitigated?: boolean;
+    strength?: number;
+    createdCandleIndex?: number;
+  }>;
   fvg?: {
     type: 'BULLISH' | 'BEARISH';
     top: number;
     bottom: number;
   };
+  fvgZones?: Array<{
+    type: 'BULLISH' | 'BEARISH';
+    top: number;
+    bottom: number;
+    mitigated?: boolean;
+    createdCandleIndex?: number;
+  }>;
+  fractalSwings?: {
+    highs: number[];
+    lows: number[];
+  };
   liquiditySweepDetected?: boolean;
+  liquiditySweepDetails?: {
+    sweptLevel: number;
+    levelType: 'MACRO_SWING' | 'FRACTAL_SWING' | 'EQUAL_HIGHS_LOWS' | 'ASIAN_SESSION';
+    direction: 'BULLISH' | 'BEARISH';
+  };
+  compressionState?: {
+    isCompressed: boolean;
+    squeezeRatio: number;
+    expansionTriggered: boolean;
+  };
   premiumDiscountZone?: 'PREMIUM' | 'DISCOUNT' | 'EQUILIBRIUM';
   marketRegime?:
     | 'STRONG_UPTREND'

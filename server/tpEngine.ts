@@ -750,12 +750,33 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
   sortByProximityAndQuality(structuralCandidates);
   sortByProximityAndQuality(syntheticCandidates);
 
-  // 5. TP1 Selection: Genuine structural candidates ALWAYS take precedence
-  // If genuine structural targets exist, select the nearest one.
-  // Synthetic projections are used ONLY if no genuine structural target exists.
-  const selectedTp1: StructuralLevel = structuralCandidates.length > 0
-    ? structuralCandidates[0]
-    : syntheticCandidates[0];
+  // 5. TP1 Selection: Directional search for the nearest target satisfying >= 1.0R
+  // Sub-1.0R levels are preserved as intermediate obstacles/management levels, NOT as trade-killing TP1s.
+  // minRr is evaluated at signal gate; TP1 strictly identifies the nearest valid structural target >= 1.0R.
+  const minRequiredRr = 1.0;
+  const minTargetDistance = Number((slDistance * minRequiredRr).toFixed(2));
+
+  const sub1rStructuralObstacles = structuralCandidates.filter((c) => c.distance < minTargetDistance - 0.001);
+  const validStructuralTargets = structuralCandidates.filter((c) => c.distance >= minTargetDistance - 0.001);
+  const validSyntheticTargets = syntheticCandidates.filter((c) => c.distance >= minTargetDistance - 0.001);
+
+  let selectedTp1: StructuralLevel | null = null;
+  if (validStructuralTargets.length > 0) {
+    selectedTp1 = validStructuralTargets[0]; // Nearest genuine structural target with >= 1.0R
+  } else if (validSyntheticTargets.length > 0) {
+    selectedTp1 = validSyntheticTargets[0]; // Nearest synthetic target with >= 1.0R
+  }
+
+  // If no target achieves >= 1.0R, candidate remains invalid rather than inventing an unsafe TP
+  if (!selectedTp1) {
+    const nearestObstacleRr = structuralCandidates[0] ? (structuralCandidates[0].distance / slDistance).toFixed(2) : '0';
+    return createEmptyTpResult(
+      entry,
+      slDistance,
+      atrAtEntry,
+      `No valid target achieves minimum required 1.0R (nearest obstacle provides only ${nearestObstacleRr}R) -> REJECTED`
+    );
+  }
 
   const tp1Price = Number(selectedTp1.price.toFixed(2));
   const tp1Distance = Number(Math.abs(tp1Price - entry).toFixed(2));
@@ -767,7 +788,7 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
   // Geometry must strictly satisfy: BUY: TP2 > TP1 > Entry, SELL: TP2 < TP1 < Entry
   // Remove arbitrary distance requirements that can discard a genuine nearby structural target.
   const remainingStructural = structuralCandidates.filter((c) =>
-    isBuy ? c.price > tp1Price : c.price < tp1Price
+    (isBuy ? c.price > tp1Price : c.price < tp1Price) && c.distance > tp1Distance + 0.1
   );
 
   let selectedTp2: StructuralLevel | null = null;
@@ -779,10 +800,6 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
     hasValidTp2 = true;
     tp2ReasonText = `Next genuine structural objective (${selectedTp2.name})`;
   } else {
-    // If no valid second structural target exists:
-    // DO NOT set TP2 equal to TP1.
-    // Do NOT invent a large mathematical TP2.
-    // Return a clearly invalid/no-second-target state (tp2 = 0) that downstream validation can handle safely.
     selectedTp2 = null;
     hasValidTp2 = false;
     tp2ReasonText = 'No valid second structural target identified beyond TP1';
@@ -796,9 +813,13 @@ export function calculateDynamicTakeProfits(req: DynamicTpRequest): DynamicTpRes
   const tp2TargetName = selectedTp2 ? selectedTp2.name : 'None';
   const tp2IsStructural = selectedTp2 ? selectedTp2.isStructural : false;
 
-  const tp1SelectionReason = selectedTp1.isStructural
+  let tp1SelectionReason = selectedTp1.isStructural
     ? `Nearest genuine structural objective (${selectedTp1.name}) at ${tp1Price} (Distance: ${tp1Points} pts, Natural RR: ${tp1RrString})`
     : `Fallback projection (${selectedTp1.name}) at ${tp1Price} (Distance: ${tp1Points} pts, Natural RR: ${tp1RrString})`;
+
+  if (sub1rStructuralObstacles.length > 0) {
+    tp1SelectionReason += ` [Intermediate obstacle bypassed: ${sub1rStructuralObstacles[0].name} at $${sub1rStructuralObstacles[0].price} (${(sub1rStructuralObstacles[0].distance / slDistance).toFixed(2)}R)]`;
+  }
 
   return {
     valid: true,

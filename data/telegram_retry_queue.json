@@ -345,5 +345,129 @@
     "nextRetryAt": 1790088913747,
     "createdAt": 1790088911700,
     "lastError": "Historical event suppressed: exceeded actionability window"
+  },
+  {
+    "notificationId": "mgmt_mgmt_sig_1790148913881_bgta4",
+    "tradeId": "sig_1790148913881_bgta4",
+    "event": "UPDATE_SL",
+    "chatId": "1189889156",
+    "message": "🛡️ <b>إدارة الصفقة — تحديث وقف الخسارة</b>\n\n🔴 <b>SELL XAU/USD</b>\n\nCurrent: $4315.92\n\n📌 <b>لماذا؟</b>\nتحرك السعر لصالح الصفقة وتكوّن هيكل جديد يحمي الأرباح.\n\n🔧 <b>الإجراء:</b>\nحرّك SL من <b>$4325.49</b> إلى <b>$4319.02</b>.\n\n🎯 <b>TP2:</b>\nغير محدد\n\n⏱ <i>الوقت: ١٠:١٦:٤٥ ص | نظام الإدارة المتقدمة Phase 4</i>",
+    "status": "SUPPRESSED",
+    "attempts": 10,
+    "maxAttempts": 10,
+    "nextRetryAt": 1790158665509,
+    "createdAt": 1790153266676,
+    "lastError": "Historical event suppressed: exceeded actionability window"
+  },
+  {
+    "notificationId": "signal_sig_1790156115420_jcgk2",
+    "tradeId": "sig_1790156115420_jcgk2",
+    "event": "SIGNAL_NEW",
+    "chatId": "1189889156",
+    "message": "<b>🔔 إشارة تداول جديدة من Gold AI Scanner!</b>\n\n🔴 <b>الصفقة المقترحة:</b> بيع الآن (SELL NOW)\n📊 <b>الأصل:</b> XAU/USD\n📈 <b>سعر الدخول:</b> $4314.69\n🛑 <b>وقف الخسارة (SL):</b> $4319.63 (49.4 نقطة)\n🎯 <b>الهدف الأول (TP1):</b> $4291.49\n🎯 <b>الهدف الثاني (TP2):</b> غير محدد\n⚖️ <b>المخاطرة:</b> 19.76% ($4.94)\n🧠 <b>نسبة الثقة:</b> 77%\n🛠️ <b>النموذج الفني:</b> Range Breakout &amp; Expansion (Bearish Volatility Expansion)\n\n⏱ <i>الوقت: ٩:٣٥:١٥ ص</i>",
+    "replyMarkup": {
+      "inline_keyboard": [
+        [
+          {
+            "text": "🟢 دخلت الصفقة (ENTERED)",
+            "callback_data": "entered:sig_1790156115420_jcgk2"
+          },
+          {
+            "text": "⚪ لم أدخل (NOT ENTERED)",
+            "callback_data": "not_entered:sig_1790156115420_jcgk2"
+          }
+        ],
+        [
+          {
+            "text": "✅ WIN",
+            "callback_data": "win:sig_1790156115420_jcgk2"
+          },
+          {
+            "text": "❌ LOSS",
+            "callback_data": "loss:sig_1790156115420_jcgk2"
+          }
+        ]
+      ]
+    },
+    "status": "SUPPRESSED",
+    "attempts": 1,
+    "maxAttempts": 10,
+    "nextRetryAt": 1790156117469,
+    "createdAt": 1790156115420,
+    "lastError": "Historical event suppressed: exceeded actionability window"
+  },
+  {
+    "notificationId": "signal_sig_1790157868020_ogic3",
+    "tradeId": "sig_1790157868020_ogic3",
+    "event": "SIGNAL_NEW",
+    "chatId": "1189889156",
+    "message": "<b>🔔 إشارة تداول جديدة من Gold AI Scanner!</b>\n\n🔴 <b>الصفقة المقترحة:</b> بيع الآن (SELL NOW)\n📊 <b>الأصل:</b> XAU/USD\n📈 <b>سعر الدخول:</b> $4318.72\n🛑 <b>وقف الخسارة (SL):</b> $4323.45 (47.3 نقطة)\n🎯 <b>الهدف الأول (TP1):</b> $4313.24\n🎯 <b>الهدف الثاني (TP2):</b> $4309.02\n⚖️ <b>المخاطرة:</b> 18.92% ($4.73)\n🧠 <b>نسبة الثقة:</b> 96%\n🛠️ <b>النموذج الفني:</b> Double Top Reversal (Confirmed M-Formation)\n\n⏱ <i>الوقت: ١٠:٠٤:٢٨ ص</i>",
+    "replyMarkup": {
+      "inline_keyboard": [
+        [
+          {
+            "text": "🟢 دخلت الصفقة (ENTERED)",
+            "callback_data": "entered:sig_1790157868020_ogic3"
+          },
+          {
+            "text": "⚪ لم أدخل (NOT ENTERED)",
+            "callback_data": "not_entered:sig_1790157868020_ogic3"
+          }
+        ],
+        [
+          {
+            "text": "✅ WIN",
+            "callback_data": "win:sig_1790157868020_ogic3"
+          },
+          {
+            "text": "❌ LOSS",
+            "callback_data": "loss:sig_1790157868020_ogic3"
+          }
+        ]
+      ]
+    },
+    "status": "SUPPRESSED",
+    "attempts": 1,
+    "maxAttempts": 10,
+    "nextRetryAt": 1790157870064,
+    "createdAt": 1790157868020,
+    "lastError": "Historical event suppressed: exceeded actionability window"
+  },
+  {
+    "notificationId": "signal_sig_1790159024954_gi44s",
+    "tradeId": "sig_1790159024954_gi44s",
+    "event": "SIGNAL_NEW",
+    "chatId": "1189889156",
+    "message": "<b>🔔 إشارة تداول جديدة من Gold AI Scanner!</b>\n\n🟢 <b>الصفقة المقترحة:</b> شراء الآن (BUY NOW)\n📊 <b>الأصل:</b> XAU/USD\n📈 <b>سعر الدخول:</b> $4314.92\n🛑 <b>وقف الخسارة (SL):</b> $4310.92 (40 نقطة)\n🎯 <b>الهدف الأول (TP1):</b> $4319.22\n🎯 <b>الهدف الثاني (TP2):</b> $4325.52\n⚖️ <b>المخاطرة:</b> 16% ($4.00)\n🧠 <b>نسبة الثقة:</b> 89%\n🛠️ <b>النموذج الفني:</b> Range SFP Reversal (Range Low Liquidity Sweep &amp; Rejection)\n\n⏱ <i>الوقت: ١٠:٢٣:٤٥ ص</i>",
+    "replyMarkup": {
+      "inline_keyboard": [
+        [
+          {
+            "text": "🟢 دخلت الصفقة (ENTERED)",
+            "callback_data": "entered:sig_1790159024954_gi44s"
+          },
+          {
+            "text": "⚪ لم أدخل (NOT ENTERED)",
+            "callback_data": "not_entered:sig_1790159024954_gi44s"
+          }
+        ],
+        [
+          {
+            "text": "✅ WIN",
+            "callback_data": "win:sig_1790159024954_gi44s"
+          },
+          {
+            "text": "❌ LOSS",
+            "callback_data": "loss:sig_1790159024954_gi44s"
+          }
+        ]
+      ]
+    },
+    "status": "PENDING",
+    "attempts": 1,
+    "maxAttempts": 10,
+    "nextRetryAt": 1790159027007,
+    "createdAt": 1790159024955,
+    "lastError": "TELEGRAM_BOT_TOKEN is not configured."
   }
 ]

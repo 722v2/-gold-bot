@@ -213,70 +213,217 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
     structure = 'BEARISH';
   }
   
-  // Order Block detection (last opposite candle before displacement)
-  let orderBlock: TechnicalIndicators['orderBlock'] = undefined;
+  // 5-bar Fractal Swings detection
+  const fractalHighs: number[] = [];
+  const fractalLows: number[] = [];
+  for (let i = 2; i < recent.length - 2; i++) {
+    const c = recent[i];
+    if (c.high >= recent[i - 1].high && c.high >= recent[i - 2].high && c.high >= recent[i + 1].high && c.high >= recent[i + 2].high) {
+      fractalHighs.push(Number(c.high.toFixed(2)));
+    }
+    if (c.low <= recent[i - 1].low && c.low <= recent[i - 2].low && c.low <= recent[i + 1].low && c.low <= recent[i + 2].low) {
+      fractalLows.push(Number(c.low.toFixed(2)));
+    }
+  }
+
+  // Equal Highs / Lows pools
+  const equalHighs: number[] = [];
+  const equalLows: number[] = [];
+  const eqTolerance = Math.max(0.4, atr14 * 0.3);
+  for (let i = 0; i < fractalHighs.length; i++) {
+    for (let j = i + 1; j < fractalHighs.length; j++) {
+      if (Math.abs(fractalHighs[i] - fractalHighs[j]) <= eqTolerance) {
+        const avg = Number(((fractalHighs[i] + fractalHighs[j]) / 2).toFixed(2));
+        if (!equalHighs.includes(avg)) equalHighs.push(avg);
+      }
+    }
+  }
+  for (let i = 0; i < fractalLows.length; i++) {
+    for (let j = i + 1; j < fractalLows.length; j++) {
+      if (Math.abs(fractalLows[i] - fractalLows[j]) <= eqTolerance) {
+        const avg = Number(((fractalLows[i] + fractalLows[j]) / 2).toFixed(2));
+        if (!equalLows.includes(avg)) equalLows.push(avg);
+      }
+    }
+  }
+
+  // Asian session High / Low
+  let asianHigh: number | null = null;
+  let asianLow: number | null = null;
+  const asianCandles = recent.filter((c) => {
+    if (!c.timestamp) return false;
+    const d = new Date(c.timestamp);
+    const h = d.getUTCHours();
+    return h >= 0 && h < 8;
+  });
+  if (asianCandles.length >= 3) {
+    asianHigh = Math.max(...asianCandles.map((c) => c.high));
+    asianLow = Math.min(...asianCandles.map((c) => c.low));
+  }
+
+  // Multi-zone Order Block detection (cache of up to 5 unmitigated zones)
+  const orderBlocks: NonNullable<TechnicalIndicators['orderBlocks']> = [];
   for (let i = recent.length - 2; i >= 3; i--) {
     const c = recent[i];
-    const prev = recent[i - 1];
     const next = recent[i + 1];
     
     // Bullish OB: Bearish candle followed by strong bullish expansion
     if (c.close < c.open && next.close > c.open && (next.high - next.low) > atr14 * 0.8) {
-      orderBlock = {
-        type: 'BULLISH',
-        high: Number(Math.max(c.open, c.close).toFixed(2)),
-        low: Number(c.low.toFixed(2)),
-      };
-      break;
+      const high = Number(Math.max(c.open, c.close).toFixed(2));
+      const low = Number(c.low.toFixed(2));
+      const candlesAfter = recent.slice(i + 2);
+      const isMitigated = candlesAfter.some((after) => after.close < low);
+      if (!isMitigated && orderBlocks.length < 5) {
+        orderBlocks.push({
+          type: 'BULLISH',
+          high,
+          low,
+          mitigated: false,
+          createdCandleIndex: i,
+          strength: Number((next.high - next.low).toFixed(2)),
+        });
+      }
     }
     // Bearish OB: Bullish candle followed by strong bearish displacement
     if (c.close > c.open && next.close < c.low && (next.high - next.low) > atr14 * 0.8) {
-      orderBlock = {
-        type: 'BEARISH',
-        high: Number(c.high.toFixed(2)),
-        low: Number(Math.min(c.open, c.close).toFixed(2)),
-      };
-      break;
+      const high = Number(c.high.toFixed(2));
+      const low = Number(Math.min(c.open, c.close).toFixed(2));
+      const candlesAfter = recent.slice(i + 2);
+      const isMitigated = candlesAfter.some((after) => after.close > high);
+      if (!isMitigated && orderBlocks.length < 5) {
+        orderBlocks.push({
+          type: 'BEARISH',
+          high,
+          low,
+          mitigated: false,
+          createdCandleIndex: i,
+          strength: Number((next.high - next.low).toFixed(2)),
+        });
+      }
     }
   }
+  const orderBlock = orderBlocks.length > 0 ? { type: orderBlocks[0].type, high: orderBlocks[0].high, low: orderBlocks[0].low } : undefined;
   
-  // Fair Value Gap (FVG) detection
-  let fvg: TechnicalIndicators['fvg'] = undefined;
+  // Multi-zone Fair Value Gap (FVG) detection (cache of up to 5 unmitigated zones)
+  const fvgZones: NonNullable<TechnicalIndicators['fvgZones']> = [];
   for (let i = recent.length - 2; i >= 2; i--) {
     const c1 = recent[i - 2];
     const c3 = recent[i];
     
     // Bullish FVG: candle 1 high < candle 3 low
     if (c3.low > c1.high && c3.low - c1.high > atr14 * 0.2) {
-      fvg = {
-        type: 'BULLISH',
-        top: Number(c3.low.toFixed(2)),
-        bottom: Number(c1.high.toFixed(2)),
-      };
-      break;
+      const top = Number(c3.low.toFixed(2));
+      const bottom = Number(c1.high.toFixed(2));
+      const candlesAfter = recent.slice(i + 1);
+      const isMitigated = candlesAfter.some((after) => after.low <= bottom);
+      if (!isMitigated && fvgZones.length < 5) {
+        fvgZones.push({
+          type: 'BULLISH',
+          top,
+          bottom,
+          mitigated: false,
+          createdCandleIndex: i,
+        });
+      }
     }
     // Bearish FVG: candle 1 low > candle 3 high
     if (c1.low > c3.high && c1.low - c3.high > atr14 * 0.2) {
-      fvg = {
-        type: 'BEARISH',
-        top: Number(c1.low.toFixed(2)),
-        bottom: Number(c3.high.toFixed(2)),
-      };
-      break;
+      const top = Number(c1.low.toFixed(2));
+      const bottom = Number(c3.high.toFixed(2));
+      const candlesAfter = recent.slice(i + 1);
+      const isMitigated = candlesAfter.some((after) => after.high >= top);
+      if (!isMitigated && fvgZones.length < 5) {
+        fvgZones.push({
+          type: 'BEARISH',
+          top,
+          bottom,
+          mitigated: false,
+          createdCandleIndex: i,
+        });
+      }
     }
   }
+  const fvg = fvgZones.length > 0 ? { type: fvgZones[0].type, top: fvgZones[0].top, bottom: fvgZones[0].bottom } : undefined;
   
-  // Liquidity sweep check: did the latest or recent candle pierce swing high/low and close back inside?
+  // Enhanced Liquidity Sweep check: Macro swings, fractal swings, EQH/EQL, and Asian session
   const lastCandle = recent[recent.length - 1];
   const prevCandle = recent[recent.length - 2];
   const prevHigh = Math.max(...recent.slice(0, -2).map((c) => c.high));
   const prevLow = Math.min(...recent.slice(0, -2).map((c) => c.low));
   
-  const sweptHigh = (lastCandle.high > prevHigh && lastCandle.close < prevHigh) || 
-                    (prevCandle && prevCandle.high > prevHigh && lastCandle.close < prevHigh);
-  const sweptLow = (lastCandle.low < prevLow && lastCandle.close > prevLow) ||
-                   (prevCandle && prevCandle.low < prevLow && lastCandle.close > prevLow);
+  let sweptHigh = (lastCandle.high > prevHigh && lastCandle.close < prevHigh) || 
+                  (prevCandle && prevCandle.high > prevHigh && lastCandle.close < prevHigh);
+  let sweptLow = (lastCandle.low < prevLow && lastCandle.close > prevLow) ||
+                 (prevCandle && prevCandle.low < prevLow && lastCandle.close > prevLow);
+
+  let liquiditySweepDetails: TechnicalIndicators['liquiditySweepDetails'] = undefined;
+  if (sweptHigh) {
+    liquiditySweepDetails = { sweptLevel: prevHigh, levelType: 'MACRO_SWING', direction: 'BEARISH' };
+  } else if (sweptLow) {
+    liquiditySweepDetails = { sweptLevel: prevLow, levelType: 'MACRO_SWING', direction: 'BULLISH' };
+  }
+
+  // Check recent fractal swings if not swept macro
+  if (!sweptHigh && !sweptLow) {
+    const recentFractalHighs = fractalHighs.slice(-3);
+    for (const fh of recentFractalHighs) {
+      if ((lastCandle.high > fh && lastCandle.close < fh) || (prevCandle && prevCandle.high > fh && lastCandle.close < fh)) {
+        sweptHigh = true;
+        liquiditySweepDetails = { sweptLevel: fh, levelType: 'FRACTAL_SWING', direction: 'BEARISH' };
+        break;
+      }
+    }
+    const recentFractalLows = fractalLows.slice(-3);
+    for (const fl of recentFractalLows) {
+      if ((lastCandle.low < fl && lastCandle.close > fl) || (prevCandle && prevCandle.low < fl && lastCandle.close > fl)) {
+        sweptLow = true;
+        liquiditySweepDetails = { sweptLevel: fl, levelType: 'FRACTAL_SWING', direction: 'BULLISH' };
+        break;
+      }
+    }
+  }
+
+  // Check Equal Highs / Lows if not swept
+  if (!sweptHigh && !sweptLow) {
+    for (const eqh of equalHighs) {
+      if ((lastCandle.high > eqh && lastCandle.close < eqh) || (prevCandle && prevCandle.high > eqh && lastCandle.close < eqh)) {
+        sweptHigh = true;
+        liquiditySweepDetails = { sweptLevel: eqh, levelType: 'EQUAL_HIGHS_LOWS', direction: 'BEARISH' };
+        break;
+      }
+    }
+    for (const eql of equalLows) {
+      if ((lastCandle.low < eql && lastCandle.close > eql) || (prevCandle && prevCandle.low < eql && lastCandle.close > eql)) {
+        sweptLow = true;
+        liquiditySweepDetails = { sweptLevel: eql, levelType: 'EQUAL_HIGHS_LOWS', direction: 'BULLISH' };
+        break;
+      }
+    }
+  }
+
+  // Check Asian Session High / Low if not swept
+  if (!sweptHigh && !sweptLow && asianHigh !== null && asianLow !== null) {
+    if ((lastCandle.high > asianHigh && lastCandle.close < asianHigh) || (prevCandle && prevCandle.high > asianHigh && lastCandle.close < asianHigh)) {
+      sweptHigh = true;
+      liquiditySweepDetails = { sweptLevel: asianHigh, levelType: 'ASIAN_SESSION', direction: 'BEARISH' };
+    } else if ((lastCandle.low < asianLow && lastCandle.close > asianLow) || (prevCandle && prevCandle.low < asianLow && lastCandle.close > asianLow)) {
+      sweptLow = true;
+      liquiditySweepDetails = { sweptLevel: asianLow, levelType: 'ASIAN_SESSION', direction: 'BULLISH' };
+    }
+  }
+
   const liquiditySweepDetected = sweptHigh || sweptLow;
+
+  // Compression state calculation
+  const compressionBbWidth = bollingerBands.upper - bollingerBands.lower;
+  const isCompressed = compressionBbWidth <= atr14 * 2.2;
+  const squeezeRatio = Number((compressionBbWidth / Math.max(0.1, atr14)).toFixed(2));
+  const expansionTriggered = isCompressed && (lastCandle.close > bollingerBands.upper || lastCandle.close < bollingerBands.lower);
+  const compressionState = {
+    isCompressed,
+    squeezeRatio,
+    expansionTriggered,
+  };
   
   // Premium / Discount calculation
   const range = swingHigh - swingLow;
@@ -469,8 +616,16 @@ export function analyzeTechnicals(candles: Candle[], referenceTime?: number): Te
     bosDetected,
     liquidityLevels,
     orderBlock,
+    orderBlocks,
     fvg,
+    fvgZones,
+    fractalSwings: {
+      highs: fractalHighs,
+      lows: fractalLows,
+    },
     liquiditySweepDetected,
+    liquiditySweepDetails,
+    compressionState,
     premiumDiscountZone,
     marketRegime,
     regimeContext,
@@ -767,10 +922,11 @@ export function detectHorizontalBreakoutRetest(
 
     // Check Resistance -> Support Retest (BUY)
     if (sr.type === 'RESISTANCE') {
-      // Find breakout candle between 2 and 15 candles ago
+      const retestTolerance = Math.max(1.2, atr14 * 0.4);
+      // Find breakout candle between 1 and 15 candles ago (supporting rapid 5M breakout -> retest)
       let breakoutIdx = -1;
-      for (let i = slice5m.length - 15; i < slice5m.length - 2; i++) {
-        if (i >= 0 && slice5m[i].close >= level + 0.3 * atr14) {
+      for (let i = slice5m.length - 15; i < slice5m.length - 1; i++) {
+        if (i >= 0 && slice5m[i].close >= level + 0.25 * atr14) {
           breakoutIdx = i;
           break;
         }
@@ -778,22 +934,26 @@ export function detectHorizontalBreakoutRetest(
 
       if (breakoutIdx !== -1) {
         // Verify no candle after breakout closed back below the level (failed breakout)
-        const candlesAfterBreakout = slice5m.slice(breakoutIdx + 1);
-        const hasFailedBackBelow = candlesAfterBreakout.some((c) => c.close < level - 0.2 * atr14);
+        const intermediateCandles = slice5m.slice(breakoutIdx + 1, slice5m.length - 1);
+        const hasFailedBackBelow = intermediateCandles.some((c) => c.close < level - 0.2 * atr14);
 
         if (!hasFailedBackBelow) {
           // Check current/recent candle returns to touch/retest the level
-          const touch = lastCandle.low <= level + 0.5 * atr14 && lastCandle.low >= level - 0.4 * atr14;
+          const prev5mCandle = slice5m[slice5m.length - 2];
+          const touchRecent = lastCandle.low <= level + retestTolerance && lastCandle.low >= level - 0.4 * atr14;
+          const touchPrev = prev5mCandle ? (prev5mCandle.low <= level + retestTolerance && prev5mCandle.low >= level - 0.4 * atr14) : false;
           // Must hold above the broken level (rejection up / acceptance above)
-          const holdsAbove = lastCandle.close > level;
+          const holdsAbove = lastCandle.close >= level - 0.1 * atr14;
+          const hasBullishReaction = (lastCandle.close > lastCandle.open) ||
+            (lastCandle.close - lastCandle.low >= (lastCandle.high - lastCandle.low) * 0.25);
 
-          if (touch && holdsAbove) {
+          if ((touchRecent || touchPrev) && holdsAbove && hasBullishReaction) {
             results.push({
               found: true,
               type: 'RESISTANCE_TO_SUPPORT',
               brokenLevel: level,
               breakoutCandleClose: slice5m[breakoutIdx].close,
-              retestPrice: lastCandle.low,
+              retestPrice: touchRecent ? lastCandle.low : (prev5mCandle?.low ?? lastCandle.low),
             });
           }
         }
@@ -802,9 +962,10 @@ export function detectHorizontalBreakoutRetest(
 
     // Check Support -> Resistance Retest (SELL)
     if (sr.type === 'SUPPORT') {
+      const retestTolerance = Math.max(1.2, atr14 * 0.4);
       let breakoutIdx = -1;
-      for (let i = slice5m.length - 15; i < slice5m.length - 2; i++) {
-        if (i >= 0 && slice5m[i].close <= level - 0.3 * atr14) {
+      for (let i = slice5m.length - 15; i < slice5m.length - 1; i++) {
+        if (i >= 0 && slice5m[i].close <= level - 0.25 * atr14) {
           breakoutIdx = i;
           break;
         }
@@ -812,21 +973,25 @@ export function detectHorizontalBreakoutRetest(
 
       if (breakoutIdx !== -1) {
         // Verify no candle after breakout closed back above the level (failed breakout)
-        const candlesAfterBreakout = slice5m.slice(breakoutIdx + 1);
-        const hasFailedBackAbove = candlesAfterBreakout.some((c) => c.close > level + 0.2 * atr14);
+        const intermediateCandles = slice5m.slice(breakoutIdx + 1, slice5m.length - 1);
+        const hasFailedBackAbove = intermediateCandles.some((c) => c.close > level + 0.2 * atr14);
 
         if (!hasFailedBackAbove) {
-          const touch = lastCandle.high >= level - 0.5 * atr14 && lastCandle.high <= level + 0.4 * atr14;
+          const prev5mCandle = slice5m[slice5m.length - 2];
+          const touchRecent = lastCandle.high >= level - retestTolerance && lastCandle.high <= level + 0.4 * atr14;
+          const touchPrev = prev5mCandle ? (prev5mCandle.high >= level - retestTolerance && prev5mCandle.high <= level + 0.4 * atr14) : false;
           // Must hold below the broken level (rejection down / acceptance below)
-          const holdsBelow = lastCandle.close < level;
+          const holdsBelow = lastCandle.close <= level + 0.1 * atr14;
+          const hasBearishReaction = (lastCandle.close < lastCandle.open) ||
+            (lastCandle.high - lastCandle.close >= (lastCandle.high - lastCandle.low) * 0.25);
 
-          if (touch && holdsBelow) {
+          if ((touchRecent || touchPrev) && holdsBelow && hasBearishReaction) {
             results.push({
               found: true,
               type: 'SUPPORT_TO_RESISTANCE',
               brokenLevel: level,
               breakoutCandleClose: slice5m[breakoutIdx].close,
-              retestPrice: lastCandle.high,
+              retestPrice: touchRecent ? lastCandle.high : (prev5mCandle?.high ?? lastCandle.high),
             });
           }
         }

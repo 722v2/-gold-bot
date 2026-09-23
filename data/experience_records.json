@@ -615,5 +615,31 @@
     "realizedPnl": -4.4,
     "setupFamily": "Horizontal Resistance Breakout & Retest",
     "combinationKey": "direction=BUY|fvg=BULLISH_FVG|htfStructure=RANGING|liquidity=NONE|m15Structure=BULLISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Horizontal Resistance Breakout & Retest|volatility=HIGH|zone=PREMIUM"
+  },
+  {
+    "id": "exp_sig_1790148913881_bgta4_1790153185751",
+    "rr": 6.83,
+    "factors": {
+      "fvg": "BEARISH_FVG",
+      "rsi": "OVERSOLD",
+      "macd": "BEARISH",
+      "zone": "DISCOUNT",
+      "direction": "SELL",
+      "liquidity": "NONE",
+      "orderBlock": "BULLISH_OB",
+      "volatility": "HIGH",
+      "setupFamily": "Range Breakout & Expansion (Bearish Volatility Expansion)",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND"
+    },
+    "outcome": "LOSS",
+    "tradeId": "sig_1790148913881_bgta4",
+    "signalId": "sig_1790148913881_bgta4",
+    "direction": "SELL",
+    "completedAt": 1790153185751,
+    "realizedPnl": -4.5,
+    "setupFamily": "Range Breakout & Expansion (Bearish Volatility Expansion)",
+    "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=OVERSOLD|setupFamily=Range Breakout & Expansion (Bearish Volatility Expansion)|volatility=HIGH|zone=DISCOUNT"
   }
 ]
