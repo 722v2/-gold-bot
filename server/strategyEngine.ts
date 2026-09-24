@@ -947,8 +947,9 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
 
   const obTolerance = Math.min(2.5, Math.max(1.2, atr5m * 0.8));
 
-  // Bullish OB Retest (Demand Zone) - Gated: Blocked in STRONG_DOWNTREND / WEAK_DOWNTREND
-  if (!isDowntrendRegime) {
+  // Bullish OB Retest (Demand Zone) - Evaluated in normal markets and reversals at discount/support
+  const allowBullishOb = !isStrongDowntrend || m15Zone === 'DISCOUNT' || indicators15m.chochDetected || indicators5m.chochDetected || indicators15m.sweepDetected || indicators5m.sweepDetected;
+  if (allowBullishOb) {
     const bullishObs = activeObs.filter((ob) => ob.type === 'BULLISH');
     for (const bullishOb of bullishObs) {
       if (currentPrice >= bullishOb.low - 0.5 && currentPrice <= bullishOb.high + obTolerance) {
@@ -981,8 +982,9 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     }
   }
 
-  // Bearish OB Retest (Supply Zone) - Gated: Blocked in STRONG_UPTREND / WEAK_UPTREND
-  if (!isUptrendRegime) {
+  // Bearish OB Retest (Supply Zone) - Evaluated in normal markets and reversals at premium/resistance
+  const allowBearishOb = !isStrongUptrend || m15Zone === 'PREMIUM' || indicators15m.chochDetected || indicators5m.chochDetected || indicators15m.sweepDetected || indicators5m.sweepDetected;
+  if (allowBearishOb) {
     const bearishObs = activeObs.filter((ob) => ob.type === 'BEARISH');
     for (const bearishOb of bearishObs) {
       if (currentPrice <= bearishOb.high + 0.5 && currentPrice >= bearishOb.low - obTolerance) {
@@ -1028,8 +1030,9 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
 
   const fvgTolerance = Math.min(2.2, Math.max(0.8, atr5m * 0.7));
 
-  // Bullish FVG - Gated: Blocked in STRONG_DOWNTREND / WEAK_DOWNTREND
-  if (!isDowntrendRegime) {
+  // Bullish FVG - Evaluated in non-runaway markets or when in discount
+  const allowBullishFvg = !isStrongDowntrend || m15Zone === 'DISCOUNT' || indicators15m.chochDetected || indicators5m.chochDetected;
+  if (allowBullishFvg) {
     const bullishFvgs = activeFvgs.filter((f) => f.type === 'BULLISH');
     for (const fvg of bullishFvgs) {
       if (currentPrice >= fvg.bottom - 0.5 && currentPrice <= fvg.top + fvgTolerance) {
@@ -1062,8 +1065,9 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     }
   }
 
-  // Bearish FVG - Gated: Blocked in STRONG_UPTREND / WEAK_UPTREND
-  if (!isUptrendRegime) {
+  // Bearish FVG - Evaluated in non-runaway markets or when in premium
+  const allowBearishFvg = !isStrongUptrend || m15Zone === 'PREMIUM' || indicators15m.chochDetected || indicators5m.chochDetected;
+  if (allowBearishFvg) {
     const bearishFvgs = activeFvgs.filter((f) => f.type === 'BEARISH');
     for (const fvg of bearishFvgs) {
       if (currentPrice <= fvg.top + 0.5 && currentPrice >= fvg.bottom - fvgTolerance) {
@@ -1173,7 +1177,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   // =========================================================================
   // STRATEGY 5: FIBONACCI OTE (61.8% - 78.6%) IN PREMIUM / DISCOUNT
   // =========================================================================
-  if (!isDowntrendRegime && m15Zone === 'DISCOUNT' && currentPrice >= fib15m.bullishOteLow - 1.0 && currentPrice <= fib15m.bullishOteHigh + 1.0) {
+  const allowBullishFib = !isStrongDowntrend || indicators15m.chochDetected || indicators5m.chochDetected;
+  if (allowBullishFib && m15Zone === 'DISCOUNT' && currentPrice >= fib15m.bullishOteLow - 1.0 && currentPrice <= fib15m.bullishOteHigh + 1.0) {
     const hasBullishFibTrigger = c5mMetrics.isBottomRejection || c5mMetrics.isEngulfingBull || (c5mMetrics.isBull && c5mMetrics.body > atr5m * 0.8);
     if (hasBullishFibTrigger) {
       const cand = evaluateCandidate(
@@ -1196,7 +1201,10 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       );
       if (cand) candidates.push(cand);
     }
-  } else if (!isUptrendRegime && m15Zone === 'PREMIUM' && currentPrice >= fib15m.bearishOteLow - 1.0 && currentPrice <= fib15m.bearishOteHigh + 1.0) {
+  }
+  
+  const allowBearishFib = !isStrongUptrend || indicators15m.chochDetected || indicators5m.chochDetected;
+  if (allowBearishFib && m15Zone === 'PREMIUM' && currentPrice >= fib15m.bearishOteLow - 1.0 && currentPrice <= fib15m.bearishOteHigh + 1.0) {
     const hasBearishFibTrigger = c5mMetrics.isTopRejection || c5mMetrics.isEngulfingBear || (c5mMetrics.isBear && c5mMetrics.body > atr5m * 0.8);
     if (hasBearishFibTrigger) {
       const cand = evaluateCandidate(

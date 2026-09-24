@@ -102,14 +102,31 @@ export function assessEntryLocationQuality(params: {
     : recent[recent.length - 1].open;
   const impulseExtensionAtr = Number((Math.abs(currentPrice - runOrigin) / atr).toFixed(2));
 
-  // A real pullback needs two counter-trend candles in the recent local wave.
+  // Pullback detection: 2+ counter-trend candles OR single strong pullback candle with rejection/retest
   let correctiveBars = 0;
-  for (const candle of recent.slice(-6)) {
-    if (counterTrendBar(candle, direction)) correctiveBars += 1;
+  let hasRejectionPullback = false;
+  const recent6 = recent.slice(-6);
+  for (let idx = 0; idx < recent6.length; idx++) {
+    const candle = recent6[idx];
+    const isCounter = counterTrendBar(candle, direction);
+    if (isCounter) {
+      correctiveBars += 1;
+    }
+    const totalRange = Math.max(0.01, candle.high - candle.low);
+    const body = Math.abs(candle.close - candle.open);
+    const lowerWick = Math.min(candle.open, candle.close) - candle.low;
+    const upperWick = candle.high - Math.max(candle.open, candle.close);
+    if (isCounter && direction === 'BUY' && (lowerWick > body * 1.2 || lowerWick > totalRange * 0.35)) {
+      hasRejectionPullback = true;
+    } else if (isCounter && direction === 'SELL' && (upperWick > body * 1.2 || upperWick > totalRange * 0.35)) {
+      hasRejectionPullback = true;
+    }
   }
   const hasTwoBarPullback = correctiveBars >= 2;
+  const hasValidPullback = hasTwoBarPullback || (correctiveBars >= 1 && hasRejectionPullback);
 
   // Major opposing barriers beyond entry (opposing unmitigated OBs, FVGs, major HTF levels)
+  // NOTE: Local 5M/15M swings are structural targets (TP1), NOT terminal barriers.
   const majorBarriers: number[] = [];
   const addMajorBarrier = (price: number | undefined) => {
     if (!price || !Number.isFinite(price)) return;
@@ -118,10 +135,6 @@ export function assessEntryLocationQuality(params: {
       Number.isFinite(explicitRetestLevel) &&
       Math.abs(price - explicitRetestLevel) < 0.3 * atr
     ) {
-      return;
-    }
-    // Ignore current entry level noise (within 0.3 ATR of entry)
-    if (Math.abs(price - entry) < 0.3 * atr) {
       return;
     }
     if (direction === 'SELL' && price < entry - 0.05) majorBarriers.push(price);
@@ -179,15 +192,15 @@ export function assessEntryLocationQuality(params: {
     ? Number((Math.abs(entry - explicitRetestLevel) / atr).toFixed(2))
     : 0;
 
-  // HARD BLOCK 1: INSIDE OPPOSING STRUCTURE OR MAJOR TERMINAL BARRIER TOO CLOSE (< 0.40 ATR)
-  if (insideOpposingStructure || terminalBoundaryDistanceAtr < 0.4) {
+  // HARD BLOCK 1: INSIDE OPPOSING STRUCTURE (entry directly inside unmitigated major opposing OB/FVG)
+  if (insideOpposingStructure || terminalBoundaryDistanceAtr < 0.15) {
     reasons.push(insideOpposingStructure ? 'Entry inside opposing major structural POI' : `Major terminal boundary only ${terminalBoundaryDistanceAtr} ATR from entry`);
     return {
       classification: 'EXHAUSTED',
       hardBlocked: true,
       rejectionReason: insideOpposingStructure
         ? 'INSIDE_OPPOSING_STRUCTURE: entry is inside an unmitigated opposing structural POI'
-        : `TERMINAL_BOUNDARY_TOO_CLOSE: opposing major boundary is ${terminalBoundaryDistanceAtr} ATR from entry (< 0.40 ATR)`,
+        : `TERMINAL_BOUNDARY_TOO_CLOSE: opposing major boundary is ${terminalBoundaryDistanceAtr} ATR from entry (< 0.15 ATR)`,
       impulseExtensionAtr,
       consecutiveDirectionalBars,
       correctiveBars,
@@ -199,13 +212,13 @@ export function assessEntryLocationQuality(params: {
     };
   }
 
-  // HARD BLOCK 2: BREAKOUT RETEST CHASE (> 1.00 ATR)
-  if (isBreakoutRetest && explicitRetestLevel !== undefined && retestDisplacementAtr > 1.0) {
+  // HARD BLOCK 2: BREAKOUT RETEST CHASE (> 2.20 ATR) - Converted moderate displacement into scoring penalty
+  if (isBreakoutRetest && explicitRetestLevel !== undefined && retestDisplacementAtr > 2.2) {
     reasons.push(`Breakout/retest entry displaced ${retestDisplacementAtr} ATR from the actual retest level`);
     return {
       classification: 'LATE',
       hardBlocked: true,
-      rejectionReason: `BREAKOUT_RETEST_CHASE: entry is ${retestDisplacementAtr} ATR beyond the retest level (> 1.00 ATR)`,
+      rejectionReason: `BREAKOUT_RETEST_CHASE: entry is ${retestDisplacementAtr} ATR beyond the retest level (> 2.20 ATR)`,
       impulseExtensionAtr,
       consecutiveDirectionalBars,
       correctiveBars,
@@ -217,13 +230,13 @@ export function assessEntryLocationQuality(params: {
     };
   }
 
-  // HARD BLOCK 3: IMPULSE EXHAUSTION CLIMAX (>= 4 directional bars + > 3.5 ATR extension + no 2-bar pullback)
-  if ((consecutiveDirectionalBars >= 4 || isTrendContinuation) && impulseExtensionAtr > 3.5 && !hasTwoBarPullback) {
-    reasons.push(`${consecutiveDirectionalBars} consecutive directional bars with ${impulseExtensionAtr} ATR extension and no 2-bar pullback`);
+  // HARD BLOCK 3: IMPULSE EXHAUSTION CLIMAX (>= 5 directional bars + > 3.8 ATR extension + no pullback)
+  if ((consecutiveDirectionalBars >= 5 || isTrendContinuation) && impulseExtensionAtr > 3.8 && !hasValidPullback) {
+    reasons.push(`${consecutiveDirectionalBars} consecutive directional bars with ${impulseExtensionAtr} ATR extension and no pullback`);
     return {
       classification: 'EXHAUSTED',
       hardBlocked: true,
-      rejectionReason: `LATE_EXHAUSTED_ENTRY: ${impulseExtensionAtr} ATR extension after ${consecutiveDirectionalBars} directional bars without a 2-bar pullback`,
+      rejectionReason: `LATE_EXHAUSTED_ENTRY: ${impulseExtensionAtr} ATR extension after ${consecutiveDirectionalBars} directional bars without a pullback`,
       impulseExtensionAtr,
       consecutiveDirectionalBars,
       correctiveBars,
@@ -235,13 +248,13 @@ export function assessEntryLocationQuality(params: {
     };
   }
 
-  // HARD BLOCK 4: LATE CONTINUATION (> 3.0 ATR without pullback)
-  if (isTrendContinuation && impulseExtensionAtr > 3.0 && !hasTwoBarPullback) {
-    reasons.push(`Late trend continuation: ${impulseExtensionAtr} ATR extension without a 2-bar pullback`);
+  // HARD BLOCK 4: LATE CONTINUATION (> 3.5 ATR without any pullback)
+  if (isTrendContinuation && impulseExtensionAtr > 3.5 && !hasValidPullback) {
+    reasons.push(`Late trend continuation: ${impulseExtensionAtr} ATR extension without a pullback`);
     return {
       classification: 'LATE',
       hardBlocked: true,
-      rejectionReason: `LATE_EXHAUSTED_ENTRY: trend continuation entry is late (${impulseExtensionAtr} ATR extension > 3.00 ATR) without a 2-bar pullback`,
+      rejectionReason: `LATE_EXHAUSTED_ENTRY: trend continuation entry is late (${impulseExtensionAtr} ATR extension > 3.50 ATR) without a pullback`,
       impulseExtensionAtr,
       consecutiveDirectionalBars,
       correctiveBars,
@@ -254,7 +267,7 @@ export function assessEntryLocationQuality(params: {
   }
 
   // SCORING FACTOR 1: Late / extended impulse
-  if (impulseExtensionAtr > 3.0 || (isBreakoutRetest && retestDisplacementAtr > 0.75)) {
+  if (impulseExtensionAtr > 3.0 || (isBreakoutRetest && retestDisplacementAtr > 1.2)) {
     const penalty = Math.min(25, Math.round(15 + Math.max(0, impulseExtensionAtr - 2.0) * 10));
     reasons.push(`Late/mature local impulse (${impulseExtensionAtr} ATR)`);
     return {
@@ -289,9 +302,9 @@ export function assessEntryLocationQuality(params: {
     };
   }
 
-  // FRESH PULLBACK: 2+ corrective bars
-  if (hasTwoBarPullback) {
-    reasons.push('Local 2+ bar corrective pullback detected before trigger');
+  // FRESH PULLBACK: Valid corrective pullback detected
+  if (hasValidPullback) {
+    reasons.push(hasTwoBarPullback ? 'Local 2+ bar corrective pullback detected before trigger' : 'Local controlled pullback / retest reaction detected');
     return {
       classification: 'PULLBACK_OPTIMAL',
       hardBlocked: false,

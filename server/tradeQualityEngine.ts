@@ -647,16 +647,16 @@ export function assessEntryTimingAndAntiChase(
   if (isPoiAvailable) {
     if (isBreakout || isSfp) {
       // Breakouts and SFP / Liquidity sweeps tolerate slightly larger confirmation displacement
-      if (distanceFromPoiAtr <= 1.2) {
+      if (distanceFromPoiAtr <= 1.5) {
         timing = 'OPTIMAL';
         reason = `Optimal ${isBreakout ? 'breakout expansion' : 'sweep reversal'} entry (within ${distanceFromPoiAtr} ATR of trigger)`;
-      } else if (distanceFromPoiAtr <= 2.2) {
+      } else if (distanceFromPoiAtr <= 2.5) {
         timing = 'ACCEPTABLE';
-        timingPenalty = 8;
+        timingPenalty = 6;
         reason = `Acceptable ${isBreakout ? 'breakout' : 'sweep reversal'} entry (${distanceFromPoiAtr} ATR from trigger)`;
-      } else if (distanceFromPoiAtr <= 3.2) {
+      } else if (distanceFromPoiAtr <= 3.5) {
         timing = 'LATE';
-        timingPenalty = 20;
+        timingPenalty = 18;
         isChasing = true;
         reason = `Late ${isBreakout ? 'breakout' : 'sweep reversal'} entry (${distanceFromPoiAtr} ATR from trigger) - Risk of pullback retest`;
       } else {
@@ -666,18 +666,18 @@ export function assessEntryTimingAndAntiChase(
         reason = `Chased ${isBreakout ? 'breakout expansion' : 'sweep reversal'} (${distanceFromPoiAtr} ATR displacement) - Disqualified`;
       }
     } else {
-      // Pullback / Order Block / FVG / OTE setups demand tight execution near the POI
-      if (distanceFromPoiAtr <= 0.8) {
+      // Pullback / Order Block / FVG / OTE setups: distinguish normal confirmation candle from genuine chasing
+      if (distanceFromPoiAtr <= 1.0) {
         timing = 'OPTIMAL';
         reason = `Optimal entry at structural POI edge (${distanceFromPoiAtr} ATR)`;
-      } else if (distanceFromPoiAtr <= 1.5) {
+      } else if (distanceFromPoiAtr <= 1.8) {
         timing = 'ACCEPTABLE';
-        timingPenalty = 6;
+        timingPenalty = 5;
         reason = `Acceptable entry near POI (${distanceFromPoiAtr} ATR)`;
-      } else if (distanceFromPoiAtr <= 2.0) {
+      } else if (distanceFromPoiAtr <= 2.6) {
         timing = 'LATE';
-        timingPenalty = 18;
-        isChasing = true;
+        timingPenalty = 15;
+        isChasing = false; // Scoring penalty rather than hard-block
         reason = `Late entry: Price has displaced ${distanceFromPoiAtr} ATR away from ideal POI`;
       } else {
         timing = 'CHASED';
@@ -686,8 +686,8 @@ export function assessEntryTimingAndAntiChase(
         reason = `Chased entry (${distanceFromPoiAtr} ATR from POI) - Disqualified to prevent chasing`;
       }
 
-      // FIX 2: If recent candles exhibited strong displacement in trade direction and price is extended (> 1.4 ATR away without pullback)
-      if (isDisplacementInTradeDirection && displacementAtr >= 1.5 && distanceFromPoiAtr > 1.4) {
+      // If displacement in trade direction is genuinely extreme (> 2.5 ATR displacement with extended POI distance)
+      if (isDisplacementInTradeDirection && displacementAtr >= 2.5 && distanceFromPoiAtr > 2.5) {
         timing = 'CHASED';
         isChasing = true;
         timingPenalty = Math.max(timingPenalty, 30);
@@ -696,7 +696,7 @@ export function assessEntryTimingAndAntiChase(
     }
   }
 
-  // FIX 6: 1M micro-structure timing refinement vs runaway expansion confirmation
+  // 1M micro-structure timing refinement vs runaway expansion confirmation
   if (candles1m && candles1m.length >= 5) {
     const recent5_1m = candles1m.slice(-5);
     const m1Start = recent5_1m[0].open;
@@ -705,25 +705,25 @@ export function assessEntryTimingAndAntiChase(
     const m1DisplacementAtr = m1Displacement / atr;
 
     if (direction === 'BUY') {
-      const isRunaway1m = m1End > m1Start + 0.1 && m1DisplacementAtr >= 1.0 && distanceFromPoiAtr > 1.2;
+      const isRunaway1m = m1End > m1Start + 0.1 && m1DisplacementAtr >= 1.8 && distanceFromPoiAtr > 2.2;
       if (isRunaway1m) {
         timing = 'CHASED';
         isChasing = true;
         timingPenalty = Math.max(timingPenalty, 35);
         reason = `1M micro-structure confirms active runaway expansion away from POI (${m1DisplacementAtr.toFixed(1)} ATR) - Chased entry`;
-      } else if (distanceFromPoiAtr <= 0.8 && timing !== 'CHASED') {
+      } else if (distanceFromPoiAtr <= 1.2 && timing !== 'CHASED') {
         timing = 'OPTIMAL';
         reason = `Optimal entry: 1M micro-pullback retest confirmed near structural POI (${distanceFromPoiAtr} ATR)`;
       }
     } else {
       // SELL
-      const isRunaway1m = m1End < m1Start - 0.1 && m1DisplacementAtr >= 1.0 && distanceFromPoiAtr > 1.2;
+      const isRunaway1m = m1End < m1Start - 0.1 && m1DisplacementAtr >= 1.8 && distanceFromPoiAtr > 2.2;
       if (isRunaway1m) {
         timing = 'CHASED';
         isChasing = true;
         timingPenalty = Math.max(timingPenalty, 35);
         reason = `1M micro-structure confirms active runaway expansion away from POI (${m1DisplacementAtr.toFixed(1)} ATR) - Chased entry`;
-      } else if (distanceFromPoiAtr <= 0.8 && timing !== 'CHASED') {
+      } else if (distanceFromPoiAtr <= 1.2 && timing !== 'CHASED') {
         timing = 'OPTIMAL';
         reason = `Optimal entry: 1M micro-pullback retest confirmed near structural POI (${distanceFromPoiAtr} ATR)`;
       }
@@ -1006,32 +1006,35 @@ export function assessTpPathRunway(
   };
 
   // 1. Check opposing 15M / 1H Swing levels
+  // CRITICAL: A level selected as TP1 MUST NOT simultaneously invalidate the trade as an obstacle.
+  // Minor swings are intermediate targets or TP1 objectives, NOT automatic blocking barriers.
   if (direction === 'BUY') {
     const swingHigh15m = indicators15m.swingHigh;
-    if (swingHigh15m > entry && swingHigh15m < tp1) {
+    const isAtOrBeyondTp1 = swingHigh15m >= tp1 - 0.3;
+    if (swingHigh15m > entry + 0.3 && !isAtOrBeyondTp1) {
       const distance = swingHigh15m - entry;
       const mitigated = isLevelMitigated(swingHigh15m, 'BUY');
       obstacles.push({
-        type: mitigated ? 'Mitigated 15M Swing High Resistance' : '15M Swing High Resistance',
+        type: mitigated ? 'Mitigated 15M Swing High' : '15M Swing High Objective',
         price: swingHigh15m,
         distancePoints: Number((distance / 0.1).toFixed(1)),
-        severity: mitigated ? 'LOW' : (distance < totalTargetDistance * 0.5 ? 'HIGH' : 'MEDIUM'),
+        severity: mitigated ? 'LOW' : 'MEDIUM',
       });
     }
 
     // Check EMA200 obstacle
-    if (indicators15m.ema200 > entry && indicators15m.ema200 < tp1) {
+    if (indicators15m.ema200 > entry + 0.3 && indicators15m.ema200 < tp1 - 0.3) {
       const dist = indicators15m.ema200 - entry;
       obstacles.push({
         type: '15M EMA200 Barrier',
         price: indicators15m.ema200,
         distancePoints: Number((dist / 0.1).toFixed(1)),
-        severity: 'HIGH',
+        severity: 'MEDIUM',
       });
     }
 
-    // Check opposing Bearish Order Block
-    if (indicators15m.orderBlock?.type === 'BEARISH' && indicators15m.orderBlock.low > entry && indicators15m.orderBlock.low < tp1) {
+    // Check opposing Bearish Order Block (Major structural barrier)
+    if (indicators15m.orderBlock?.type === 'BEARISH' && indicators15m.orderBlock.low > entry + 0.3 && indicators15m.orderBlock.low < tp1 - 0.3) {
       const dist = indicators15m.orderBlock.low - entry;
       const mitigated = isLevelMitigated(indicators15m.orderBlock.high, 'BUY');
       obstacles.push({
@@ -1044,30 +1047,31 @@ export function assessTpPathRunway(
   } else {
     // SELL direction
     const swingLow15m = indicators15m.swingLow;
-    if (swingLow15m < entry && swingLow15m > tp1) {
+    const isAtOrBeyondTp1 = swingLow15m <= tp1 + 0.3;
+    if (swingLow15m < entry - 0.3 && !isAtOrBeyondTp1) {
       const distance = entry - swingLow15m;
       const mitigated = isLevelMitigated(swingLow15m, 'SELL');
       obstacles.push({
-        type: mitigated ? 'Mitigated 15M Swing Low Support' : '15M Swing Low Support',
+        type: mitigated ? 'Mitigated 15M Swing Low' : '15M Swing Low Support',
         price: swingLow15m,
         distancePoints: Number((distance / 0.1).toFixed(1)),
-        severity: mitigated ? 'LOW' : (distance < totalTargetDistance * 0.5 ? 'HIGH' : 'MEDIUM'),
+        severity: mitigated ? 'LOW' : 'MEDIUM',
       });
     }
 
     // Check EMA200 obstacle
-    if (indicators15m.ema200 < entry && indicators15m.ema200 > tp1) {
+    if (indicators15m.ema200 < entry - 0.3 && indicators15m.ema200 > tp1 + 0.3) {
       const dist = entry - indicators15m.ema200;
       obstacles.push({
         type: '15M EMA200 Barrier',
         price: indicators15m.ema200,
         distancePoints: Number((dist / 0.1).toFixed(1)),
-        severity: 'HIGH',
+        severity: 'MEDIUM',
       });
     }
 
-    // Check opposing Bullish Order Block
-    if (indicators15m.orderBlock?.type === 'BULLISH' && indicators15m.orderBlock.high < entry && indicators15m.orderBlock.high > tp1) {
+    // Check opposing Bullish Order Block (Major structural barrier)
+    if (indicators15m.orderBlock?.type === 'BULLISH' && indicators15m.orderBlock.high < entry - 0.3 && indicators15m.orderBlock.high > tp1 + 0.3) {
       const dist = entry - indicators15m.orderBlock.high;
       const mitigated = isLevelMitigated(indicators15m.orderBlock.low, 'SELL');
       obstacles.push({
@@ -1097,16 +1101,16 @@ export function assessTpPathRunway(
 
   const unmitigatedHighObstacles = obstacles.filter((o) => o.severity === 'HIGH');
   const activeObstacles = obstacles.filter((o) => o.severity !== 'LOW');
-  const nearActiveObstacles = activeObstacles.filter((o) => o.distancePoints * 0.1 < totalTargetDistance * 0.60);
+  const nearActiveObstacles = activeObstacles.filter((o) => o.distancePoints * 0.1 < totalTargetDistance * 0.50);
 
-  if (unmitigatedHighObstacles.some((o) => o.distancePoints * 0.1 < totalTargetDistance * 0.40 && !has1RCocoon)) {
+  if (unmitigatedHighObstacles.some((o) => o.distancePoints * 0.1 < totalTargetDistance * 0.35 && !has1RCocoon)) {
     runway = 'BLOCKED';
     runwayScore = 3;
-    description = `Blocked TP runway: Major opposing obstacle (${unmitigatedHighObstacles[0].type} at $${unmitigatedHighObstacles[0].price.toFixed(2)}) lies directly before TP1`;
-  } else if (nearActiveObstacles.length >= 2 || (clearRunwayRatio < 0.50 && !has1RCocoon)) {
+    description = `Blocked TP runway: Major opposing unmitigated barrier (${unmitigatedHighObstacles[0].type} at $${unmitigatedHighObstacles[0].price.toFixed(2)}) lies directly before TP1`;
+  } else if (unmitigatedHighObstacles.length >= 1 || (clearRunwayRatio < 0.40 && !has1RCocoon)) {
     runway = 'MAJOR_OBSTACLE';
     runwayScore = 10;
-    description = `Major obstacle in TP path (${activeObstacles[0]?.type || obstacles[0].type} at $${(activeObstacles[0] || obstacles[0]).price.toFixed(2)}) limiting runway`;
+    description = `Major obstacle in TP path (${(unmitigatedHighObstacles[0] || activeObstacles[0] || obstacles[0]).type} at $${(unmitigatedHighObstacles[0] || activeObstacles[0] || obstacles[0]).price.toFixed(2)}) limiting runway`;
   } else if (activeObstacles.length >= 1) {
     runway = 'MINOR_OBSTACLE';
     runwayScore = 15;
@@ -1759,8 +1763,10 @@ export function checkStructuralSameSetupIdentity(
     }
   }
 
-  // C. COMPREHENSIVE STRUCTURAL-PROXIMITY SCAN ACROSS RECENT SIGNALS
-  const recentSignals = storage.getSignals(40);
+  // C. STRUCTURAL OPPORTUNITY DEDUPLICATION (State & Identity Aware)
+  // Distinguish TRUE DUPLICATES from NEW OPPORTUNITIES that occurred after market structure transitions,
+  // new sweeps, new BOS/CHOCH, or new POI mitigations.
+  const recentSignals = storage.getSignals(20);
   for (const prev of recentSignals) {
     if (!prev || !prev.signal || prev.signal === 'NO TRADE' || prev.id === candidateSignal.id) {
       continue;
@@ -1773,10 +1779,22 @@ export function checkStructuralSameSetupIdentity(
     if (prevStrategyFamily !== candStrategyFamily && prev.setup !== candidateSignal.setup) continue;
 
     const timeElapsedMs = Math.abs(Date.now() - prev.timestamp);
+    // Only check setups within immediate proximity window if they share identical structural identity
     if (timeElapsedMs < 45 * 60 * 1000) {
       const entryDistance = Math.abs(prev.entry - candidateSignal.entry);
       const slDistance = Math.abs(prev.stopLoss - candidateSignal.stopLoss);
       const metaPrev = (prev as any).patternMetadata;
+
+      // Check for state changes that make this a NEW OPPORTUNITY rather than a duplicate:
+      const hasDifferentPoi = prev.poiId && candidateSignal.poiId && prev.poiId !== candidateSignal.poiId;
+      const hasDifferentAnchor = metaPrev?.patternAnchorKey && metaCand?.patternAnchorKey && metaPrev.patternAnchorKey !== metaCand.patternAnchorKey;
+      const hasDifferentPivot = metaPrev?.pivot1Time && metaCand?.pivot1Time && metaPrev.pivot1Time !== metaCand.pivot1Time;
+      const hasDistinctLevel = entryDistance > 3.0 || slDistance > 2.5;
+
+      // If a meaningful structural state change is confirmed, treat as a fresh opportunity
+      if (hasDifferentPoi || hasDifferentAnchor || hasDifferentPivot || hasDistinctLevel) {
+        continue;
+      }
 
       let isSameLocalStructure = false;
       let reasonMessage = '';
@@ -1785,36 +1803,31 @@ export function checkStructuralSameSetupIdentity(
       if (candStrategyFamily === 'DOUBLE_TOP_BOTTOM') {
         if (
           (metaPrev?.patternAnchorKey && metaCand?.patternAnchorKey && metaPrev.patternAnchorKey === metaCand.patternAnchorKey) ||
-          (metaPrev?.pivot1Time && metaCand?.pivot1Time && metaPrev.pivot1Time === metaCand.pivot1Time) ||
-          (metaPrev?.extremeLevel !== undefined && metaCand?.extremeLevel !== undefined &&
-            Math.abs(metaPrev.extremeLevel - metaCand.extremeLevel) <= 3.0 &&
-            Math.abs((metaPrev.neckline || 0) - (metaCand.neckline || 0)) <= 3.0) ||
-          entryDistance <= 5.0 ||
-          slDistance <= 4.0
+          (metaPrev?.pivot1Time && metaCand?.pivot1Time && metaPrev.pivot1Time === metaCand.pivot1Time)
         ) {
           isSameLocalStructure = true;
-          reasonMessage = `تكرار في التشكيل الهيكلي القريب (S10 Double Top/Bottom): تم إصدار إشارة مشابهة مؤخراً بفارق سعر دخول $${entryDistance.toFixed(2)} ووقف خسارة $${slDistance.toFixed(2)} قبل ${Math.round(timeElapsedMs / 60000)} دقيقة. تم منع التكرار لضمان دقة الإشارات وحظر الإسبام.`;
+          reasonMessage = `تكرار في التشكيل الهيكلي القريب (S10 Double Top/Bottom): تم إصدار نفس النموذج الهيكلي مؤخراً. تم منع التكرار.`;
         }
       }
       // Order Block (S11/S12)
       else if (candStrategyFamily === 'ORDER_BLOCK') {
-        if (entryDistance <= 6.0 || slDistance <= 5.0 || (prev.poiId && candidateSignal.poiId && prev.poiId === candidateSignal.poiId)) {
+        if (prev.poiId && candidateSignal.poiId && prev.poiId === candidateSignal.poiId && entryDistance <= 2.0) {
           isSameLocalStructure = true;
-          reasonMessage = `تكرار في التشكيل الهيكلي القريب (Order Block): تم رصد تداخل كبير في منطقة الـ POI أو مستويات الدخول/الوقف مع صفقة تم إصدارها قبل ${Math.round(timeElapsedMs / 60000)} دقيقة. تم منع التكرار لمنع تشتيت رأس المال.`;
+          reasonMessage = `تكرار في التشكيل الهيكلي القريب (Order Block): نفس منطقة الـ POI النشطة تم إصدارها قبل ${Math.round(timeElapsedMs / 60000)} دقيقة.`;
         }
       }
       // FVG (S13)
       else if (candStrategyFamily === 'FVG_IMBALANCE') {
-        if (entryDistance <= 6.0 || slDistance <= 5.0) {
+        if (entryDistance <= 1.5 && slDistance <= 1.5) {
           isSameLocalStructure = true;
-          reasonMessage = `تكرار في التشكيل الهيكلي القريب (FVG Imbalance): توجد إشارة جارية في الفجوة السعرية ذاتها تم إصدارها قبل ${Math.round(timeElapsedMs / 60000)} دقيقة. تم منع التكرار لضمان دقة المتابعة الفنية.`;
+          reasonMessage = `تكرار في التشكيل الهيكلي القريب (FVG Imbalance): توجد إشارة جارية في الفجوة السعرية ذاتها تم إصدارها قبل ${Math.round(timeElapsedMs / 60000)} دقيقة.`;
         }
       }
-      // General fallbacks
+      // General identical setup check
       else {
-        if (entryDistance <= 6.0 && slDistance <= 5.0) {
+        if (entryDistance <= 1.5 && slDistance <= 1.5) {
           isSameLocalStructure = true;
-          reasonMessage = `تكرار قريب في بنية السعر المحلية (بفارق دخول $${entryDistance.toFixed(2)}): تم إصدار إشارة في نفس المنطقة الجغرافية للسعر قبل ${Math.round(timeElapsedMs / 60000)} دقيقة. تم منع التكرار لضمان جودة الاختيار.`;
+          reasonMessage = `تكرار قريب في بنية السعر المحلية (بفارق دخول $${entryDistance.toFixed(2)}): تم إصدار إشارة مطابقة قبل ${Math.round(timeElapsedMs / 60000)} دقيقة.`;
         }
       }
 
@@ -1826,8 +1839,8 @@ export function checkStructuralSameSetupIdentity(
           activeStrategyFamily: prevStrategyFamily,
           candidateStrategyFamily: candStrategyFamily,
           samePoi: prev.poiId === candidateSignal.poiId,
-          sameStructuralOrigin: slDistance <= 4.0,
-          sameTargetObjective: Math.abs(prev.tp1 - candidateSignal.tp1) <= 4.0,
+          sameStructuralOrigin: slDistance <= 2.0,
+          sameTargetObjective: Math.abs(prev.tp1 - candidateSignal.tp1) <= 2.0,
           sameLifecycle: false,
           entryDistance: Number(entryDistance.toFixed(2)),
         };

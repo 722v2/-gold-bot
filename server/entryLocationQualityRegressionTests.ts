@@ -66,13 +66,13 @@ function createBaseIndicators(overrides: Partial<TechnicalIndicators> = {}): Tec
 }
 
 // ============================================================================
-// TEST 1: Major Terminal Boundary Hard Block (Distance < 0.40 ATR)
-// Context: BUY entry at 4348.0, 1H major resistance at 4349.0 (distance 1.0 pt = 0.33 ATR < 0.40 ATR)
+// TEST 1: Major Terminal Boundary Hard Block (Distance < 0.15 ATR)
+// Context: BUY entry at 4348.0, 1H major resistance at 4348.3 (distance 0.3 pt = 0.10 ATR < 0.15 ATR)
 // Expected: BLOCKED with TERMINAL_BOUNDARY_TOO_CLOSE
 // ============================================================================
 {
   const c5m = createCandles(20, 4345.0);
-  const ind1h = createBaseIndicators({ resistance: 4349.0 }); // 1 pt above entry (0.33 ATR)
+  const ind1h = createBaseIndicators({ resistance: 4348.3 }); // 0.3 pt above entry (0.10 ATR)
   const ind15m = createBaseIndicators({ resistance: 4350.0 });
   const ind5m = createBaseIndicators({ atr14: 3.0 });
 
@@ -90,7 +90,7 @@ function createBaseIndicators(overrides: Partial<TechnicalIndicators> = {}): Tec
 
   assert(
     elq.hardBlocked && elq.classification === 'EXHAUSTED' && elq.rejectionReason?.includes('TERMINAL_BOUNDARY_TOO_CLOSE'),
-    'TEST 1: Major Terminal Boundary Hard Block (< 0.40 ATR) - MUST BE BLOCKED',
+    'TEST 1: Major Terminal Boundary Hard Block (< 0.15 ATR) - MUST BE BLOCKED',
     `hardBlocked=${elq.hardBlocked}, reason=${elq.rejectionReason}, distAtr=${elq.terminalBoundaryDistanceAtr}`
   );
 }
@@ -126,9 +126,9 @@ function createBaseIndicators(overrides: Partial<TechnicalIndicators> = {}): Tec
 }
 
 // ============================================================================
-// TEST 3: Breakout / Retest Chase Hard Block (> 1.0 ATR)
-// Context: BUY Breakout Retest, brokenLevel = 4340.0, entry = 4344.0 (displacement 4.0 pts = 1.33 ATR > 1.0 ATR)
-// Expected: BLOCKED with BREAKOUT_RETEST_CHASED
+// TEST 3: Breakout / Retest Chase Hard Block (> 2.20 ATR)
+// Context: BUY Breakout Retest, brokenLevel = 4336.0, entry = 4344.0 (displacement 8.0 pts = 2.67 ATR > 2.20 ATR)
+// Expected: BLOCKED with BREAKOUT_RETEST_CHASE
 // ============================================================================
 {
   const c5m = createCandles(20, 4342.0);
@@ -145,13 +145,13 @@ function createBaseIndicators(overrides: Partial<TechnicalIndicators> = {}): Tec
     indicators5m: ind5m,
     indicators15m: ind15m,
     indicators1h: ind1h,
-    explicitRetestLevel: 4340.0, // 4.0 pts / 3.0 ATR = 1.33 ATR
+    explicitRetestLevel: 4336.0, // 8.0 pts / 3.0 ATR = 2.67 ATR
     setupName: 'Horizontal Resistance Breakout & Retest',
   });
 
   assert(
     elq.hardBlocked && (elq.classification === 'LATE' || (elq.classification as any) === 'CHASED') && elq.rejectionReason?.includes('BREAKOUT_RETEST_CHASE'),
-    'TEST 3: Breakout & Retest Chase (> 1.0 ATR) - MUST BE BLOCKED',
+    'TEST 3: Breakout & Retest Chase (> 2.20 ATR) - MUST BE BLOCKED',
     `hardBlocked=${elq.hardBlocked}, classification=${elq.classification}, reason=${elq.rejectionReason}, retestAtr=${elq.retestDisplacementAtr}`
   );
 }
@@ -189,17 +189,17 @@ function createBaseIndicators(overrides: Partial<TechnicalIndicators> = {}): Tec
 
 // ============================================================================
 // TEST 5: Impulse Exhaustion Hard Block
-// Context: BUY Trend Continuation after 5 uninterrupted directional bullish candles expanding 12 pts (4.0 ATR > 3.5 ATR) without a 2-bar pullback
+// Context: BUY Trend Continuation after 5 uninterrupted directional bullish candles expanding 12.5 pts (4.17 ATR > 3.8 ATR) without any pullback
 // Expected: BLOCKED with LATE_EXHAUSTED_ENTRY
 // ============================================================================
 {
   const c5m = createCandles(15, 4330.0);
-  // Add 5 consecutive bullish candles
-  c5m.push(createClosedCandle(15, 4330.0, 4333.0, 4329.5, 4332.5));
-  c5m.push(createClosedCandle(16, 4332.5, 4335.5, 4332.0, 4335.0));
-  c5m.push(createClosedCandle(17, 4335.0, 4338.0, 4334.5, 4337.5));
-  c5m.push(createClosedCandle(18, 4337.5, 4340.5, 4337.0, 4340.0));
-  c5m.push(createClosedCandle(19, 4340.0, 4343.0, 4339.5, 4342.5)); // +12.5 pts extension
+  // Add 5 consecutive bullish candles without lower wicks
+  c5m.push(createClosedCandle(15, 4330.0, 4332.5, 4330.0, 4332.5));
+  c5m.push(createClosedCandle(16, 4332.5, 4335.0, 4332.5, 4335.0));
+  c5m.push(createClosedCandle(17, 4335.0, 4337.5, 4335.0, 4337.5));
+  c5m.push(createClosedCandle(18, 4337.5, 4340.0, 4337.5, 4340.0));
+  c5m.push(createClosedCandle(19, 4340.0, 4342.5, 4340.0, 4342.5)); // +12.5 pts extension
 
   const ind1h = createBaseIndicators({ resistance: 4380.0 });
   const ind15m = createBaseIndicators({ resistance: 4380.0 });
@@ -298,7 +298,7 @@ function createBaseIndicators(overrides: Partial<TechnicalIndicators> = {}): Tec
 
 // ============================================================================
 // TEST 8: Full Pipeline validateTradeSignalCandidate Integration & AI Immunity
-// Context: 99% AI confidence candidate entering < 0.4 ATR from major 1H opposing resistance
+// Context: 99% AI confidence candidate entering < 0.15 ATR from major 1H opposing resistance
 // Expected: Deterministic rejection through validateTradeSignalCandidate
 // ============================================================================
 {
@@ -306,7 +306,7 @@ function createBaseIndicators(overrides: Partial<TechnicalIndicators> = {}): Tec
   c5m[18] = createClosedCandle(18, 4345.0, 4345.5, 4341.0, 4342.0);
   c5m[19] = createClosedCandle(19, 4342.0, 4346.0, 4341.0, 4345.0); // closed bottom rejection
 
-  const ind1h = createBaseIndicators({ structure: 'BULLISH', marketRegime: 'STRONG_UPTREND', resistance: 4346.0 }); // 1 pt (0.33 ATR) from entry
+  const ind1h = createBaseIndicators({ structure: 'BULLISH', marketRegime: 'STRONG_UPTREND', resistance: 4345.3 }); // 0.3 pt (0.10 ATR) from entry
   const ind15m = createBaseIndicators({
     structure: 'BULLISH',
     marketRegime: 'STRONG_UPTREND',
@@ -344,7 +344,7 @@ function createBaseIndicators(overrides: Partial<TechnicalIndicators> = {}): Tec
 
 // ============================================================================
 // TEST 9: Breakout/Retest Pipeline validateTradeSignalCandidate Integration
-// Context: Breakout & Retest candidate with retestDisplacement > 1.0 ATR
+// Context: Breakout & Retest candidate with retestDisplacement > 2.20 ATR
 // Expected: Rejected by validateTradeSignalCandidate
 // ============================================================================
 {
@@ -365,7 +365,7 @@ function createBaseIndicators(overrides: Partial<TechnicalIndicators> = {}): Tec
     tp1: 4355.0,
     confidence: 88,
     patternMetadata: {
-      brokenLevel: 4340.0, // Retest displacement = 5.0 pts / 3.0 = 1.67 ATR > 1.0 ATR
+      brokenLevel: 4337.0, // Retest displacement = 8.0 pts / 3.0 = 2.67 ATR > 2.20 ATR
     },
   };
 
@@ -381,7 +381,7 @@ function createBaseIndicators(overrides: Partial<TechnicalIndicators> = {}): Tec
 
   assert(
     !validation.isValid && validation.rejectionReason?.includes('BREAKOUT_RETEST_CHASE'),
-    'TEST 9: Breakout & Retest Chased Pipeline Enforcement (> 1.0 ATR displacement)',
+    'TEST 9: Breakout & Retest Chased Pipeline Enforcement (> 2.20 ATR displacement)',
     `isValid=${validation.isValid}, rejectionReason=${validation.rejectionReason}`
   );
 }

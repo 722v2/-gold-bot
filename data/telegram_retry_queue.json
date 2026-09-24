@@ -859,11 +859,11 @@
         ]
       ]
     },
-    "status": "PENDING",
+    "status": "SUPPRESSED",
     "attempts": 1,
     "maxAttempts": 10,
     "nextRetryAt": 1790233854440,
     "createdAt": 1790233852376,
-    "lastError": "TELEGRAM_BOT_TOKEN is not configured."
+    "lastError": "Historical event suppressed: exceeded actionability window"
   }
 ]

@@ -1,5 +1,26 @@
 [
   {
+    "id": "trade_single_b7_1790234084088",
+    "sl": 2645,
+    "tp1": 2656,
+    "tp2": 0,
+    "date": "٢٤ سبتمبر، ٠٧:١٤ ص",
+    "asset": "XAU/USD",
+    "entry": 2650,
+    "status": "OPEN",
+    "tp1Hit": false,
+    "tp2Hit": false,
+    "isoTime": "2026-09-24T07:14:44.089Z",
+    "lotSize": 0.01,
+    "isActive": false,
+    "openedAt": 1790234084088,
+    "signalId": "trade_single_b7_1790234084088",
+    "direction": "BUY",
+    "tradeNumber": 10044,
+    "pl": 0,
+    "realizedPnl": 0
+  },
+  {
     "id": "sig_1790233029399_fb4vc",
     "pl": -4,
     "rr": "TP1: 1:1.01 (40.4 pts)",

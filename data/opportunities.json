@@ -1,4 +1,20 @@
 {
+  "opp_horizontal_support_breakout___retest_SELL_4280": {
+    "id": "opp_horizontal_support_breakout___retest_SELL_4280",
+    "tp1": 4277.2,
+    "tp2": 4274.22,
+    "entry": 4282.23,
+    "status": "ACTIVE",
+    "signalId": "sig_1790233871302_615dw",
+    "stopLoss": 4287.12,
+    "direction": "SELL",
+    "setupName": "Horizontal Support Breakout & Retest",
+    "timeframe": "15M / 5M",
+    "confidence": 91,
+    "strategyFamily": "UNKNOWN",
+    "lastUpdatedTime": 1790235894411,
+    "firstObservedTime": 1790233871403
+  },
   "opp_b7_1790234084076": {
     "id": "opp_b7_1790234084076",
     "tp1": 2656,
@@ -39,22 +55,6 @@
     "invalidationReason": "N/A",
     "recommendedLotSize": 0.01,
     "supportingConfluences": []
-  },
-  "opp_horizontal_support_breakout___retest_SELL_4280": {
-    "id": "opp_horizontal_support_breakout___retest_SELL_4280",
-    "tp1": 4277.2,
-    "tp2": 4274.22,
-    "entry": 4282.23,
-    "status": "ACTIVE",
-    "signalId": "sig_1790233871302_615dw",
-    "stopLoss": 4287.12,
-    "direction": "SELL",
-    "setupName": "Horizontal Support Breakout & Retest",
-    "timeframe": "15M / 5M",
-    "confidence": 87,
-    "strategyFamily": "UNKNOWN",
-    "lastUpdatedTime": 1790234054201,
-    "firstObservedTime": 1790233871403
   },
   "opp_double_top_reversal__confirmed_m_formation__SELL_4285": {
     "id": "opp_double_top_reversal__confirmed_m_formation__SELL_4285",
@@ -333,19 +333,19 @@
   },
   "opp_bare_support_rejection_BUY_4285": {
     "id": "opp_bare_support_rejection_BUY_4285",
-    "tp1": 4288.66,
-    "tp2": 4295.09,
-    "entry": 4283.9,
-    "status": "NOT_ENTERED",
-    "signalId": "sig_1790193615025_9t9w8",
-    "stopLoss": 4279.9,
-    "direction": "BUY",
     "setupName": "Bare Support Rejection",
-    "timeframe": "15M / 5M",
-    "confidence": 87,
     "strategyFamily": "UNKNOWN",
-    "lastUpdatedTime": 1790232829736,
-    "firstObservedTime": 1790193615125
+    "direction": "BUY",
+    "timeframe": "15M / 5M",
+    "status": "CANCELLED",
+    "firstObservedTime": 1790234153860,
+    "lastUpdatedTime": 1790234177082,
+    "entry": 4284.34,
+    "stopLoss": 4279.75,
+    "tp1": 4296.57,
+    "tp2": 4303.53,
+    "confidence": 89,
+    "signalId": "sig_1790234153838_0jazz"
   },
   "opp_horizontal_support_breakout___retest_SELL_4285_hist_1790231845986": {
     "id": "opp_horizontal_support_breakout___retest_SELL_4285_hist_1790231845986",
@@ -6270,5 +6270,21 @@
     "strategyFamily": "UNKNOWN",
     "lastUpdatedTime": 1789662588632,
     "firstObservedTime": 1789662030376
+  },
+  "opp_bare_support_rejection_BUY_4285_hist_1790232829736": {
+    "id": "opp_bare_support_rejection_BUY_4285_hist_1790232829736",
+    "tp1": 4288.66,
+    "tp2": 4295.09,
+    "entry": 4283.9,
+    "status": "NOT_ENTERED",
+    "signalId": "sig_1790193615025_9t9w8",
+    "stopLoss": 4279.9,
+    "direction": "BUY",
+    "setupName": "Bare Support Rejection",
+    "timeframe": "15M / 5M",
+    "confidence": 87,
+    "strategyFamily": "UNKNOWN",
+    "lastUpdatedTime": 1790232829736,
+    "firstObservedTime": 1790193615125
   }
 }
