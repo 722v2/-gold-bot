@@ -482,12 +482,6 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     },
     patternMetadata?: Record<string, any>
   ): SetupCandidate | null => {
-    // S11 Level Quality Filter: Reject S11 candidates with 3 or more touches (historical failure rate 87.5%)
-    const touchesCount = patternMetadata?.touches ?? patternMetadata?.touchesCount;
-    if ((family === 'BARE_SR' || patternMetadata?.strategyId === 'S11') && typeof touchesCount === 'number' && touchesCount >= 3) {
-      return null;
-    }
-
     // 1. Calculate SL with technical buffer
     const entry = Number(proposedEntry.toFixed(2));
     let stopLoss = direction === 'BUY'
@@ -537,21 +531,6 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
           label: 'Pattern Neckline',
         };
       }
-    } else if (
-      patternMetadata?.strategyId === 'S8' &&
-      patternMetadata?.scalpTarget !== undefined &&
-      typeof patternMetadata.scalpTarget === 'number' &&
-      !isNaN(patternMetadata.scalpTarget) &&
-      isFinite(patternMetadata.scalpTarget)
-    ) {
-      const rawDist = Math.abs(patternMetadata.scalpTarget - entry);
-      const rawRr = rawDist / Math.max(0.1, slDistance);
-      if (rawRr >= minRr) {
-        structuralTargetHint = {
-          price: patternMetadata.scalpTarget,
-          label: '5M Mean Reversion Scalp Objective',
-        };
-      }
     }
 
     const tpResult = calculateDynamicTakeProfits({
@@ -570,47 +549,6 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     });
 
     if (!tpResult.valid) {
-      return null;
-    }
-
-    // Strategy-specific TP1 bounds based on forensic calibration:
-    if (family === 'BREAK_AND_RETEST' || patternMetadata?.strategyId === 'S12') {
-      // S12 Retest Ceiling: Cap TP1 at 2.0R to prevent holding retests into distant macro swing reversal
-      if (tpResult.tp1Rr > 2.0) {
-        const cappedDist = Number((slDistance * 2.0).toFixed(2));
-        tpResult.tp1 = Number((direction === 'BUY' ? entry + cappedDist : entry - cappedDist).toFixed(2));
-        tpResult.tp1Distance = cappedDist;
-        tpResult.tp1Points = Number((cappedDist / 0.1).toFixed(1));
-        tpResult.tp1Rr = 2.0;
-        tpResult.tp1RrString = '1:2.00';
-        tpResult.tpSelectionReason = `${tpResult.tpSelectionReason} [S12 Retest Expansion Capped at 2.0R Ceiling]`;
-      }
-    } else if (family === 'DOUBLE_TOP_BOTTOM' || patternMetadata?.strategyId === 'S10') {
-      // S10 Double Formation Ceiling: Cap TP1 at 2.0R to avoid chasing into distant liquidity
-      if (tpResult.tp1Rr > 2.0) {
-        const cappedDist = Number((slDistance * 2.0).toFixed(2));
-        tpResult.tp1 = Number((direction === 'BUY' ? entry + cappedDist : entry - cappedDist).toFixed(2));
-        tpResult.tp1Distance = cappedDist;
-        tpResult.tp1Points = Number((cappedDist / 0.1).toFixed(1));
-        tpResult.tp1Rr = 2.0;
-        tpResult.tp1RrString = '1:2.00';
-        tpResult.tpSelectionReason = `${tpResult.tpSelectionReason} [S10 Double Formation Capped at 2.0R Ceiling]`;
-      }
-    } else if (family === 'COUNTERTREND_SCALP' || patternMetadata?.strategyId === 'S8') {
-      // S8 True Scalp Bound: Cap TP1 at 2.0R mean-reversion
-      if (tpResult.tp1Rr > 2.0) {
-        const cappedDist = Number((slDistance * 2.0).toFixed(2));
-        tpResult.tp1 = Number((direction === 'BUY' ? entry + cappedDist : entry - cappedDist).toFixed(2));
-        tpResult.tp1Distance = cappedDist;
-        tpResult.tp1Points = Number((cappedDist / 0.1).toFixed(1));
-        tpResult.tp1Rr = 2.0;
-        tpResult.tp1RrString = '1:2.00';
-        tpResult.tpSelectionReason = `${tpResult.tpSelectionReason} [S8 Scalp Capped at 2.0R Mean-Reversion]`;
-      }
-    }
-
-    // Re-verify minimum RR requirement after any strategy-specific bounding
-    if (tpResult.tp1Rr < minRr) {
       return null;
     }
 
@@ -829,81 +767,26 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       liquidityBonus: liquidityContext.liquidityScoreBonus,
     });
 
-    // 10. Calculate Strategy Confidence (Calibrated Confluence Edge: 70–96)
+    // 10. Calculate Strategy Confidence (Structural Edge: 70–96)
     let technicalScore = 0;
     if (direction === 'BUY') {
-      if (entry > indicators5m.vwap) technicalScore += 2;
-      if (entry > indicators5m.ema20) technicalScore += 2;
-      if (indicators5m.rsi14 >= 40 && indicators5m.rsi14 <= 62) technicalScore += 2;
+      if (entry > indicators5m.vwap) technicalScore += 3;
+      if (entry > indicators5m.ema20) technicalScore += 3;
+      if (indicators5m.rsi14 >= 40 && indicators5m.rsi14 <= 68) technicalScore += 2;
       if (indicators5m.macd?.histogram && indicators5m.macd.histogram > 0) technicalScore += 2;
     } else {
-      if (entry < indicators5m.vwap) technicalScore += 2;
-      if (entry < indicators5m.ema20) technicalScore += 2;
-      if (indicators5m.rsi14 <= 60 && indicators5m.rsi14 >= 38) technicalScore += 2;
+      if (entry < indicators5m.vwap) technicalScore += 3;
+      if (entry < indicators5m.ema20) technicalScore += 3;
+      if (indicators5m.rsi14 <= 60 && indicators5m.rsi14 >= 32) technicalScore += 2;
       if (indicators5m.macd?.histogram && indicators5m.macd.histogram < 0) technicalScore += 2;
     }
 
     // HTF Alignment bonus
     let htfBonus = 0;
-    const isH1Aligned = (direction === 'BUY' && h1Trend === 'BULLISH') || (direction === 'SELL' && h1Trend === 'BEARISH');
-    const isM15Aligned = (direction === 'BUY' && m15Structure === 'BULLISH') || (direction === 'SELL' && m15Structure === 'BEARISH');
-    if (isH1Aligned) htfBonus += 4;
-    if (isM15Aligned) htfBonus += 4;
-
-    // 15M EMA50 Directional Alignment (Requirement D: modest +3 bonus)
-    let ema50Bonus = 0;
-    const ema50_15m = indicators15m.ema50;
-    const last15mClose = candles15m && candles15m.length > 0 ? candles15m[candles15m.length - 1].close : entry;
-    if (ema50_15m !== undefined && Number.isFinite(ema50_15m)) {
-      if (direction === 'BUY' && (entry >= ema50_15m || last15mClose >= ema50_15m)) {
-        ema50Bonus = 3;
-      } else if (direction === 'SELL' && (entry <= ema50_15m || last15mClose <= ema50_15m)) {
-        ema50Bonus = 3;
-      }
-    }
-
-    // POI Distance Confidence Adjustment (Requirement A)
-    const distAtr = timingAssessment.distanceFromPoiAtr ?? 0;
-    let poiDistAdj = 0;
-    if (distAtr <= 0.8) {
-      poiDistAdj = 4; // positive confidence contribution
-    } else if (distAtr <= 1.2) {
-      poiDistAdj = 0; // neutral / small penalty
-    } else if (distAtr <= 1.5) {
-      poiDistAdj = -5; // meaningful confidence penalty
-    } else if (distAtr <= 2.0) {
-      poiDistAdj = -10; // strong confidence penalty
-    } else {
-      poiDistAdj = -16; // severe penalty and late/chase risk
-    }
-
-    // Rejection Wick Quality (Requirement C: winner avg ~1.84x vs loser avg ~1.18x)
-    const rejectionRatio = triggerAssessment.rejectionRatio ?? 0;
-    let wickBonus = 0;
-    if (rejectionRatio >= 1.5) {
-      wickBonus = 4; // strong structural rejection
-    } else if (rejectionRatio >= 1.2) {
-      wickBonus = 2;
-    }
-
-    // Momentum Bias Correction (Requirement B)
-    // Momentum should ONLY boost confidence when supported by POI proximity and clean structure.
-    // Extended displacement away from POI is penalized.
-    const dispAtr = timingAssessment.displacementAtr ?? 0;
-    let momentumAdj = 0;
-    if (dispAtr >= 1.5 && distAtr > 1.2) {
-      momentumAdj = -6; // large displacement away from POI = exhaustion risk
-    } else if (dispAtr >= 1.2 && distAtr <= 0.8 && (pullbackAssessment.quality === 'HEALTHY' || pullbackAssessment.quality === 'ACCEPTABLE')) {
-      momentumAdj = 2; // supported structural breakout / reaction
-    }
-
-    // RSI Exhaustion Penalty (Requirement E)
-    let rsiExhaustionPenalty = 0;
-    if (direction === 'BUY' && indicators5m.rsi14 > 65 && distAtr > 1.2) {
-      rsiExhaustionPenalty = 6;
-    } else if (direction === 'SELL' && indicators5m.rsi14 < 35 && distAtr > 1.2) {
-      rsiExhaustionPenalty = 6;
-    }
+    if (direction === 'BUY' && h1Trend === 'BULLISH') htfBonus += 5;
+    if (direction === 'SELL' && h1Trend === 'BEARISH') htfBonus += 5;
+    if (direction === 'BUY' && m15Structure === 'BULLISH') htfBonus += 5;
+    if (direction === 'SELL' && m15Structure === 'BEARISH') htfBonus += 5;
 
     const structureScore = Math.min(25, baseStructureScore + htfBonus);
     const liquidityScore = Math.min(25, baseLiquidityScore + Math.min(4, liquidityContext.liquidityScoreBonus));
@@ -912,31 +795,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     const techScore = Math.min(10, technicalScore);
 
     const baseRawScore = structureScore + liquidityScore + priceActionScore + locationScore + techScore;
-    const adjustedRawScore = baseRawScore + poiDistAdj + wickBonus + momentumAdj + ema50Bonus - rsiExhaustionPenalty;
-    let rawConfidence = Math.round(adjustedRawScore * poiFreshness.multiplier);
-
-    // Confidence Ceiling / High-Confidence Multi-Factor Calibration (Requirement F)
-    // High confidence (>=90%) strictly requires genuine multi-factor confluence:
-    const isHighConvictionMultiFactor =
-      distAtr <= 0.8 &&
-      (isH1Aligned || isM15Aligned) &&
-      (rejectionRatio >= 1.3 || pullbackAssessment.quality === 'HEALTHY') &&
-      (tpPathAssessment.runway === 'CLEAR' || tpPathAssessment.runway === 'MINOR_OBSTACLE') &&
-      poiFreshness.state !== 'EXHAUSTED' &&
-      rsiExhaustionPenalty === 0 &&
-      elq.classification !== 'LATE' &&
-      elq.classification !== 'EXHAUSTED';
-
-    if (rawConfidence >= 90 && !isHighConvictionMultiFactor) {
-      rawConfidence = 84;
-    }
-
-    // Extended entries or late/exhausted structure capped at 80%
-    if (distAtr > 1.2 || elq.classification === 'LATE' || elq.classification === 'EXHAUSTED' || tpPathAssessment.runway === 'MAJOR_OBSTACLE') {
-      rawConfidence = Math.min(80, rawConfidence);
-    }
-
-    const strategyConfidence = Math.min(96, Math.max(70, rawConfidence));
+    const strategyConfidence = Math.min(96, Math.max(70, Math.round(baseRawScore * poiFreshness.multiplier)));
 
     // Composite Final Ranking Score combining Strategy Confidence & Execution Quality
     const totalScore = Math.round(strategyConfidence * 0.55 + eqResult.score * 0.45);
@@ -1088,9 +947,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
 
   const obTolerance = Math.min(2.5, Math.max(1.2, atr5m * 0.8));
 
-  // Bullish OB Retest (Demand Zone) - Evaluated in normal markets and reversals at discount/support
-  const allowBullishOb = !isStrongDowntrend || m15Zone === 'DISCOUNT' || indicators15m.chochDetected || indicators5m.chochDetected || indicators15m.sweepDetected || indicators5m.sweepDetected;
-  if (allowBullishOb) {
+  // Bullish OB Retest (Demand Zone) - Gated: Blocked in STRONG_DOWNTREND / WEAK_DOWNTREND
+  if (!isDowntrendRegime) {
     const bullishObs = activeObs.filter((ob) => ob.type === 'BULLISH');
     for (const bullishOb of bullishObs) {
       if (currentPrice >= bullishOb.low - 0.5 && currentPrice <= bullishOb.high + obTolerance) {
@@ -1123,9 +981,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     }
   }
 
-  // Bearish OB Retest (Supply Zone) - Evaluated in normal markets and reversals at premium/resistance
-  const allowBearishOb = !isStrongUptrend || m15Zone === 'PREMIUM' || indicators15m.chochDetected || indicators5m.chochDetected || indicators15m.sweepDetected || indicators5m.sweepDetected;
-  if (allowBearishOb) {
+  // Bearish OB Retest (Supply Zone) - Gated: Blocked in STRONG_UPTREND / WEAK_UPTREND
+  if (!isUptrendRegime) {
     const bearishObs = activeObs.filter((ob) => ob.type === 'BEARISH');
     for (const bearishOb of bearishObs) {
       if (currentPrice <= bearishOb.high + 0.5 && currentPrice >= bearishOb.low - obTolerance) {
@@ -1171,9 +1028,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
 
   const fvgTolerance = Math.min(2.2, Math.max(0.8, atr5m * 0.7));
 
-  // Bullish FVG - Evaluated in non-runaway markets or when in discount
-  const allowBullishFvg = !isStrongDowntrend || m15Zone === 'DISCOUNT' || indicators15m.chochDetected || indicators5m.chochDetected;
-  if (allowBullishFvg) {
+  // Bullish FVG - Gated: Blocked in STRONG_DOWNTREND / WEAK_DOWNTREND
+  if (!isDowntrendRegime) {
     const bullishFvgs = activeFvgs.filter((f) => f.type === 'BULLISH');
     for (const fvg of bullishFvgs) {
       if (currentPrice >= fvg.bottom - 0.5 && currentPrice <= fvg.top + fvgTolerance) {
@@ -1206,9 +1062,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     }
   }
 
-  // Bearish FVG - Evaluated in non-runaway markets or when in premium
-  const allowBearishFvg = !isStrongUptrend || m15Zone === 'PREMIUM' || indicators15m.chochDetected || indicators5m.chochDetected;
-  if (allowBearishFvg) {
+  // Bearish FVG - Gated: Blocked in STRONG_UPTREND / WEAK_UPTREND
+  if (!isUptrendRegime) {
     const bearishFvgs = activeFvgs.filter((f) => f.type === 'BEARISH');
     for (const fvg of bearishFvgs) {
       if (currentPrice <= fvg.top + 0.5 && currentPrice >= fvg.bottom - fvgTolerance) {
@@ -1286,17 +1141,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
         23,
         16,
         17,
-        15,
-        {
-          type: 'SWING_LEVEL',
-          top: currentPrice,
-          bottom: recentLow,
-          timeframe: '5M',
-          createdCandleTime: partition5m.closedCandles[partition5m.closedCandles.length - 1]?.timestamp || Date.now(),
-        },
-        {
-          strategyId: 'S4',
-        }
+        15
       );
       if (cand) candidates.push(cand);
     }
@@ -1319,17 +1164,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
         23,
         16,
         17,
-        15,
-        {
-          type: 'SWING_LEVEL',
-          top: recentHigh,
-          bottom: currentPrice,
-          timeframe: '5M',
-          createdCandleTime: partition5m.closedCandles[partition5m.closedCandles.length - 1]?.timestamp || Date.now(),
-        },
-        {
-          strategyId: 'S4',
-        }
+        15
       );
       if (cand) candidates.push(cand);
     }
@@ -1338,8 +1173,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   // =========================================================================
   // STRATEGY 5: FIBONACCI OTE (61.8% - 78.6%) IN PREMIUM / DISCOUNT
   // =========================================================================
-  const allowBullishFib = !isStrongDowntrend || indicators15m.chochDetected || indicators5m.chochDetected;
-  if (allowBullishFib && m15Zone === 'DISCOUNT' && currentPrice >= fib15m.bullishOteLow - 1.0 && currentPrice <= fib15m.bullishOteHigh + 1.0) {
+  if (!isDowntrendRegime && m15Zone === 'DISCOUNT' && currentPrice >= fib15m.bullishOteLow - 1.0 && currentPrice <= fib15m.bullishOteHigh + 1.0) {
     const hasBullishFibTrigger = c5mMetrics.isBottomRejection || c5mMetrics.isEngulfingBull || (c5mMetrics.isBull && c5mMetrics.body > atr5m * 0.8);
     if (hasBullishFibTrigger) {
       const cand = evaluateCandidate(
@@ -1362,10 +1196,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       );
       if (cand) candidates.push(cand);
     }
-  }
-  
-  const allowBearishFib = !isStrongUptrend || indicators15m.chochDetected || indicators5m.chochDetected;
-  if (allowBearishFib && m15Zone === 'PREMIUM' && currentPrice >= fib15m.bearishOteLow - 1.0 && currentPrice <= fib15m.bearishOteHigh + 1.0) {
+  } else if (!isUptrendRegime && m15Zone === 'PREMIUM' && currentPrice >= fib15m.bearishOteLow - 1.0 && currentPrice <= fib15m.bearishOteHigh + 1.0) {
     const hasBearishFibTrigger = c5mMetrics.isTopRejection || c5mMetrics.isEngulfingBear || (c5mMetrics.isBear && c5mMetrics.body > atr5m * 0.8);
     if (hasBearishFibTrigger) {
       const cand = evaluateCandidate(
@@ -1499,11 +1330,6 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   // STRATEGY 7: COUNTERTREND SCALP (Extreme Extension + Strong Reversal)
   // =========================================================================
   const distFrom5mEma = Math.abs(currentPrice - indicators5m.ema20);
-  const ema50_15m = indicators15m.ema50 || currentPrice;
-  const distFrom15mEma50Atr = Math.abs(currentPrice - ema50_15m) / (indicators15m.atr14 || 1.5);
-  // Strong 15M trend protection: Block countertrend scalps when distance from 15M EMA50 > 2.5 ATR
-  const isRunaway15mTrend = distFrom15mEma50Atr > 2.5;
-
   const isExtremeExtensionSell =
     indicators5m.rsi14 >= 74 ||
     distFrom5mEma >= atr5m * 2.5 ||
@@ -1514,8 +1340,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     distFrom5mEma >= atr5m * 2.5 ||
     (indicators5m.bollingerBands && last5m.low <= indicators5m.bollingerBands.lower);
 
-  if (!isRunaway15mTrend && isExtremeExtensionSell && c5mMetrics.isTopRejection && currentPrice >= Math.min(indicators15m.swingHigh, indicators5m.swingHigh) - 0.5) {
-    const scalpTargetPrice = indicators5m.ema20 || indicators5m.vwap || (currentPrice - 1.5 * atr5m);
+  if (isExtremeExtensionSell && c5mMetrics.isTopRejection && currentPrice >= Math.min(indicators15m.swingHigh, indicators5m.swingHigh) - 0.5) {
     const cand = evaluateCandidate(
       'COUNTERTREND_SCALP',
       'Countertrend Mean-Reversion Scalp (Overbought Rejection)',
@@ -1532,16 +1357,10 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       14,
       20,
       20,
-      17,
-      undefined,
-      {
-        strategyId: 'S8',
-        scalpTarget: scalpTargetPrice,
-      }
+      17
     );
     if (cand) candidates.push(cand);
-  } else if (!isRunaway15mTrend && isExtremeExtensionBuy && c5mMetrics.isBottomRejection && currentPrice <= Math.max(indicators15m.swingLow, indicators5m.swingLow) + 0.5) {
-    const scalpTargetPrice = indicators5m.ema20 || indicators5m.vwap || (currentPrice + 1.5 * atr5m);
+  } else if (isExtremeExtensionBuy && c5mMetrics.isBottomRejection && currentPrice <= Math.max(indicators15m.swingLow, indicators5m.swingLow) + 0.5) {
     const cand = evaluateCandidate(
       'COUNTERTREND_SCALP',
       'Countertrend Mean-Reversion Scalp (Oversold Bounce)',
@@ -1558,12 +1377,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
       14,
       20,
       20,
-      17,
-      undefined,
-      {
-        strategyId: 'S8',
-        scalpTarget: scalpTargetPrice,
-      }
+      17
     );
     if (cand) candidates.push(cand);
   }
@@ -1787,13 +1601,6 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   for (const pat of doubleTopBottomPatterns) {
     const isConfirmed = pat.confirmationState === 'CONFIRMED_REVERSAL';
     if (!isConfirmed) continue; // PRE_CONFIRMATION setups are developing patterns and must NOT generate market-entry signals
-
-    // S10 Entry-Quality Gate: Entry must not be excessively displaced past the confirmed neckline (> 0.8 ATR)
-    const necklineDisplacement = Math.abs(currentPrice - pat.neckline);
-    if (necklineDisplacement > 0.8 * atr5m) {
-      continue;
-    }
-
     if (pat.type === 'DOUBLE_TOP') {
       const setupTitle = isConfirmed
         ? 'Double Top Reversal (Confirmed M-Formation)'
