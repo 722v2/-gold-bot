@@ -835,8 +835,8 @@ class LiveMarketScanner {
         minimumLot: settings.minimumLot,
         maximumLot: settings.maximumLot,
         lotStep: settings.lotStep,
-        minGoldSlPoints: settings.minGoldSlPoints ?? 40,
-        maxGoldSlPoints: settings.maxGoldSlPoints ?? 50,
+        minGoldSlPoints: settings.minGoldSlPoints ?? 35,
+        maxGoldSlPoints: settings.maxGoldSlPoints ?? 85,
         minRr: settings.minTp1RR,
         maxLoss: settings.maxLoss,
       };

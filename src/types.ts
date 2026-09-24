@@ -355,8 +355,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   minimumLot: 0.01,
   maximumLot: 100,
   lotStep: 0.01,
-  minGoldSlPoints: 40,
-  maxGoldSlPoints: 50,
+  minGoldSlPoints: 35,
+  maxGoldSlPoints: 85,
   maxLoss: 5.5,
   partialClosePercent: 50,
   enableTradeManagement: true,
@@ -371,8 +371,8 @@ export interface BrokerSettings {
   minimumLot: number; // default 0.01 standard lot
   maximumLot: number; // default 100 standard lot
   lotStep: number; // default 0.01
-  minGoldSlPoints?: number; // default 40 points
-  maxGoldSlPoints: number; // default 50 points
+  minGoldSlPoints?: number; // default 35 points
+  maxGoldSlPoints: number; // default 85 points
   minRr: number; // default 1.5
   maxLoss?: number;
   name?: string;

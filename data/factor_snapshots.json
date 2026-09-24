@@ -313,5 +313,47 @@
     },
     "combinationKey": "direction=SELL|fvg=NONE|htfStructure=DOWNTREND|liquidity=SWEEP_BUY_SIDE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=NONE|rsi=NEUTRAL|setupFamily=Bearish Trend Continuation (EMA/VWAP Pullback)|volatility=HIGH|zone=DISCOUNT",
     "createdAt": 1790195735975
+  },
+  "sig_1790232952233_l6336": {
+    "signalId": "sig_1790232952233_l6336",
+    "setupFamily": "Horizontal Support Breakout & Retest",
+    "direction": "SELL",
+    "factors": {
+      "setupFamily": "Horizontal Support Breakout & Retest",
+      "direction": "SELL",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "NORMAL_RANGE",
+      "liquidity": "SWEEP_BUY_SIDE",
+      "orderBlock": "BEARISH_OB",
+      "fvg": "NONE",
+      "zone": "DISCOUNT",
+      "rsi": "NEUTRAL",
+      "macd": "BEARISH",
+      "volatility": "HIGH"
+    },
+    "combinationKey": "direction=SELL|fvg=NONE|htfStructure=DOWNTREND|liquidity=SWEEP_BUY_SIDE|m15Structure=BEARISH|macd=BEARISH|marketRegime=NORMAL_RANGE|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Horizontal Support Breakout & Retest|volatility=HIGH|zone=DISCOUNT",
+    "createdAt": 1790232952234
+  },
+  "sig_1790233852376_4e8z7": {
+    "signalId": "sig_1790233852376_4e8z7",
+    "setupFamily": "Horizontal Support Breakout & Retest",
+    "direction": "SELL",
+    "factors": {
+      "setupFamily": "Horizontal Support Breakout & Retest",
+      "direction": "SELL",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "NORMAL_RANGE",
+      "liquidity": "NONE",
+      "orderBlock": "BEARISH_OB",
+      "fvg": "NONE",
+      "zone": "DISCOUNT",
+      "rsi": "NEUTRAL",
+      "macd": "BULLISH",
+      "volatility": "HIGH"
+    },
+    "combinationKey": "direction=SELL|fvg=NONE|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BULLISH|marketRegime=NORMAL_RANGE|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Horizontal Support Breakout & Retest|volatility=HIGH|zone=DISCOUNT",
+    "createdAt": 1790233852376
   }
 }

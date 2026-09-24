@@ -598,8 +598,64 @@ async function runEntrySlQualityRegressionSuite() {
     );
   }
 
+  // -------------------------------------------------------------------------
+  // SCENARIO 21: BUY Wide Structural SL (up to 85 points) allowed with default/85 maxSlPoints
+  // -------------------------------------------------------------------------
+  {
+    const entry = 2500.0;
+    const stopLoss = 2492.5; // 75.0 points distance
+    const slQuality85 = assessStopLossQuality('BUY', entry, stopLoss, indicators5m, 35, 85);
+    const slQuality65 = assessStopLossQuality('BUY', entry, stopLoss, indicators5m, 35, 65);
+    const riskResult = evaluateTradeRisk({
+      balance: 100,
+      entry,
+      stopLoss,
+      tp1: 2515.0,
+      tp2: 0,
+      direction: 'BUY',
+      asset: 'XAU/USD',
+      brokerSpecs: {
+        maxLoss: 15.0,
+      },
+    });
+
+    assert(
+      slQuality85.isValid && !slQuality65.isValid && slQuality85.slPoints === 75.0 && riskResult.valid && riskResult.slPoints === 75,
+      'Scenario 21: BUY Wide Structural SL of 75 pts is valid under 85-point max boundary',
+      `slQuality85.isValid=${slQuality85.isValid}, slQuality65.isValid=${slQuality65.isValid}, riskResult.valid=${riskResult.valid}`
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // SCENARIO 22: SELL Wide Structural SL (up to 85 points) allowed with default/85 maxSlPoints [Symmetry]
+  // -------------------------------------------------------------------------
+  {
+    const entry = 2500.0;
+    const stopLoss = 2507.5; // 75.0 points distance
+    const slQuality85 = assessStopLossQuality('SELL', entry, stopLoss, indicators5m, 35, 85);
+    const slQuality65 = assessStopLossQuality('SELL', entry, stopLoss, indicators5m, 35, 65);
+    const riskResult = evaluateTradeRisk({
+      balance: 100,
+      entry,
+      stopLoss,
+      tp1: 2485.0,
+      tp2: 0,
+      direction: 'SELL',
+      asset: 'XAU/USD',
+      brokerSpecs: {
+        maxLoss: 15.0,
+      },
+    });
+
+    assert(
+      slQuality85.isValid && !slQuality65.isValid && slQuality85.slPoints === 75.0 && riskResult.valid && riskResult.slPoints === 75,
+      'Scenario 22: SELL Wide Structural SL of 75 pts is valid under 85-point max boundary [Symmetry]',
+      `slQuality85.isValid=${slQuality85.isValid}, slQuality65.isValid=${slQuality65.isValid}, riskResult.valid=${riskResult.valid}`
+    );
+  }
+
   console.log('\n======================================================================');
-  console.log(`RESULTS: ${passed} Passed, ${failed} Failed out of 20 Scenarios`);
+  console.log(`RESULTS: ${passed} Passed, ${failed} Failed out of 22 Scenarios`);
   console.log('======================================================================');
 
   if (failed > 0) {

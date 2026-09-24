@@ -90,9 +90,9 @@ export const DEFAULT_BROKER_SPECS: BrokerContractSpecs = {
   maximumLot: 100,
   lotStep: 0.01,
   minGoldSlPoints: 35,
-  maxGoldSlPoints: 65,
+  maxGoldSlPoints: 85,
   minSlPoints: 35,
-  maxSlPoints: 65,
+  maxSlPoints: 85,
   minRr: 1.0,
   maxLoss: 5.0,
 };
@@ -398,9 +398,9 @@ export function evaluateTradeRisk(params: RiskCalculationParams): RiskEvaluation
     ? `TP1: ${tp1RrString} (${tp1Points} pts) | TP2: ${tp2RrString} (${tp2Points} pts)`
     : `TP1: ${tp1RrString} (${tp1Points} pts)`;
 
-  // Gold SL range filter: strict 35 to 65 points boundary (or brokerSpecs overrides)
+  // Gold SL range filter: strict 35 to 85 points boundary (or brokerSpecs overrides)
   const structuralMinSl = Number(brokerSpecs.minSlPoints ?? brokerSpecs.minGoldSlPoints ?? DEFAULT_BROKER_SPECS.minGoldSlPoints ?? 35.0);
-  const structuralMaxSl = Number(brokerSpecs.maxSlPoints ?? brokerSpecs.maxGoldSlPoints ?? DEFAULT_BROKER_SPECS.maxGoldSlPoints ?? 65.0);
+  const structuralMaxSl = Number(brokerSpecs.maxSlPoints ?? brokerSpecs.maxGoldSlPoints ?? DEFAULT_BROKER_SPECS.maxGoldSlPoints ?? 85.0);
 
   if (asset === 'XAU/USD' && (slPoints < structuralMinSl || slPoints > structuralMaxSl)) {
     const isBelow = slPoints < structuralMinSl;

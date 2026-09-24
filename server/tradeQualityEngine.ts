@@ -686,8 +686,8 @@ export function assessEntryTimingAndAntiChase(
         reason = `Chased entry (${distanceFromPoiAtr} ATR from POI) - Disqualified to prevent chasing`;
       }
 
-      // FIX 2: If recent candles exhibited strong displacement in trade direction and price is extended (> 1.2 ATR away without pullback)
-      if (isDisplacementInTradeDirection && displacementAtr >= 1.2 && distanceFromPoiAtr > 1.2) {
+      // FIX 2: If recent candles exhibited strong displacement in trade direction and price is extended (> 1.4 ATR away without pullback)
+      if (isDisplacementInTradeDirection && displacementAtr >= 1.5 && distanceFromPoiAtr > 1.4) {
         timing = 'CHASED';
         isChasing = true;
         timingPenalty = Math.max(timingPenalty, 30);
@@ -1097,18 +1097,19 @@ export function assessTpPathRunway(
 
   const unmitigatedHighObstacles = obstacles.filter((o) => o.severity === 'HIGH');
   const activeObstacles = obstacles.filter((o) => o.severity !== 'LOW');
+  const nearActiveObstacles = activeObstacles.filter((o) => o.distancePoints * 0.1 < totalTargetDistance * 0.60);
 
-  if (unmitigatedHighObstacles.some((o) => o.distancePoints * 0.1 < totalTargetDistance * 0.45 && !has1RCocoon)) {
+  if (unmitigatedHighObstacles.some((o) => o.distancePoints * 0.1 < totalTargetDistance * 0.40 && !has1RCocoon)) {
     runway = 'BLOCKED';
     runwayScore = 3;
     description = `Blocked TP runway: Major opposing obstacle (${unmitigatedHighObstacles[0].type} at $${unmitigatedHighObstacles[0].price.toFixed(2)}) lies directly before TP1`;
-  } else if (activeObstacles.length >= 2 || (clearRunwayRatio < 0.65 && !has1RCocoon)) {
+  } else if (nearActiveObstacles.length >= 2 || (clearRunwayRatio < 0.50 && !has1RCocoon)) {
     runway = 'MAJOR_OBSTACLE';
-    runwayScore = 8;
+    runwayScore = 10;
     description = `Major obstacle in TP path (${activeObstacles[0]?.type || obstacles[0].type} at $${(activeObstacles[0] || obstacles[0]).price.toFixed(2)}) limiting runway`;
-  } else if (activeObstacles.length === 1) {
+  } else if (activeObstacles.length >= 1) {
     runway = 'MINOR_OBSTACLE';
-    runwayScore = 14;
+    runwayScore = 15;
     description = `Minor obstacle near target (${activeObstacles[0].type} at $${activeObstacles[0].price.toFixed(2)})`;
   } else if (obstacles.length > 0 && activeObstacles.length === 0) {
     runway = 'CLEAR';
@@ -1135,7 +1136,7 @@ export function assessStopLossQuality(
   stopLoss: number,
   indicators5m: TechnicalIndicators,
   minSlPoints: number = 35,
-  maxSlPoints: number = 65
+  maxSlPoints: number = 85
 ): { isValid: boolean; slPoints: number; slQualityScore: number; reason: string } {
   const slDistance = Math.abs(entry - stopLoss);
   const slPoints = Number((slDistance / 0.1).toFixed(1));
@@ -2255,7 +2256,7 @@ export function validateTradeSignalCandidate(
   const slDistance = Math.abs(entry - stopLoss);
   const slPoints = Math.round(slDistance / 0.1);
   const minSlPoints = Number(brokerSpecs?.minGoldSlPoints ?? brokerSpecs?.minSlPoints ?? 35);
-  const maxSlPoints = Number(brokerSpecs?.maxGoldSlPoints ?? brokerSpecs?.maxSlPoints ?? 65);
+  const maxSlPoints = Number(brokerSpecs?.maxGoldSlPoints ?? brokerSpecs?.maxSlPoints ?? 85);
 
   if (slPoints < minSlPoints || slPoints > maxSlPoints) {
     return { isValid: false, rejectionReason: `INVALID_SL_DISTANCE: Stop loss distance (${slPoints} pts) outside allowed range [${minSlPoints}, ${maxSlPoints}] pts` };

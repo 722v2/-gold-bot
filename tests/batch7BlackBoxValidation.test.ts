@@ -344,12 +344,17 @@ async function runBatch7BlackBoxValidation() {
     assert.strictEqual(sl650.valid, true);
     assert.strictEqual(sl650.slPoints, 65);
 
-    // SL > 65 pts (65.1 pts)
-    const sl651 = evaluateTradeRisk({ balance: 100, entry: 2650.0, stopLoss: 2643.49, tp1: 2658.0, tp2: 0, asset: 'XAU/USD', direction: 'BUY', allowExecutabilityOptimization: false });
-    assert.strictEqual(sl651.valid, false);
-    assert.match(sl651.reason || '', /65|65.1|يتجاوز|SL/i);
+    // SL = 85.0 pts (requires maxLoss = 10.0 since $8.50 > default $5.00 maxLoss, and tp1 = 2660.0 so RR >= 1.0)
+    const sl850 = evaluateTradeRisk({ balance: 100, entry: 2650.0, stopLoss: 2641.50, tp1: 2660.0, tp2: 0, asset: 'XAU/USD', direction: 'BUY', allowExecutabilityOptimization: false, brokerSpecs: { maxLoss: 10.0 } });
+    assert.strictEqual(sl850.valid, true);
+    assert.strictEqual(sl850.slPoints, 85);
 
-    console.log('✅ Section 7 PASS: Strict 35.0–65.0 point SL boundaries enforced without artificial repair.');
+    // SL > 85 pts (85.1 pts)
+    const sl851 = evaluateTradeRisk({ balance: 100, entry: 2650.0, stopLoss: 2641.49, tp1: 2660.0, tp2: 0, asset: 'XAU/USD', direction: 'BUY', allowExecutabilityOptimization: false, brokerSpecs: { maxLoss: 10.0 } });
+    assert.strictEqual(sl851.valid, false);
+    assert.match(sl851.reason || '', /85|85.1|يتجاوز|SL/i);
+
+    console.log('✅ Section 7 PASS: Strict 35.0–85.0 point SL boundaries enforced without artificial repair.');
   }
 
   // ----------------------------------------------------
@@ -464,20 +469,21 @@ async function runBatch7BlackBoxValidation() {
   {
     console.log('\n--- Section 11: AI Bypass Attack ---');
 
-    // AI candidate trying to bypass SL limit with 70 pts SL
+    // AI candidate trying to bypass SL limit with 90 pts SL
     const aiCandidateRisk = evaluateTradeRisk({
       balance: 100,
       entry: 2650.0,
-      stopLoss: 2643.0, // 70 pts SL
-      tp1: 2665.0,
+      stopLoss: 2641.0, // 90 pts SL (exceeds 85 pts limit)
+      tp1: 2670.0,
       tp2: 2680.0,
       confidence: 99, // High AI confidence
       asset: 'XAU/USD',
       direction: 'BUY',
+      brokerSpecs: { maxLoss: 15.0 },
     });
 
     assert.strictEqual(aiCandidateRisk.valid, false);
-    assert.match(aiCandidateRisk.reason || '', /65|70|يتجاوز|SL/i);
+    assert.match(aiCandidateRisk.reason || '', /85|90|يتجاوز|SL/i);
 
     console.log('✅ Section 11 PASS: AI candidates strictly gated by deterministic risk and quality engines.');
   }

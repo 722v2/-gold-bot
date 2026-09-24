@@ -281,8 +281,8 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
   } = input;
 
   const minRr = brokerSpecs.minRr ?? DEFAULT_BROKER_SPECS.minRr ?? 1.0;
-  const minSlPoints = brokerSpecs.minGoldSlPoints ?? 35;
-  const maxSlPoints = brokerSpecs.maxGoldSlPoints ?? 65;
+  const minSlPoints = brokerSpecs.minGoldSlPoints ?? brokerSpecs.minSlPoints ?? 35;
+  const maxSlPoints = brokerSpecs.maxGoldSlPoints ?? brokerSpecs.maxSlPoints ?? 85;
 
   if (!currentPrice || currentPrice <= 0 || isNaN(currentPrice)) {
     const fallbackSignal: TradeSignal = {
@@ -491,7 +491,7 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     let slDistance = Math.abs(entry - stopLoss);
     let slPoints = Number((slDistance / 0.1).toFixed(1));
 
-    // SL constraint check: Must be technically meaningful (35 to 65 points on Gold)
+    // SL constraint check: Must be technically meaningful (35 to 85 points on Gold)
     // When structural SL < minSlPoints (e.g. 20-30 pts), expand/clamp to minimum floor away from invalidation point
     if (slPoints < minSlPoints) {
       stopLoss = direction === 'BUY'
@@ -2173,7 +2173,11 @@ export function generateMultiStrategyCandidates(input: MultiStrategyEngineInput)
     isVeryStrongSetup: winningCandidate.confidence >= 85,
     losingStreak: input.losingStreak || 0,
     asset,
-    brokerSpecs,
+    brokerSpecs: {
+      ...brokerSpecs,
+      maxGoldSlPoints: brokerSpecs?.maxGoldSlPoints ?? brokerSpecs?.maxSlPoints ?? maxSlPoints,
+      maxSlPoints: brokerSpecs?.maxSlPoints ?? brokerSpecs?.maxGoldSlPoints ?? maxSlPoints,
+    },
   });
 
   const setupId = winningCandidate.patternMetadata?.patternAnchorKey

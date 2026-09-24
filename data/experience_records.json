@@ -745,5 +745,31 @@
     "realizedPnl": -2,
     "setupFamily": "Double Bottom Reversal (Confirmed W-Formation)",
     "combinationKey": "direction=BUY|fvg=NONE|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Double Bottom Reversal (Confirmed W-Formation)|volatility=HIGH|zone=DISCOUNT"
+  },
+  {
+    "id": "exp_sig_1790230105621_apl9b_1790230631652",
+    "rr": 2.03,
+    "factors": {
+      "fvg": "NONE",
+      "rsi": "NEUTRAL",
+      "macd": "BEARISH",
+      "zone": "DISCOUNT",
+      "direction": "SELL",
+      "liquidity": "NONE",
+      "orderBlock": "BEARISH_OB",
+      "volatility": "HIGH",
+      "setupFamily": "Bearish Fair Value Gap (FVG) Mitigation",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "NORMAL_RANGE"
+    },
+    "outcome": "LOSS",
+    "tradeId": "sig_1790230105621_apl9b",
+    "signalId": "sig_1790230105621_apl9b",
+    "direction": "SELL",
+    "completedAt": 1790230631652,
+    "realizedPnl": -4,
+    "setupFamily": "Bearish Fair Value Gap (FVG) Mitigation",
+    "combinationKey": "direction=SELL|fvg=NONE|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=NORMAL_RANGE|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Bearish Fair Value Gap (FVG) Mitigation|volatility=HIGH|zone=DISCOUNT"
   }
 ]

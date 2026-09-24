@@ -503,5 +503,58 @@
     "tapCount": 0,
     "state": "FRESH",
     "invalidationPrice": 4281.73
+  },
+  {
+    "id": "poi_swing_level_15m_bearish_4282.5_4278.3",
+    "type": "SWING_LEVEL",
+    "timeframe": "15M",
+    "direction": "BEARISH",
+    "top": 4282.505,
+    "bottom": 4278.275000000001,
+    "createdTimestamp": 1790232951736,
+    "createdCandleTime": 1790232600000,
+    "tapCount": 0,
+    "state": "FRESH",
+    "invalidationPrice": 4281.78
+  },
+  {
+    "id": "poi_swing_level_15m_bearish_4282.4_4278.3",
+    "type": "SWING_LEVEL",
+    "timeframe": "15M",
+    "direction": "BEARISH",
+    "top": 4282.439,
+    "bottom": 4278.341,
+    "createdTimestamp": 1790233491988,
+    "createdCandleTime": 1790232900000,
+    "tapCount": 0,
+    "state": "FRESH",
+    "invalidationPrice": 4284.03
+  },
+  {
+    "id": "poi_sfp_zone_5m_bearish_4288.1_4284.7",
+    "type": "SFP_ZONE",
+    "timeframe": "5M",
+    "direction": "BEARISH",
+    "top": 4288.08,
+    "bottom": 4284.719999999999,
+    "createdTimestamp": 1790233609657,
+    "createdCandleTime": 1790230200000,
+    "tapCount": 4,
+    "state": "EXHAUSTED",
+    "invalidationPrice": 4287.45,
+    "lastTestedCandleTime": 1790233500000
+  },
+  {
+    "id": "poi_swing_level_15m_bearish_4288.5_4284.4",
+    "type": "SWING_LEVEL",
+    "timeframe": "15M",
+    "direction": "BEARISH",
+    "top": 4288.519,
+    "bottom": 4284.421,
+    "createdTimestamp": 1790233852036,
+    "createdCandleTime": 1790233500000,
+    "tapCount": 0,
+    "state": "FRESH",
+    "invalidationPrice": 4287.12
   }
 ]
