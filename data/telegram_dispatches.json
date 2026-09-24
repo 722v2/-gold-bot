@@ -54,5 +54,14 @@
   "sig_duplicate_check_1790067744885",
   "signal_sig_special_1790067744886",
   "sig_fail_nodedup_1790067744912",
-  "sig_malformed_amp_1790067744914"
+  "sig_malformed_amp_1790067744914",
+  "signal_sig_genuinely_new_1790245236169",
+  "sig_immediate_1790245237085",
+  "sig_failed_then_retry_1790245237111",
+  "sig_restart_survive_1790245237113",
+  "sent_already_1790245237116",
+  "sig_duplicate_check_1790245237117",
+  "signal_sig_special_1790245237118",
+  "sig_fail_nodedup_1790245237156",
+  "sig_malformed_amp_1790245237157"
 ]

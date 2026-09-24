@@ -15,6 +15,8 @@ const testFiles = [
   'tests/strategyQualityPhase2To14Regression.test.ts',
   'tests/analyticalBugFixesRegression.test.ts',
   'tests/indicatorMathQualityRegression.test.ts',
+  'tests/confidenceCalibrationAndPartitioning.test.ts',
+  'tests/s12S10S8PrecisionRegression.test.ts',
 ];
 
 console.log('====================================================');

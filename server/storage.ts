@@ -134,6 +134,7 @@ const DATA_DIR = path.join(process.cwd(), 'data');
 const SCANS_FILE = path.join(DATA_DIR, 'scan_history.json');
 const SIGNALS_FILE = path.join(DATA_DIR, 'saved_signals.json');
 const TRADES_FILE = path.join(DATA_DIR, 'trade_ledger.json');
+const TEST_TRADES_FILE = path.join(DATA_DIR, 'test_ledger.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'app_settings.json');
 const OUTCOMES_FILE = path.join(DATA_DIR, 'trade_outcomes.json');
 const ACCOUNT_FILE = path.join(DATA_DIR, 'account_state.json');
@@ -142,6 +143,7 @@ const OPPS_FILE = path.join(DATA_DIR, 'opportunities.json');
 const TELEGRAM_CHAT_FILE = path.join(DATA_DIR, 'telegram_private_chat.json');
 const BACKTEST_FILE = path.join(DATA_DIR, 'backtest_history.json');
 const SNAPSHOTS_FILE = path.join(DATA_DIR, 'factor_snapshots.json');
+const TEST_SNAPSHOTS_FILE = path.join(DATA_DIR, 'test_factor_snapshots.json');
 const EXPERIENCES_FILE = path.join(DATA_DIR, 'experience_records.json');
 const TELEGRAM_DISPATCHES_FILE = path.join(DATA_DIR, 'telegram_dispatches.json');
 const POIS_FILE = path.join(DATA_DIR, 'pois.json');
@@ -150,10 +152,42 @@ const MAX_SCANS_TO_KEEP = 100;
 const MAX_SIGNALS_TO_KEEP = 50;
 const MAX_TRADES_TO_KEEP = 300;
 
+export function isSyntheticTestRecord(trade: any): boolean {
+  if (!trade) return false;
+  if (trade.isTest === true || trade.environment === 'test' || trade.isSynthetic === true) return true;
+  const id = String(trade.id || trade.tradeId || trade.signalId || '');
+  if (
+    id.startsWith('test-') ||
+    id.startsWith('test_') ||
+    id.startsWith('trade_single_') ||
+    id.startsWith('trade_dual_') ||
+    id.startsWith('trade_be_') ||
+    id.startsWith('trade_trail_') ||
+    id.startsWith('mock-') ||
+    id.startsWith('phantom-')
+  ) {
+    return true;
+  }
+  const setup = String(trade.setup || trade.setupName || '');
+  if (
+    setup.startsWith('Single Target') ||
+    setup.startsWith('Dual Target') ||
+    setup.startsWith('BE Path') ||
+    setup.startsWith('Cold Restart') ||
+    setup.startsWith('Trailing Stop Test') ||
+    setup.startsWith('Test Setup') ||
+    setup.startsWith('Mock Setup')
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export class PersistentStorage {
   private inMemoryScans: ScanRecord[] = [];
   private inMemorySignals: TradeSignal[] = [];
   private inMemoryTrades: TradeLedgerItem[] = [];
+  private inMemoryTestTrades: TradeLedgerItem[] = [];
   private inMemoryOutcomes: TradeOutcomeRecord[] = [];
   private inMemoryPois: PoiRecord[] = [];
   private inMemoryLifecycles: CandidateLifecycleRecord[] = [];
@@ -162,6 +196,7 @@ export class PersistentStorage {
   public inMemoryTelegramDispatches: Set<string> = new Set();
   private inMemoryTelegramChatId: string | null = null;
   private inMemoryFactorSnapshots: Map<string, any> = new Map();
+  private inMemoryTestFactorSnapshots: Map<string, any> = new Map();
   private inMemoryExperienceRecords: any[] = [];
   private outcomeListeners: Array<(record: TradeOutcomeRecord, trade?: TradeLedgerItem) => void> = [];
 
@@ -275,11 +310,29 @@ export class PersistentStorage {
         this.inMemorySettings = { ...this.inMemorySettings, ...data };
       }
 
+      if (fs.existsSync(TEST_TRADES_FILE)) {
+        const raw = fs.readFileSync(TEST_TRADES_FILE, 'utf-8');
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          this.inMemoryTestTrades = list;
+        }
+      }
+
       if (fs.existsSync(TRADES_FILE)) {
         const raw = fs.readFileSync(TRADES_FILE, 'utf-8');
         const list = JSON.parse(raw);
         if (Array.isArray(list)) {
-          this.inMemoryTrades = list;
+          const realTrades: TradeLedgerItem[] = [];
+          for (const item of list) {
+            if (isSyntheticTestRecord(item)) {
+              if (!this.inMemoryTestTrades.some((t) => t.id === item.id)) {
+                this.inMemoryTestTrades.push(item);
+              }
+            } else {
+              realTrades.push(item);
+            }
+          }
+          this.inMemoryTrades = realTrades;
         }
       }
 
@@ -351,12 +404,26 @@ export class PersistentStorage {
         }
       }
 
+      if (fs.existsSync(TEST_SNAPSHOTS_FILE)) {
+        const raw = fs.readFileSync(TEST_SNAPSHOTS_FILE, 'utf-8');
+        const data = JSON.parse(raw);
+        if (data && typeof data === 'object') {
+          for (const [k, v] of Object.entries(data)) {
+            this.inMemoryTestFactorSnapshots.set(k, v);
+          }
+        }
+      }
+
       if (fs.existsSync(SNAPSHOTS_FILE)) {
         const raw = fs.readFileSync(SNAPSHOTS_FILE, 'utf-8');
         const data = JSON.parse(raw);
         if (data && typeof data === 'object') {
           for (const [k, v] of Object.entries(data)) {
-            this.inMemoryFactorSnapshots.set(k, v);
+            if (isSyntheticTestRecord({ id: k, ...(v as any) })) {
+              this.inMemoryTestFactorSnapshots.set(k, v);
+            } else {
+              this.inMemoryFactorSnapshots.set(k, v);
+            }
           }
         }
       }
@@ -894,6 +961,7 @@ export class PersistentStorage {
       fs.writeFileSync(SCANS_FILE, JSON.stringify(this.inMemoryScans, null, 2), 'utf-8');
       fs.writeFileSync(SIGNALS_FILE, JSON.stringify(this.inMemorySignals, null, 2), 'utf-8');
       fs.writeFileSync(TRADES_FILE, JSON.stringify(this.inMemoryTrades, null, 2), 'utf-8');
+      fs.writeFileSync(TEST_TRADES_FILE, JSON.stringify(this.inMemoryTestTrades, null, 2), 'utf-8');
       fs.writeFileSync(SETTINGS_FILE, JSON.stringify(this.inMemorySettings, null, 2), 'utf-8');
       fs.writeFileSync(OUTCOMES_FILE, JSON.stringify(this.inMemoryOutcomes, null, 2), 'utf-8');
       fs.writeFileSync(
@@ -911,6 +979,7 @@ export class PersistentStorage {
       fs.writeFileSync(TERMINAL_FILE, JSON.stringify(Array.from(this.inMemoryTerminalSetups), null, 2), 'utf-8');
       fs.writeFileSync(OPPS_FILE, JSON.stringify(Object.fromEntries(this.inMemoryOpportunities), null, 2), 'utf-8');
       fs.writeFileSync(SNAPSHOTS_FILE, JSON.stringify(Object.fromEntries(this.inMemoryFactorSnapshots), null, 2), 'utf-8');
+      fs.writeFileSync(TEST_SNAPSHOTS_FILE, JSON.stringify(Object.fromEntries(this.inMemoryTestFactorSnapshots), null, 2), 'utf-8');
       fs.writeFileSync(EXPERIENCES_FILE, JSON.stringify(this.inMemoryExperienceRecords, null, 2), 'utf-8');
       fs.writeFileSync(POIS_FILE, JSON.stringify(this.inMemoryPois, null, 2), 'utf-8');
       if (this.inMemoryTelegramChatId) {
@@ -1131,12 +1200,14 @@ export class PersistentStorage {
   }
 
   // =========================================================================
-  // Trade Ledger Persistence
+  // Trade Ledger Persistence (Partitioned: Production vs Test)
   // =========================================================================
   public saveTrade(trade: TradeLedgerItem): TradeLedgerItem[] {
     try {
+      const isTest = isSyntheticTestRecord(trade) || this.isTesting;
       const isResultOpen = trade.result === 'OPEN';
-      const highestNum = Math.max(0, ...this.inMemoryTrades.map((t) => t.tradeNumber || 0));
+      const targetList = isTest ? this.inMemoryTestTrades : this.inMemoryTrades;
+      const highestNum = Math.max(0, ...targetList.map((t) => t.tradeNumber || 0));
       const tradeNumber = trade.tradeNumber || highestNum + 1;
       const isoTime = trade.isoTime || new Date().toISOString();
       const date =
@@ -1154,21 +1225,26 @@ export class PersistentStorage {
         isoTime,
         date,
         isActive: trade.isActive !== undefined ? trade.isActive : isResultOpen,
+        isTest: isTest ? true : undefined,
       };
 
-      const existingIdx = this.inMemoryTrades.findIndex((t) => t.id === tradeWithActive.id);
+      const existingIdx = targetList.findIndex((t) => t.id === tradeWithActive.id);
       if (existingIdx >= 0) {
-        this.inMemoryTrades[existingIdx] = tradeWithActive;
+        targetList[existingIdx] = tradeWithActive;
       } else {
-        this.inMemoryTrades.unshift(tradeWithActive);
+        targetList.unshift(tradeWithActive);
       }
 
-      if (this.inMemoryTrades.length > MAX_TRADES_TO_KEEP) {
-        this.inMemoryTrades = this.inMemoryTrades.slice(0, MAX_TRADES_TO_KEEP);
+      if (targetList.length > MAX_TRADES_TO_KEEP) {
+        if (isTest) {
+          this.inMemoryTestTrades = targetList.slice(0, MAX_TRADES_TO_KEEP);
+        } else {
+          this.inMemoryTrades = targetList.slice(0, MAX_TRADES_TO_KEEP);
+        }
       }
 
-      // Asynchronous Supabase write
-      if (tradeWithActive.id) {
+      // Asynchronous Supabase write only for real production trades
+      if (!isTest && tradeWithActive.id) {
         this.safeSupabase(
           (c) => c.from('trade_ledger').upsert(this.formatTradeRow(tradeWithActive)),
           `saveTrade:${tradeWithActive.id}`
@@ -1176,7 +1252,7 @@ export class PersistentStorage {
       }
 
       this.syncJsonBackups();
-      return [...this.inMemoryTrades];
+      return isTest ? [...this.inMemoryTestTrades] : [...this.inMemoryTrades];
     } catch (err) {
       console.error('[Storage] Error saving trade:', err);
       return [...this.inMemoryTrades];
@@ -1185,8 +1261,10 @@ export class PersistentStorage {
 
   public async saveTradeAsync(trade: TradeLedgerItem): Promise<TradeLedgerItem[]> {
     try {
+      const isTest = isSyntheticTestRecord(trade) || this.isTesting;
       const isResultOpen = trade.result === 'OPEN';
-      const highestNum = Math.max(0, ...this.inMemoryTrades.map((t) => t.tradeNumber || 0));
+      const targetList = isTest ? this.inMemoryTestTrades : this.inMemoryTrades;
+      const highestNum = Math.max(0, ...targetList.map((t) => t.tradeNumber || 0));
       const tradeNumber = trade.tradeNumber || highestNum + 1;
       const isoTime = trade.isoTime || new Date().toISOString();
       const date =
@@ -1204,29 +1282,34 @@ export class PersistentStorage {
         isoTime,
         date,
         isActive: trade.isActive !== undefined ? trade.isActive : isResultOpen,
+        isTest: isTest ? true : undefined,
       };
 
-      const existingIdx = this.inMemoryTrades.findIndex((t) => t.id === tradeWithActive.id);
+      const existingIdx = targetList.findIndex((t) => t.id === tradeWithActive.id);
       if (existingIdx >= 0) {
-        this.inMemoryTrades[existingIdx] = tradeWithActive;
+        targetList[existingIdx] = tradeWithActive;
       } else {
-        this.inMemoryTrades.unshift(tradeWithActive);
+        targetList.unshift(tradeWithActive);
       }
 
-      if (this.inMemoryTrades.length > MAX_TRADES_TO_KEEP) {
-        this.inMemoryTrades = this.inMemoryTrades.slice(0, MAX_TRADES_TO_KEEP);
+      if (targetList.length > MAX_TRADES_TO_KEEP) {
+        if (isTest) {
+          this.inMemoryTestTrades = targetList.slice(0, MAX_TRADES_TO_KEEP);
+        } else {
+          this.inMemoryTrades = targetList.slice(0, MAX_TRADES_TO_KEEP);
+        }
       }
 
       this.syncJsonBackups();
 
-      if (tradeWithActive.id) {
+      if (!isTest && tradeWithActive.id) {
         await this.safeSupabaseAsync(
           (c) => c.from('trade_ledger').upsert(this.formatTradeRow(tradeWithActive)),
           `saveTradeAsync:${tradeWithActive.id}`
         );
       }
 
-      return [...this.inMemoryTrades];
+      return isTest ? [...this.inMemoryTestTrades] : [...this.inMemoryTrades];
     } catch (err) {
       console.error('[Storage] Error saving trade async:', err);
       return [...this.inMemoryTrades];
@@ -1251,19 +1334,29 @@ export class PersistentStorage {
   }
 
   public getTradeLedger(limit = 100): TradeLedgerItem[] {
-    return this.inMemoryTrades.slice(0, limit);
+    return this.inMemoryTrades.filter((t) => !isSyntheticTestRecord(t)).slice(0, limit);
   }
 
   public getTrades(limit = 100): TradeLedgerItem[] {
     return this.getTradeLedger(limit);
   }
 
+  public getTestTrades(limit = 100): TradeLedgerItem[] {
+    return this.inMemoryTestTrades.slice(0, limit);
+  }
+
+  public clearTestTrades(): void {
+    this.inMemoryTestTrades = [];
+    this.inMemoryTestFactorSnapshots.clear();
+    this.syncJsonBackups();
+  }
+
   public getActiveTrades(): TradeLedgerItem[] {
-    return this.inMemoryTrades.filter((t) => t.isActive === true || t.result === 'OPEN');
+    return this.inMemoryTrades.filter((t) => !isSyntheticTestRecord(t) && (t.isActive === true || t.result === 'OPEN'));
   }
 
   public getTrade(id: string): TradeLedgerItem | undefined {
-    return this.inMemoryTrades.find((t) => t.id === id);
+    return this.inMemoryTrades.find((t) => t.id === id) || this.inMemoryTestTrades.find((t) => t.id === id);
   }
 
   public getTradeOutcomes(limit = 200): TradeOutcomeRecord[] {
@@ -2373,7 +2466,12 @@ export class PersistentStorage {
 
   public saveFactorSnapshot(snapshot: any): void {
     if (!snapshot || !snapshot.signalId) return;
-    this.inMemoryFactorSnapshots.set(snapshot.signalId, snapshot);
+    const isTest = this.isTesting || isSyntheticTestRecord({ id: snapshot.signalId, ...snapshot });
+    if (isTest) {
+      this.inMemoryTestFactorSnapshots.set(snapshot.signalId, snapshot);
+    } else {
+      this.inMemoryFactorSnapshots.set(snapshot.signalId, snapshot);
+    }
     if (this.shouldPersist()) {
       this.syncJsonBackups();
     }
@@ -2381,7 +2479,7 @@ export class PersistentStorage {
 
   public getFactorSnapshot(signalId: string): any | null {
     if (!signalId) return null;
-    return this.inMemoryFactorSnapshots.get(signalId) || null;
+    return this.inMemoryFactorSnapshots.get(signalId) || this.inMemoryTestFactorSnapshots.get(signalId) || null;
   }
 
   public saveExperienceRecord(record: any): void {

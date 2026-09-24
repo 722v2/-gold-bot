@@ -543,6 +543,8 @@ export interface TradeLedgerItem {
   notes?: string;
   signalId?: string;
   setupId?: string;
+  isTest?: boolean;
+  environment?: string;
   // Reinforcement/scale-in support
   reinforcements?: Reinforcement[];
   averageEntry?: number;

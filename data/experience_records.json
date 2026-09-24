@@ -771,5 +771,83 @@
     "realizedPnl": -4,
     "setupFamily": "Bearish Fair Value Gap (FVG) Mitigation",
     "combinationKey": "direction=SELL|fvg=NONE|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=NORMAL_RANGE|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Bearish Fair Value Gap (FVG) Mitigation|volatility=HIGH|zone=DISCOUNT"
+  },
+  {
+    "id": "exp_sig_1790242854702_rxiwa_1790243102307",
+    "rr": 1.65,
+    "factors": {
+      "fvg": "BEARISH_FVG",
+      "rsi": "NEUTRAL",
+      "macd": "BEARISH",
+      "zone": "DISCOUNT",
+      "direction": "SELL",
+      "liquidity": "NONE",
+      "orderBlock": "BEARISH_OB",
+      "volatility": "HIGH",
+      "setupFamily": "Bearish Trend Continuation (EMA/VWAP Pullback)",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND"
+    },
+    "outcome": "WIN",
+    "tradeId": "sig_1790242854702_rxiwa",
+    "signalId": "sig_1790242854702_rxiwa",
+    "direction": "SELL",
+    "completedAt": 1790243102307,
+    "realizedPnl": 6,
+    "setupFamily": "Bearish Trend Continuation (EMA/VWAP Pullback)",
+    "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=NONE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Bearish Trend Continuation (EMA/VWAP Pullback)|volatility=HIGH|zone=DISCOUNT"
+  },
+  {
+    "id": "exp_sig_1790244173530_zwslj_1790244392514",
+    "rr": 1.52,
+    "factors": {
+      "fvg": "BEARISH_FVG",
+      "rsi": "NEUTRAL",
+      "macd": "BEARISH",
+      "zone": "DISCOUNT",
+      "direction": "BUY",
+      "liquidity": "SWEEP_SELL_SIDE",
+      "orderBlock": "BEARISH_OB",
+      "volatility": "HIGH",
+      "setupFamily": "Range SFP Reversal (Range Low Liquidity Sweep & Rejection)",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND"
+    },
+    "outcome": "LOSS",
+    "tradeId": "sig_1790244173530_zwslj",
+    "signalId": "sig_1790244173530_zwslj",
+    "direction": "BUY",
+    "completedAt": 1790244392514,
+    "realizedPnl": -4,
+    "setupFamily": "Range SFP Reversal (Range Low Liquidity Sweep & Rejection)",
+    "combinationKey": "direction=BUY|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=SWEEP_SELL_SIDE|m15Structure=BEARISH|macd=BEARISH|marketRegime=STRONG_TREND|orderBlock=BEARISH_OB|rsi=NEUTRAL|setupFamily=Range SFP Reversal (Range Low Liquidity Sweep & Rejection)|volatility=HIGH|zone=DISCOUNT"
+  },
+  {
+    "id": "exp_sig_1790246994507_rmwzp_1790248425380",
+    "rr": 2.54,
+    "factors": {
+      "fvg": "BEARISH_FVG",
+      "rsi": "NEUTRAL",
+      "macd": "BULLISH",
+      "zone": "DISCOUNT",
+      "direction": "SELL",
+      "liquidity": "SWEEP_BUY_SIDE",
+      "orderBlock": "BULLISH_OB",
+      "volatility": "HIGH",
+      "setupFamily": "Bare Resistance Rejection",
+      "htfStructure": "DOWNTREND",
+      "m15Structure": "BEARISH",
+      "marketRegime": "STRONG_TREND"
+    },
+    "outcome": "WIN",
+    "tradeId": "sig_1790246994507_rmwzp",
+    "signalId": "sig_1790246994507_rmwzp",
+    "direction": "SELL",
+    "completedAt": 1790248425380,
+    "realizedPnl": 9,
+    "setupFamily": "Bare Resistance Rejection",
+    "combinationKey": "direction=SELL|fvg=BEARISH_FVG|htfStructure=DOWNTREND|liquidity=SWEEP_BUY_SIDE|m15Structure=BEARISH|macd=BULLISH|marketRegime=STRONG_TREND|orderBlock=BULLISH_OB|rsi=NEUTRAL|setupFamily=Bare Resistance Rejection|volatility=HIGH|zone=DISCOUNT"
   }
 ]
